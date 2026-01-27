@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "energy-atlas-ai"
+version = "0.1.0"
+description = ""
+authors = ["Moses McCall <mosesmc52@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+fastapi = "^0.128.0"
+chainlit = "^2.9.6"
+llama-index = "^0.14.12"
+openai = "^2.15.0"
+eia-ng-client = "^0.1.3"
+python-dotenv = "^1.2.1"
+pandas = "^2.3.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.setuptools.packages.find]
+where = ["."]
