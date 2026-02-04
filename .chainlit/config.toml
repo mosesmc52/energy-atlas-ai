@@ -94,11 +94,11 @@ reaction_on_message_received = false
 # Name of the assistant.
 name = "Assistant"
 
-# default_theme = "dark"
+default_theme = "light"
 
 # Force a specific language for all users (e.g., "en-US", "he-IL", "fr-FR")
 # If not set, the browser's language will be used
-# language = "en-US"
+language = "en-US"
 
 # layout = "wide"
 
@@ -121,14 +121,14 @@ cot = "full"
 
 # Specify a CSS file that can be used to customize the user interface.
 # The CSS file can be served from the public directory or via an external link.
-# custom_css = "/public/test.css"
+custom_css = "/public/custom.css"
 
 # Specify additional attributes for a custom CSS file
 # custom_css_attributes = "media=\"print\""
 
 # Specify a JavaScript file that can be used to customize the user interface.
 # The JavaScript file can be served from the public directory.
-# custom_js = "/public/test.js"
+# custom_js = ""
 
 # The style of alert boxes. Can be "classic" or "modern".
 alert_style = "classic"
@@ -150,7 +150,7 @@ alert_style = "classic"
 # custom_meta_image_url = "https://chainlit-cloud.s3.eu-west-3.amazonaws.com/logo/chainlit_banner.png"
 
 # Load assistant logo directly from URL.
-logo_file_url = ""
+logo_file_url = "/public/images/logo.png"
 
 # Load assistant avatar image directly from URL.
 default_avatar_file_url = ""
@@ -167,6 +167,13 @@ default_avatar_file_url = ""
 #     icon_url = "https://avatars.githubusercontent.com/u/128686189?s=200&v=4"
 #     url = "https://github.com/Chainlit/chainlit/issues"
 #     target = "_blank" (default)  # Optional: "_self", "_parent", "_top".
+
+[[UI.header_links]]
+name = "About"
+url = "https://github.com/mosesmc52/energy-atlas-ai"
+display_name = "About"
+icon_url = "/public/images/icons/noun-energy.svg"
+
 
 [meta]
 generated_by = "2.9.6"

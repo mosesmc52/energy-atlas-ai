@@ -13,11 +13,13 @@ else:
 if str(proj_root) not in sys.path:
     sys.path.insert(0, str(proj_root))
 
+
 import chainlit as cl
 from agents.router import route_query
 from answer_builder import build_answer_with_openai
 from executer import ExecuteRequest, MetricExecutor
 from tools.eia_adapter import EIAAdapter
+from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 # -------------------------
 # 1) Dependency wiring (startup)
@@ -43,31 +45,79 @@ def build_container():
     return {"executor": executor}
 
 
+@cl.set_starters
+async def set_starters():
+    return [
+        cl.Starter(
+            label="Morning routine ideation",
+            message="Can you help me create a personalized morning routine that would help increase my productivity throughout the day? Start by asking me about my current habits and what activities energize me in the morning.",
+            icon="/public/idea.svg",
+        ),
+        cl.Starter(
+            label="Explain superconductors",
+            message="Explain superconductors like I'm five years old.",
+            icon="/public/learn.svg",
+        ),
+        cl.Starter(
+            label="Python script for daily email reports",
+            message="Write a script to automate sending daily email reports in Python, and walk me through how I would set it up.",
+            icon="/public/terminal.svg",
+            command="code",
+        ),
+        cl.Starter(
+            label="Text inviting friend to wedding",
+            message="Write a text asking a friend to be my plus-one at a wedding next month. I want to keep it super short and casual, and offer an out.",
+            icon="/public/write.svg",
+        ),
+    ]
+
+
 # Store dependencies in Chainlit session
 @cl.on_chat_start
 async def on_chat_start():
-    deps = build_container()
-    cl.user_session.set("deps", deps)
+    # Core deps
+    cl.user_session.set("deps", build_container())
 
-    await cl.Message(
-        content="Energy Atlas AI (v0.1). Ask about natural gas storage, Henry Hub, or LNG exports."
-    ).send()
+    # Optional: Google Sheets question logging (best-effort)
+    try:
+        qlog = GoogleSheetsQuestionLogger(sheet_name="Questions")
+        qlog.ensure_header()  # idempotent
+        cl.user_session.set("qlog", qlog)
+    except Exception as e:
+        cl.user_session.set("qlog_error", str(e))
+        print(f"[WARN] Sheets logger disabled: {e}")
 
-
-# -------------------------
-# 2) Message handler (per user query)
-# -------------------------
+    # Optional welcome message
+    # await cl.Message(
+    #     content="Energy Atlas AI (v0.1). Ask about natural gas storage, Henry Hub, or LNG exports."
+    # ).send()
 
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    deps = cl.user_session.get("deps")
-    executor: MetricExecutor = deps["executor"]
+    deps = cl.user_session.get("deps") or {}
+    executor: MetricExecutor = deps.get("executor")  # type: ignore[assignment]
 
     user_query = (message.content or "").strip()
     if not user_query:
         await cl.Message(content="Please enter a question.").send()
         return
+
+    # Best-effort question logging
+    qlog = cl.user_session.get("qlog")
+    if qlog is not None:
+        try:
+            qlog.append_question(
+                question=user_query,
+                session_id=str(cl.user_session.get("id", "")),
+                tags=["energy-atlas-ai"],
+            )
+        except Exception as e:
+            print(f"[WARN] Sheets logging failed: {e}")
+    else:
+        err = cl.user_session.get("qlog_error")
+        if err:
+            print(f"[INFO] Sheets disabled (init error): {err}")
 
     try:
         # (A) Route the query -> metric + params

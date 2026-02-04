@@ -4,12 +4,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 import pandas as pd
 from dotenv import load_dotenv
 from eia_ng import EIAClient
 from schemas.answer import SourceRef
+from tools.cache_base import CacheBackedTimeseriesAdapterBase
 
 load_dotenv()
 
@@ -23,7 +24,7 @@ class EIAResult:
     )
 
 
-class EIAAdapter:
+class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     """
     Thin adapter around your eia-ng-client package.
 
@@ -34,7 +35,8 @@ class EIAAdapter:
       - (Optional) attach meta like units/frequency
     """
 
-    def __init__(self):
+    def __init__(self, cache_dir: str = "data/cache/eia"):
+        super().__init__(cache_dir=cache_dir, date_col="date")
         self.client = EIAClient(api_key=os.getenv("EIA_API_KEY"))
 
     # ----------------------------
@@ -44,50 +46,80 @@ class EIAAdapter:
     def storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
         """
         Lower 48 working gas in storage (weekly).
+        Cache-first: load CSV, fetch missing edges via eia-ng, save, return window.
         """
+        df, cache_info = self._cached_timeseries(
+            metric_key="working_gas_storage_lower48",
+            start=start,
+            end=end,
+            cache_key_parts={"region": "lower48"},
+            fetch_ctx={"_fetch": "storage_working_gas", "region": "lower48"},
+            allow_internal_gap_fill_daily=False,  # weekly series: edge fill is safer initially
+        )
 
-        rows = self.client.natural_gas.storage(start=start, end=end)
-        df = pd.DataFrame(rows)
-
-        df = self._normalize_timeseries_df(df, date_col="date", value_col="value")
         src = self._make_source(
             label="EIA Natural Gas Storage: Working Gas (Lower 48)",
-            reference="eia-ng-client:storage.working_gas",
-            parameters={"region": "lower48", "start": start, "end": end},
+            reference="eia-ng-client:natural_gas.storage",
+            parameters={
+                "region": "lower48",
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,  # <-- include cache behavior
+            },
         )
-        meta = {}
+        meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
     def henry_hub_spot(self, start: str, end: str) -> EIAResult:
         """
-        Henry Hub spot price.
+        Henry Hub spot price (daily).
+        Cache-first: load CSV, fill internal daily gaps via eia-ng, save, return window.
         """
-        rows = self.client.natural_gas.spot_prices(start=start, end=end)
-        df = pd.DataFrame(rows)
+        df, cache_info = self._cached_timeseries(
+            metric_key="henry_hub_spot",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support variants
+            fetch_ctx={"_fetch": "henry_hub_spot"},
+            allow_internal_gap_fill_daily=True,
+        )
 
-        df = self._normalize_timeseries_df(df, date_col="date", value_col="value")
         src = self._make_source(
             label="EIA Natural Gas Price: Henry Hub Spot",
-            reference="eia-ng-client:prices.henry_hub_spot",
-            parameters={"start": start, "end": end},
+            reference="eia-ng-client:natural_gas.spot_prices",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
         )
-        meta = {}
-
+        meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
     def lng_exports(self, start: str, end: str) -> EIAResult:
         """
-        LNG exports (or whichever LNG series you choose as canonical).
+        LNG exports (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
-        rows = self.client.natural_gas.exports(start=start, end=end)
-        df = pd.DataFrame(rows)
-        df = self._normalize_timeseries_df(df, date_col="date", value_col="value")
+        df, cache_info = self._cached_timeseries(
+            metric_key="lng_exports",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "lng_exports"},
+            allow_internal_gap_fill_daily=True,  # set False if series is weekly/monthly
+        )
+
         src = self._make_source(
             label="EIA Natural Gas: LNG Exports",
-            reference="eia-ng-client:lng.exports",
-            parameters={"start": start, "end": end},
+            reference="eia-ng-client:natural_gas.exports",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
         )
-        meta = {}
+        meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
     # ----------------------------
@@ -186,3 +218,35 @@ class EIAAdapter:
             parameters=parameters,
             retrieved_at=datetime.utcnow(),
         )
+
+    # ---- subclass hooks ----
+
+    def _fetch_timeseries(self, start: str, end: str, **kwargs) -> pd.DataFrame:
+        which = kwargs.get("_fetch")
+
+        if which == "henry_hub_spot":
+            rows = self.client.natural_gas.spot_prices(start=start, end=end)
+            return pd.DataFrame(rows)
+
+        if which == "lng_exports":
+            rows = self.client.natural_gas.exports(start=start, end=end)
+            return pd.DataFrame(rows)
+
+        # keep your other ones (storage, etc.)
+        if which == "storage_working_gas":
+            rows = self.client.natural_gas.storage(start=start, end=end)
+            return pd.DataFrame(rows)
+
+        raise ValueError(f"Unknown fetch key: {which}")
+
+    def _normalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = self._normalize_timeseries_df(df, date_col="date", value_col="value")
+        out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.normalize()
+        out = out.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        return out
+
+    def _dedupe_cols(self, df: pd.DataFrame) -> list[str]:
+        # For EIA, often date+series is the real unique key if multiple series exist
+        if "series" in df.columns:
+            return ["date", "series"]
+        return ["date"]
