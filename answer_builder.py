@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from answers.chart_policy import chart_policy
 from openai import OpenAI
 from schemas.answer import AnswerPayload, DataPreview
 from tools.eia_adapter import EIAResult
@@ -127,12 +128,15 @@ def build_answer_with_openai(
     answer_text = (resp.output_text or "").strip()
 
     # 3) Assemble AnswerPayload
+    df = df.sort_values("date").reset_index(drop=True)
+    metric = result.meta.get("metric", "")
+    chart_spec = chart_policy(metric=metric, mode=mode, df=df)
     payload = AnswerPayload(
         query=query,
         mode=mode,
         answer_text=answer_text,
         data_preview=_make_preview(df) if df is not None else None,
-        chart_spec=None,
+        chart_spec=chart_spec,
         sources=[src],
         warnings=None,
         generated_at=datetime.utcnow(),

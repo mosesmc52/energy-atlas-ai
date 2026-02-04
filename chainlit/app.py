@@ -17,6 +17,7 @@ if str(proj_root) not in sys.path:
 import chainlit as cl
 from agents.router import route_query
 from answer_builder import build_answer_with_openai
+from charts.plotly_renderer import render_plotly
 from executer import ExecuteRequest, MetricExecutor
 from tools.eia_adapter import EIAAdapter
 from utils.sheets_logger import GoogleSheetsQuestionLogger
@@ -140,21 +141,31 @@ async def on_message(message: cl.Message):
             model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
         )
 
-        # (D) Render in Chainlit
         await cl.Message(content=payload.answer_text).send()
 
-        if payload.data_preview:
-            # render preview as markdown table (simple)
-            cols = payload.data_preview.columns
-            rows = payload.data_preview.rows
+        if payload.chart_spec is not None:
+            fig = render_plotly(
+                payload.chart_spec, result.df
+            )  # or payload.df if you store it
+            await cl.Plotly(name=payload.chart_spec.title, figure=fig).send()
 
-            # Build a small markdown table
-            header = "| " + " | ".join(cols) + " |"
-            sep = "| " + " | ".join(["---"] * len(cols)) + " |"
-            body = "\n".join("| " + " | ".join(str(x) for x in r) + " |" for r in rows)
-            table_md = "\n".join([header, sep, body])
+            # (D) Render in Chainlit
+            await cl.Message(content=payload.answer_text).send()
 
-            await cl.Message(content=f"**Data (preview)**\n\n{table_md}").send()
+            if payload.data_preview:
+                # render preview as markdown table (simple)
+                cols = payload.data_preview.columns
+                rows = payload.data_preview.rows
+
+                # Build a small markdown table
+                header = "| " + " | ".join(cols) + " |"
+                sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+                body = "\n".join(
+                    "| " + " | ".join(str(x) for x in r) + " |" for r in rows
+                )
+                table_md = "\n".join([header, sep, body])
+
+                await cl.Message(content=f"**Data (preview)**\n\n{table_md}").send()
 
         # sources
         if payload.sources:
