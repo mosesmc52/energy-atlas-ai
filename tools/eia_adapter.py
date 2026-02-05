@@ -54,7 +54,8 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             end=end,
             cache_key_parts={"region": "lower48"},
             fetch_ctx={"_fetch": "storage_working_gas", "region": "lower48"},
-            allow_internal_gap_fill_daily=False,  # weekly series: edge fill is safer initially
+            allow_internal_gap_fill_daily=True,  # weekly series: edge fill is safer initially
+            expected_calendar="B",
         )
 
         src = self._make_source(
@@ -82,6 +83,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             cache_key_parts={},  # add facets if you later support variants
             fetch_ctx={"_fetch": "henry_hub_spot"},
             allow_internal_gap_fill_daily=True,
+            expected_calendar="B",
         )
 
         src = self._make_source(
@@ -178,6 +180,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         """
         Normalize to columns: ['date', 'value'] (and preserve extras if present).
         """
+        # If upstream returned no rows, avoid a confusing schema error downstream.
+        if df is None or (df.empty and len(df.columns) == 0):
+            return pd.DataFrame(columns=["date", "value"])
         if date_col not in df.columns:
             # common alternates
             for alt in ("period", "timestamp", "Date", "time"):
@@ -226,15 +231,33 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "henry_hub_spot":
             rows = self.client.natural_gas.spot_prices(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng henry_hub_spot {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
         if which == "lng_exports":
             rows = self.client.natural_gas.exports(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
         # keep your other ones (storage, etc.)
         if which == "storage_working_gas":
             rows = self.client.natural_gas.storage(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng storage_working_gas {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
         raise ValueError(f"Unknown fetch key: {which}")
