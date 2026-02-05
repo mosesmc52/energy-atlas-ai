@@ -14,7 +14,13 @@ def chart_policy(*, metric: str, mode: str, df) -> ChartSpec | None:
             title="Henry Hub Natural Gas Spot Price",
             x=AxisSpec(field="date", label="Date"),
             y=AxisSpec(field="value", label="$/MMBtu"),
-            series=[SeriesSpec(field="value", label="Henry Hub")],
+            series=[
+                SeriesSpec(
+                    name="Henry Hub",
+                    source="eia_api",
+                    metric=metric,
+                )
+            ],
         )
 
     if metric == "working_gas_storage_lower48":
@@ -23,7 +29,13 @@ def chart_policy(*, metric: str, mode: str, df) -> ChartSpec | None:
             title="Working Gas in Storage (Lower 48)",
             x=AxisSpec(field="date", label="Date"),
             y=AxisSpec(field="value", label="Bcf"),
-            series=[SeriesSpec(field="value", label="Working Gas")],
+            series=[
+                SeriesSpec(
+                    name="Working Gas",
+                    source="eia_api",
+                    metric=metric,
+                )
+            ],
         )
 
     if metric == "lng_exports":
@@ -32,7 +44,13 @@ def chart_policy(*, metric: str, mode: str, df) -> ChartSpec | None:
             title="U.S. LNG Exports",
             x=AxisSpec(field="date", label="Date"),
             y=AxisSpec(field="value", label="Volume"),
-            series=[SeriesSpec(field="value", label="LNG Exports")],
+            series=[
+                SeriesSpec(
+                    name="LNG Exports",
+                    source="eia_api",
+                    metric=metric,
+                )
+            ],
         )
 
     return None

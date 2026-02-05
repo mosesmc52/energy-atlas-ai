@@ -15,7 +15,7 @@ def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
     d = df.copy()
 
     x_field = spec.x.field
-    y_field = spec.series[0].field if spec.series else spec.y.field
+    y_field = spec.y.field
 
     # Ensure datetime x if possible
     if x_field in d.columns:

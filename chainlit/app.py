@@ -50,8 +50,8 @@ def build_container():
 async def set_starters():
     return [
         cl.Starter(
-            label="Morning routine ideation",
-            message="Can you help me create a personalized morning routine that would help increase my productivity throughout the day? Start by asking me about my current habits and what activities energize me in the morning.",
+            label="Price of henry hub",
+            message="What is the current henry hub price of natural gas?",
             icon="/public/idea.svg",
         ),
         cl.Starter(
@@ -141,16 +141,15 @@ async def on_message(message: cl.Message):
             model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
         )
 
-        await cl.Message(content=payload.answer_text).send()
+        msg = await cl.Message(content=payload.answer_text).send()
 
         if payload.chart_spec is not None:
             fig = render_plotly(
                 payload.chart_spec, result.df
             )  # or payload.df if you store it
-            await cl.Plotly(name=payload.chart_spec.title, figure=fig).send()
-
-            # (D) Render in Chainlit
-            await cl.Message(content=payload.answer_text).send()
+            await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
+                for_id=msg.id
+            )
 
             if payload.data_preview:
                 # render preview as markdown table (simple)
