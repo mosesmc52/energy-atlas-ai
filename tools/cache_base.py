@@ -62,6 +62,7 @@ class CacheBackedTimeseriesAdapterBase:
         cache_key_parts: Dict[str, Any] | None = None,
         fetch_ctx: Dict[str, Any] | None = None,
         allow_internal_gap_fill_daily: bool = True,
+        expected_calendar: str = "D",
     ) -> tuple[pd.DataFrame, CacheFetchInfo]:
         """
         Generic cache-backed timeseries fetch.
@@ -92,17 +93,27 @@ class CacheBackedTimeseriesAdapterBase:
             end_ts,
             freq=freq,
             allow_internal_gap_fill_daily=allow_internal_gap_fill_daily,
+            expected_calendar=expected_calendar,
         )
 
         fetched_segments: List[Dict[str, Any]] = []
         df_merged = df_cache
 
         for seg_start, seg_end in missing:
+            if seg_end < seg_start:
+                continue
+
+            fetch_start = seg_start.date().isoformat()
+            fetch_end_ts = seg_end
+            if seg_start == seg_end:
+                fetch_end_ts = seg_end + pd.Timedelta(days=1)
+
             df_new = self._fetch_timeseries(
-                start=seg_start.date().isoformat(),
-                end=seg_end.date().isoformat(),
+                start=fetch_start,
+                end=fetch_end_ts.date().isoformat(),
                 **fetch_ctx,
             )
+
             df_new = self._normalize_df(df_new)
 
             fetched_segments.append(
@@ -201,10 +212,12 @@ class CacheBackedTimeseriesAdapterBase:
     def _slice_window(
         self, df: Optional[pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp
     ) -> pd.DataFrame:
-        if df is None or df.empty:
+        if df is None or df.empty or self.date_col not in df.columns:
             return pd.DataFrame()
-        d = pd.to_datetime(df[self.date_col], errors="coerce").dropna()
-        mask = (d >= start) & (d <= end)
+
+        d = pd.to_datetime(df[self.date_col], errors="coerce")  # DO NOT dropna here
+        mask = d.notna() & (d >= start) & (d <= end)
+
         out = df.loc[mask].copy()
         out = out.sort_values(self.date_col).reset_index(drop=True)
         return out
@@ -221,43 +234,60 @@ class CacheBackedTimeseriesAdapterBase:
         *,
         freq: Optional[Dict[str, Any]],
         allow_internal_gap_fill_daily: bool,
+        expected_calendar: str,
     ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+
         if df is None or df.empty or self.date_col not in df.columns:
             return [(start, end)]
 
-        d = pd.to_datetime(df[self.date_col], errors="coerce").dropna().dt.normalize()
-        in_win = df[(d >= start) & (d <= end)]
+        # ---- FIX: never dropna() before masking ----
+        d = pd.to_datetime(df[self.date_col], errors="coerce").dt.normalize()
+        mask = d.notna() & (d >= start) & (d <= end)
+
+        in_win = df.loc[mask]
+
         if in_win.empty:
             return [(start, end)]
 
         # If daily and allowed: fill internal gaps
         if allow_internal_gap_fill_daily and freq and freq.get("freq") == "daily":
-            return self._missing_segments_daily(in_win, start, end)
+            return self._missing_segments_daily(
+                in_win, start, end, expected_calendar=expected_calendar
+            )
 
-        # Otherwise: edge fill only (safe default across unknown cadences)
-        d2 = (
-            pd.to_datetime(in_win[self.date_col], errors="coerce")
-            .dropna()
-            .dt.normalize()
-        )
-        min_d = d2.min()
-        max_d = d2.max()
+        # ---- PLACE YOUR LINES HERE ----
+        d_win = d[mask]
+        min_d = d_win.min()
+        max_d = d_win.max()
 
         segs: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
-        if start < min_d:
-            segs.append((start, min_d))
-        if end > max_d:
-            segs.append((max_d, end))
+        step_days = 1
+        if freq and freq.get("step_days"):
+            step_days = int(freq["step_days"])
+
+        left_end = min_d - pd.Timedelta(days=step_days)
+        if start <= left_end:
+            segs.append((start, left_end))
+
+        right_start = max_d + pd.Timedelta(days=step_days)
+        if right_start <= end:
+            segs.append((right_start, end))
+
         return segs
 
     def _missing_segments_daily(
-        self, df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp
+        self,
+        df: pd.DataFrame,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        *,
+        expected_calendar: str = "D",
     ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
-        observed = (
-            pd.to_datetime(df[self.date_col], errors="coerce").dropna().dt.normalize()
-        )
-        observed = pd.DatetimeIndex(observed.unique())
-        expected = pd.date_range(start=start, end=end, freq="D")
+        observed = pd.to_datetime(df[self.date_col], errors="coerce").dt.normalize()
+        observed = pd.DatetimeIndex(observed[observed.notna()].unique())
+
+        expected = pd.date_range(start=start, end=end, freq=expected_calendar)
+
         missing = expected.difference(observed)
         return self._compress_dates_to_segments(missing)
 
