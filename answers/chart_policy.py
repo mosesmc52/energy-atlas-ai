@@ -8,7 +8,7 @@ def chart_policy(*, metric: str, mode: str, df) -> ChartSpec | None:
         return None
 
     # v0.1: simple “one series line chart” for the common metrics
-    if metric == "henry_hub_spot":
+    if metric == "ng_henry_hub_spot":
         return ChartSpec(
             chart_type="line",
             title="Henry Hub Natural Gas Spot Price",
@@ -23,7 +23,7 @@ def chart_policy(*, metric: str, mode: str, df) -> ChartSpec | None:
             ],
         )
 
-    if metric == "working_gas_storage_lower48":
+    if metric == "ng_working_gas_storage_lower48":
         return ChartSpec(
             chart_type="line",
             title="Working Gas in Storage (Lower 48)",
@@ -38,7 +38,7 @@ def chart_policy(*, metric: str, mode: str, df) -> ChartSpec | None:
             ],
         )
 
-    if metric == "lng_exports":
+    if metric == "ng_lng_exports":
         return ChartSpec(
             chart_type="line",
             title="U.S. LNG Exports",

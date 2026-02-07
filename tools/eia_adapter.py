@@ -43,7 +43,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # Public methods (router calls these)
     # ----------------------------
 
-    def storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
+    def ng_storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
         """
         Lower 48 working gas in storage (weekly).
         Cache-first: load CSV, fetch missing edges via eia-ng, save, return window.
@@ -71,7 +71,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def henry_hub_spot(self, start: str, end: str) -> EIAResult:
+    def ng_henry_hub_spot(self, start: str, end: str) -> EIAResult:
         """
         Henry Hub spot price (daily).
         Cache-first: load CSV, fill internal daily gaps via eia-ng, save, return window.
@@ -98,7 +98,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def lng_exports(self, start: str, end: str) -> EIAResult:
+    def ng_lng_exports(self, start: str, end: str) -> EIAResult:
         """
         LNG exports (canonical series).
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
@@ -123,6 +123,124 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         )
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_lng_imports(self, start: str, end: str) -> EIAResult:
+        """
+        LNG imports (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="lng_imports",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "lng_imports"},
+            allow_internal_gap_fill_daily=True,  # set False if series is weekly/monthly
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: LNG Imports",
+            reference="eia-ng-client:natural_gas.imports",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_electricity(self, start: str, end: str) -> EIAResult:
+        """
+        NG Electricity (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_electricity",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_electricity"},
+            allow_internal_gap_fill_daily=True,  # set False if series is weekly/monthly
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Electricity",
+            reference="eia-ng-client:electricity.generation_natural_gas",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_consumption_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Consumption (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_consumption",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_consumption"},
+            allow_internal_gap_fill_daily=True,  # set False if series is weekly/monthly
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Consumption",
+            reference="eia-ng-client:natural_gas.consumption",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_production_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Production (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_production",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_production"},
+            allow_internal_gap_fill_daily=True,  # set False if series is weekly/monthly
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Production",
+            reference="eia-ng-client:natural_gas.production",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_exploration_reserves_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Exploration (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        pass
+
+    def ng_pipelines_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Pipelines (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        pass
 
     # ----------------------------
     # Library calling + normalization helpers

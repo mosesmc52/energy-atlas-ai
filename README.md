@@ -6,10 +6,6 @@ poetry run chainlit run chainlit/app.py
 
 # https://github.com/Chainlit/chainlit
 
-- Tasks
-    - Download EIA data and store in Cache
-    - Customize chainlit UI like
-
 Note(s):
     - The reason the config doesn't change is because of cacheing in browser
 

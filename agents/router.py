@@ -17,13 +17,13 @@ def route_metric(user_query: str) -> str:
     q = user_query.lower()
 
     if "storage" in q:
-        return "working_gas_storage_lower48"
+        return "ng_working_gas_storage_lower48"
 
     if "henry hub" in q or "spot price" in q:
-        return "henry_hub_spot"
+        return "ng_henry_hub_spot"
 
     if "lng" in q and "export" in q:
-        return "lng_exports"
+        return "ng_lng_exports"
 
     raise ValueError("No route for query")
 
