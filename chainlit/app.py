@@ -51,38 +51,43 @@ async def set_starters():
     return [
         cl.Starter(
             label="Price of henry hub",
-            message="How have Henry Hub natural gas prices evolved over the past 12 months, and what macro factors explain the variance (weather, storage deviations, LNG exports)?",
+            message="What is the current Henry Hub price?",
             icon="/public/icons/dollar.svg",
         ),
         cl.Starter(
             label="Production",
-            message="Is U.S. dry natural gas production increasing or declining, and which basins (Permian, Haynesville, Marcellus) are driving the change?",
-            icon="/public/icons/gas.svg",
+            message="Is production growing year over year?",
+            icon="/public/icons/gas-plant.svg",
         ),
         cl.Starter(
             label="Electricity",
-            message="What percentage of U.S. electricity generation is fueled by natural gas, and how is demand shifting across residential, commercial, and industrial sectors?",
+            message="How much natural gas did power plants use last month?",
             icon="/public/icons/electricity.svg",
         ),
         cl.Starter(
+            label="Consumption",
+            message="Which sector uses the most gas (power, residential, industrial)?",
+            icon="/public/icons/gas.svg",
+        ),
+        cl.Starter(
             label="Storage",
-            message="Is current working gas in storage above or below the 5-year seasonal average, and what does that imply for forward price risk?",
+            message="How much gas is currently in storage?",
             icon="/public/icons/storage-tank.svg",
             command="code",
         ),
         cl.Starter(
             label="Exploration & Reserves",
-            message="Are proved natural gas reserves increasing or declining, and how long can current reserves sustain production at present extraction rates?",
+            message="Are reserves increasing or decreasing?",
             icon="/public/icons/reserves.svg",
         ),
         cl.Starter(
             label="Import",
-            message="How much natural gas is being imported into the United States (via pipeline or LNG), and are imports increasing due to regional supply constraints?",
+            message="Are imports rising or falling?",
             icon="/public/icons/tanker-import.svg",
         ),
         cl.Starter(
             label="Export",
-            message="How much U.S. natural gas is being exported as LNG, and are export levels tightening domestic supply?",
+            message="Are exports higher than last year?",
             icon="/public/icons/tanker-export.svg",
         ),
     ]
