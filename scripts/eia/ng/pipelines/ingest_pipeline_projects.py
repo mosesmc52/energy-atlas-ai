@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import pandas as pd
+import requests
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from openpyxl.worksheet.worksheet import Worksheet
@@ -250,8 +251,12 @@ def parse_workbook(
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--out", default="out_csv", help="Output folder for CSVs")
-    p.add_argument("--raw-dir", default="data/raw/eia/ng/pipeline/pipeline_projects")
+    p.add_argument(
+        "--out",
+        default="data/processed/eia/ng/pipeline/",
+        help="Output folder for CSVs",
+    )
+    p.add_argument("--raw-dir", default="data/raw/eia/ng/pipeline")
     args = p.parse_args()
 
     prefix = "EIA-NaturalGasPipelineProjects"
