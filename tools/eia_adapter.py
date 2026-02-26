@@ -43,7 +43,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # Public methods (router calls these)
     # ----------------------------
 
-    def ng_storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
+    def storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
         """
         Lower 48 working gas in storage (weekly).
         Cache-first: load CSV, fetch missing edges via eia-ng, save, return window.
@@ -71,7 +71,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def ng_henry_hub_spot(self, start: str, end: str) -> EIAResult:
+    def henry_hub_spot(self, start: str, end: str) -> EIAResult:
         """
         Henry Hub spot price (daily).
         Cache-first: load CSV, fill internal daily gaps via eia-ng, save, return window.
@@ -98,7 +98,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def ng_lng_exports(self, start: str, end: str) -> EIAResult:
+    def lng_exports(self, start: str, end: str) -> EIAResult:
         """
         LNG exports (canonical series).
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
@@ -127,7 +127,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def ng_lng_imports(self, start: str, end: str) -> EIAResult:
+    def lng_imports(self, start: str, end: str) -> EIAResult:
         """
         LNG imports (canonical series).
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
@@ -324,6 +324,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         """
         Normalize to columns: ['date', 'value'] (and preserve extras if present).
         """
+
         # If upstream returned no rows, avoid a confusing schema error downstream.
         if df is None or (df.empty and len(df.columns) == 0):
             return pd.DataFrame(columns=["date", "value"])
@@ -334,7 +335,17 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                     df = df.rename(columns={alt: date_col})
                     break
         if value_col not in df.columns:
-            for alt in ("value", "Value", "series", "data", "v"):
+            for alt in (
+                "value",
+                "Value",
+                "series",
+                "data",
+                "v",
+                "generation",
+                "production",
+                "quantity",
+                "amount",
+            ):
                 if alt in df.columns:
                     # keep if already correct; otherwise rename
                     if alt != value_col:
@@ -345,7 +356,6 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             raise ValueError(
                 f"Expected columns '{date_col}' and '{value_col}' in df. Got: {list(df.columns)}"
             )
-
         out = df.copy()
         out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
         out = out.dropna(subset=[date_col])
@@ -393,10 +403,30 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
+        if which == "ng_production":
+            rows = self.client.natural_gas.production(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng production {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
         if which == "ng_consumption":
             rows = self.client.natural_gas.consumption(start=start, end=end)
             print(
                 f"[DEBUG] eia-ng consumption {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "lng_imports":
+            rows = self.client.natural_gas.imports(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"
             )
             if not rows:
@@ -424,13 +454,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "ng_exploration_reserves":
-            rows = self.client.natural_gas.exploration_and_reserves(
-                start=start, end=end
-            )
-            print(
-                f"[DEBUG] eia-ng exploration & reserves {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            rows = self.client.natural_gas.exploration_and_reserves(start=2000)
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)

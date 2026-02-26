@@ -17,21 +17,21 @@ def route_metric(user_query: str) -> str:
     q = user_query.lower()
 
     if "storage" in q:
-        return "ng_working_gas_storage_lower48"
+        return "working_gas_storage_lower48"
 
     if "henry hub" in q or "spot price" in q:
-        return "ng_henry_hub_spot"
+        return "henry_hub_spot"
 
-    if "lng" in q and "export" in q:
-        return "ng_lng_exports"
+    if "lng" in q or "exports" in q:
+        return "lng_exports"
 
-    if "lng" in q and "import" in q:
-        return "ng_lng_imports"
+    if "lng" in q or "imports" in q:
+        return "lng_imports"
 
-    if "consumption" in q:
+    if "consumes" in q:
         return "ng_consumption_lower48"
 
-    if "electricity" in q:
+    if "electricity" in q or "power plants" in q:
         return "ng_electricity"
 
     if "production" in q:

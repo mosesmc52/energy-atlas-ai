@@ -66,7 +66,7 @@ async def set_starters():
         ),
         cl.Starter(
             label="Consumption",
-            message="Which sector uses the most gas (power, residential, industrial)?",
+            message="Which sector consumes the most gas (power, residential, industrial)?",
             icon="/public/icons/gas.svg",
         ),
         cl.Starter(

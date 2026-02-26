@@ -2,7 +2,7 @@
 Energy Atlas AI is a search-first assistant for exploring and analyzing U.S. energy data from EIA, FERC, and official outlooks.
 
 
-poetry run chainlit run chainlit/app.py
+poetry run chainlit run chainlit/app.py -w
 
 # https://github.com/Chainlit/chainlit
 

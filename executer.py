@@ -37,6 +37,11 @@ class MetricExecutor:
             "working_gas_storage_lower48": self._eia_storage_lower48,
             "henry_hub_spot": self._eia_henry_hub_spot,
             "lng_exports": self._eia_lng_exports,
+            "lng_imports": self._eia_lng_imports,
+            "ng_electricity": self._eia_ng_electricity,
+            "ng_consumption_lower48": self._eia_ng_consumption_lower48,
+            "ng_production_lower48": self._eia_ng_production_lower48,
+            "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
         }
 
     def execute(self, req: ExecuteRequest) -> EIAResult:
@@ -85,3 +90,28 @@ class MetricExecutor:
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
         return self.eia.lng_exports(start=start, end=end)
+
+    def _eia_lng_imports(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        return self.eia.lng_imports(start=start, end=end)
+
+    def _eia_ng_electricity(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        return self.eia.ng_electricity(start=start, end=end)
+
+    def _eia_ng_consumption_lower48(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        return self.eia.ng_consumption_lower48(start=start, end=end)
+
+    def _eia_ng_production_lower48(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        return self.eia.ng_production_lower48(start=start, end=end)
+
+    def _eia_ng_exploration_reserves_lower48(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        return self.eia.ng_exploration_reserves_lower48(start=start, end=end)
