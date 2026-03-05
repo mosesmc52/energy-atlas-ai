@@ -72,6 +72,27 @@ def _safe_float(x) -> Optional[float]:
         return None
 
 
+def _pick_fact_value_col(df: pd.DataFrame, metric: str) -> Optional[str]:
+    if "value" in df.columns:
+        return "value"
+
+    metric_defaults = {
+        "iso_load": "value",
+        "iso_gas_dependency": "gas_share",
+        "iso_fuel_mix": "total_generation_mw",
+    }
+    preferred = metric_defaults.get(metric)
+    if preferred and preferred in df.columns:
+        return preferred
+
+    numeric_cols = [
+        c for c in df.columns if c != "date" and pd.api.types.is_numeric_dtype(df[c])
+    ]
+    if not numeric_cols:
+        return None
+    return numeric_cols[0]
+
+
 def build_answer_with_openai(
     *,
     query: str,
@@ -82,6 +103,8 @@ def build_answer_with_openai(
     df = result.df
     src = result.source
 
+    metric = result.meta.get("metric", "") if result.meta else ""
+
     # 1) Deterministic facts
     if df is None or len(df) == 0:
         facts = {
@@ -91,16 +114,18 @@ def build_answer_with_openai(
             "delta": None,
             "n_points": 0,
             "columns": list(df.columns) if df is not None else [],
+            "value_column": None,
         }
     else:
         latest = df.iloc[-1]
         latest_date = pd.to_datetime(latest["date"]).date().isoformat()
-        latest_value = _safe_float(latest["value"])
+        value_col = _pick_fact_value_col(df, metric)
+        latest_value = _safe_float(latest[value_col]) if value_col else None
 
         prior_value: Optional[float] = None
         delta: Optional[float] = None
-        if len(df) >= 2:
-            prior_value = _safe_float(df.iloc[-2]["value"])
+        if len(df) >= 2 and value_col:
+            prior_value = _safe_float(df.iloc[-2][value_col])
             if latest_value is not None and prior_value is not None:
                 delta = latest_value - prior_value
 
@@ -111,6 +136,7 @@ def build_answer_with_openai(
             "delta": delta,
             "n_points": int(len(df)),
             "columns": list(df.columns),
+            "value_column": value_col,
         }
 
     # 2) OpenAI narration (text only)
@@ -129,8 +155,7 @@ def build_answer_with_openai(
 
     # 3) Assemble AnswerPayload
     df = df.sort_values("date").reset_index(drop=True)
-    metric = result.meta.get("metric", "")
-    chart_spec = chart_policy(metric=metric, mode=mode, df=df)
+    chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
     payload = AnswerPayload(
         query=query,
         mode=mode,

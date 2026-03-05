@@ -92,3 +92,8 @@
 #readme-button {
   display: none !important;
 }
+
+
+#chat-submit {
+    background-color: #176bb2 !important; /* Example color */
+}

@@ -20,6 +20,7 @@ from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import render_plotly
 from executer import ExecuteRequest, MetricExecutor
 from tools.eia_adapter import EIAAdapter
+from tools.gridstatus_adapter import GridStatusAdapter
 from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 # -------------------------
@@ -28,21 +29,10 @@ from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 
 def build_container():
-    """
-    Build and return the app dependencies once.
-    This is essentially your "DI container".
-    """
-    # Replace with your actual eia-ng-client initialization
-    # Example (placeholder):
-    # from eia_ng_client import EIAClient
-    # eia_client = EIAClient(api_key=os.environ["EIA_API_KEY"])
-    eia_client = None  # TODO: set this
-
     eia_adapter = EIAAdapter()
-    executor = MetricExecutor(eia=eia_adapter)
+    grid_adapter = GridStatusAdapter()
+    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
 
-    # OpenAI client is created inside build_answer_with_openai in the earlier example,
-    # but you can also inject it if you prefer.
     return {"executor": executor}
 
 
@@ -51,24 +41,43 @@ async def set_starters():
     return [
         cl.Starter(
             label="Price of henry hub",
-            message="What is the current henry hub price of natural gas?",
-            icon="/public/idea.svg",
+            message="What is the current Henry Hub price?",
+            icon="/public/icons/dollar.svg",
         ),
         cl.Starter(
-            label="Explain superconductors",
-            message="Explain superconductors like I'm five years old.",
-            icon="/public/learn.svg",
+            label="Production",
+            message="Is production growing year over year?",
+            icon="/public/icons/gas-plant.svg",
         ),
         cl.Starter(
-            label="Python script for daily email reports",
-            message="Write a script to automate sending daily email reports in Python, and walk me through how I would set it up.",
-            icon="/public/terminal.svg",
-            command="code",
+            label="Electricity",
+            message="How much natural gas did power plants use last month?",
+            icon="/public/icons/electricity.svg",
         ),
         cl.Starter(
-            label="Text inviting friend to wedding",
-            message="Write a text asking a friend to be my plus-one at a wedding next month. I want to keep it super short and casual, and offer an out.",
-            icon="/public/write.svg",
+            label="Consumption",
+            message="Which sector consumes the most gas (power, residential, industrial)?",
+            icon="/public/icons/gas.svg",
+        ),
+        cl.Starter(
+            label="Storage",
+            message="How much gas is currently in storage?",
+            icon="/public/icons/storage-tank.svg",
+        ),
+        cl.Starter(
+            label="Exploration & Reserves",
+            message="Are reserves increasing or decreasing?",
+            icon="/public/icons/reserves.svg",
+        ),
+        cl.Starter(
+            label="Import",
+            message="Are imports rising or falling?",
+            icon="/public/icons/tanker-import.svg",
+        ),
+        cl.Starter(
+            label="Export",
+            message="Are exports higher than last year?",
+            icon="/public/icons/tanker-export.svg",
         ),
     ]
 
@@ -144,45 +153,17 @@ async def on_message(message: cl.Message):
         msg = await cl.Message(content=payload.answer_text).send()
 
         if payload.chart_spec is not None:
-            fig = render_plotly(
-                payload.chart_spec, result.df
-            )  # or payload.df if you store it
+            fig = render_plotly(payload.chart_spec, result.df)
+
             await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
                 for_id=msg.id
             )
 
-            if payload.data_preview:
-                # render preview as markdown table (simple)
-                cols = payload.data_preview.columns
-                rows = payload.data_preview.rows
-
-                # Build a small markdown table
-                header = "| " + " | ".join(cols) + " |"
-                sep = "| " + " | ".join(["---"] * len(cols)) + " |"
-                body = "\n".join(
-                    "| " + " | ".join(str(x) for x in r) + " |" for r in rows
-                )
-                table_md = "\n".join([header, sep, body])
-
-                await cl.Message(content=f"**Data (preview)**\n\n{table_md}").send()
-
         # sources
         if payload.sources:
-            src_lines = []
-            for s in payload.sources:
-                src_lines.append(
-                    f"- **{s.label}**\n"
-                    f"  - type: `{s.source_type}`\n"
-                    f"  - ref: `{s.reference}`\n"
-                    f"  - params: `{s.parameters}`\n"
-                    f"  - retrieved_at: `{s.retrieved_at}`"
-                )
-            await cl.Message(content="**Sources**\n" + "\n".join(src_lines)).send()
+            lines = [f"• {s.label}" for s in payload.sources]
 
-        # chart (later): payload.chart_spec -> renderer -> cl.Plotly(...)
-        # if payload.chart_spec:
-        #     fig = render_chart(payload.chart_spec)
-        #     await cl.Plotly(name=payload.chart_spec.title, figure=fig).send()
+            await cl.Message(content="**Sources**\n" + "\n".join(lines)).send()
 
     except Exception as e:
         # Keep errors visible during development

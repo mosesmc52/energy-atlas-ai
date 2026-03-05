@@ -107,14 +107,158 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             metric_key="lng_exports",
             start=start,
             end=end,
-            cache_key_parts={},  # add facets if you later support export type/region
+            cache_key_parts={
+                "region": "united_states_pipeline_total"
+            },  # add facets if you later support export type/region
             fetch_ctx={"_fetch": "lng_exports"},
-            allow_internal_gap_fill_daily=True,  # set False if series is weekly/monthly
+            allow_internal_gap_fill_daily=False,
+            expected_calendar="M",
         )
 
         src = self._make_source(
             label="EIA Natural Gas: LNG Exports",
             reference="eia-ng-client:natural_gas.exports",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def lng_imports(self, start: str, end: str) -> EIAResult:
+        """
+        LNG imports (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="lng_imports",
+            start=start,
+            end=end,
+            cache_key_parts={
+                "region": "united_states_pipeline_total"
+            },  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "lng_imports"},
+            allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
+            expected_calendar="M",
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: LNG Imports",
+            reference="eia-ng-client:natural_gas.imports",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_electricity(self, start: str, end: str) -> EIAResult:
+        """
+        NG Electricity (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_electricity",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_electricity"},
+            allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
+            expected_calendar="M",
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Electricity",
+            reference="eia-ng-client:electricity.generation_natural_gas",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_consumption_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Consumption (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="consumption",
+            start=start,
+            end=end,
+            cache_key_parts={
+                "region": "united_states_total"
+            },  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_consumption"},
+            allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
+            expected_calendar="M",
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Consumption",
+            reference="eia-ng-client:natural_gas.consumption",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_production_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Production (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_production",
+            start=start,
+            end=end,
+            cache_key_parts={
+                "region": "united_states_total"
+            },  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_production"},
+            allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
+            expected_calendar="M",
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Production",
+            reference="eia-ng-client:natural_gas.production",
+            parameters={
+                "start": start,
+                "end": end,
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
+    def ng_exploration_reserves_lower48(self, start: str, end: str) -> EIAResult:
+        """
+        NG Exploration (canonical series).
+        Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_exploration_reserves",
+            start=start,
+            end=end,
+            cache_key_parts={},  # add facets if you later support export type/region
+            fetch_ctx={"_fetch": "ng_exploration_reserves"},
+            allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
+            expected_calendar="A",
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Production",
+            reference="eia-ng-client:natural_gas.exploration_and_reserves",
             parameters={
                 "start": start,
                 "end": end,
@@ -180,6 +324,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         """
         Normalize to columns: ['date', 'value'] (and preserve extras if present).
         """
+
         # If upstream returned no rows, avoid a confusing schema error downstream.
         if df is None or (df.empty and len(df.columns) == 0):
             return pd.DataFrame(columns=["date", "value"])
@@ -190,7 +335,17 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                     df = df.rename(columns={alt: date_col})
                     break
         if value_col not in df.columns:
-            for alt in ("value", "Value", "series", "data", "v"):
+            for alt in (
+                "value",
+                "Value",
+                "series",
+                "data",
+                "v",
+                "generation",
+                "production",
+                "quantity",
+                "amount",
+            ):
                 if alt in df.columns:
                     # keep if already correct; otherwise rename
                     if alt != value_col:
@@ -201,7 +356,6 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             raise ValueError(
                 f"Expected columns '{date_col}' and '{value_col}' in df. Got: {list(df.columns)}"
             )
-
         out = df.copy()
         out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
         out = out.dropna(subset=[date_col])
@@ -245,6 +399,62 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"
             )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "ng_production":
+            rows = self.client.natural_gas.production(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng production {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "ng_consumption":
+            rows = self.client.natural_gas.consumption(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng consumption {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "lng_imports":
+            rows = self.client.natural_gas.imports(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "lng_exports":
+            rows = self.client.natural_gas.exports(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "ng_electricity":
+            rows = self.client.electricity.generation_natural_gas(start=start, end=end)
+            print(
+                f"[DEBUG] eia-ng electricity {start}..{end} -> "
+                f"{0 if rows is None else len(rows)} rows"
+            )
+            if not rows:
+                return pd.DataFrame(columns=["date", "value"])
+            return pd.DataFrame(rows)
+
+        if which == "ng_exploration_reserves":
+            rows = self.client.natural_gas.exploration_and_reserves(start=2000)
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
