@@ -1,6 +1,7 @@
 # apps/chainlit/app.py
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import sys
@@ -73,7 +74,6 @@ async def set_starters():
             label="Storage",
             message="How much gas is currently in storage?",
             icon="/public/icons/storage-tank.svg",
-            command="code",
         ),
         cl.Starter(
             label="Exploration & Reserves",
@@ -188,21 +188,14 @@ async def on_message(message: cl.Message):
 
         # sources
         if payload.sources:
-            src_lines = []
-            for s in payload.sources:
-                src_lines.append(
-                    f"- **{s.label}**\n"
-                    f"  - type: `{s.source_type}`\n"
-                    f"  - ref: `{s.reference}`\n"
-                    f"  - params: `{s.parameters}`\n"
-                    f"  - retrieved_at: `{s.retrieved_at}`"
-                )
-            await cl.Message(content="**Sources**\n" + "\n".join(src_lines)).send()
+            lines = [f"• {s.label}" for s in payload.sources]
+
+            await cl.Message(content="**Sources**\n" + "\n".join(lines)).send()
 
         # chart (later): payload.chart_spec -> renderer -> cl.Plotly(...)
-        # if payload.chart_spec:
-        #     fig = render_chart(payload.chart_spec)
-        #     await cl.Plotly(name=payload.chart_spec.title, figure=fig).send()
+        if payload.chart_spec:
+            fig = render_plotly(payload.chart_spec)
+            await cl.Plotly(name=payload.chart_spec.title, figure=fig).send()
 
     except Exception as e:
         # Keep errors visible during development

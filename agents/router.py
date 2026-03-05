@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from utils.dates import resolve_date_range
+from utils.helpers import contains_any
 
 
 @dataclass(frozen=True)
@@ -13,32 +14,30 @@ class RouteResult:
     filters: Optional[Dict[str, Any]] = None
 
 
+ROUTE_MAP = {
+    "working_gas_storage_lower48": [
+        "storage",
+        "inventory",
+        "working gas",
+        "injection",
+        "withdrawal",
+    ],
+    "henry_hub_spot": ["henry hub", "spot price", "gas price", "benchmark price"],
+    "lng_exports": ["lng exports", "export lng", "liquefied natural gas export"],
+    "lng_imports": ["lng imports", "import lng", "liquefied natural gas import"],
+    "ng_consumption_lower48": ["consumption", "demand", "consumes", "usage"],
+    "ng_electricity": ["electricity", "power plants", "power generation"],
+    "ng_production_lower48": ["production", "output", "supply", "dry gas production"],
+    "ng_exploration_reserves_lower48": ["exploration", "reserves", "proved reserves"],
+}
+
+
 def route_metric(user_query: str) -> str:
     q = user_query.lower()
 
-    if "storage" in q:
-        return "working_gas_storage_lower48"
-
-    if "henry hub" in q or "spot price" in q:
-        return "henry_hub_spot"
-
-    if "lng" in q or "exports" in q:
-        return "lng_exports"
-
-    if "lng" in q or "imports" in q:
-        return "lng_imports"
-
-    if "consumes" in q:
-        return "ng_consumption_lower48"
-
-    if "electricity" in q or "power plants" in q:
-        return "ng_electricity"
-
-    if "production" in q:
-        return "ng_production_lower48"
-
-    if "exploration" in q or "reserves" in q:
-        return "ng_exploration_reserves_lower48"
+    for metric, keywords in ROUTE_MAP.items():
+        if contains_any(keywords, q):
+            return metric
 
     raise ValueError("No route for query")
 

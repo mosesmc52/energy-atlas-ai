@@ -18,7 +18,7 @@ Or (in this environment):
   --xlsx /mnt/data/EIA-NaturalGasPipelineProjects_Jan2026.xlsx
 
 Requires:
-  pip install pandas openpyxl
+  pip install pandas openpyxl pyarrow
 """
 
 from __future__ import annotations
@@ -222,7 +222,9 @@ def read_table(ws: Worksheet, header_cell: str, data_cell: str) -> pd.DataFrame:
 # Main
 # -----------------------------
 def parse_workbook(
-    xlsx_path: str, out_dir: Optional[str] = "out_csv"
+    xlsx_path: str,
+    out_dir: Optional[str] = "out_csv",
+    output_format: str = "csv",
 ) -> Dict[str, pd.DataFrame]:
     wb = load_workbook(xlsx_path, read_only=True, data_only=True, keep_links=False)
 
@@ -241,8 +243,15 @@ def parse_workbook(
         out[spec.sheet] = df
 
         if out_dir:
-            csv_path = os.path.join(out_dir, f"{safe_filename(spec.sheet)}.csv")
-            df.to_csv(csv_path, index=False)
+            base_path = os.path.join(out_dir, safe_filename(spec.sheet))
+            if output_format == "csv":
+                df.to_csv(f"{base_path}.csv", index=False)
+            elif output_format == "parquet":
+                df.to_parquet(f"{base_path}.parquet", index=False)
+            else:
+                raise ValueError(
+                    f"Unsupported output_format={output_format!r}. Use 'csv' or 'parquet'."
+                )
 
         print(f"[OK] {spec.sheet}: rows={len(df):,} cols={df.shape[1]:,}")
 
@@ -254,7 +263,13 @@ def main():
     p.add_argument(
         "--out",
         default="data/processed/eia/ng/pipeline/",
-        help="Output folder for CSVs",
+        help="Output folder for extracted files",
+    )
+    p.add_argument(
+        "--output-format",
+        choices=["csv", "parquet"],
+        default="csv",
+        help="Output file format",
     )
     p.add_argument("--raw-dir", default="data/raw/eia/ng/pipeline")
     args = p.parse_args()
@@ -269,7 +284,7 @@ def main():
 
     download_if_needed(url, xlsx_path)
 
-    parse_workbook(str(xlsx_path), out_dir=args.out)
+    parse_workbook(str(xlsx_path), out_dir=args.out, output_format=args.output_format)
 
 
 if __name__ == "__main__":

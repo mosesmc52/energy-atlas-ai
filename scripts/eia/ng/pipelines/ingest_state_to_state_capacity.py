@@ -5,11 +5,12 @@ Updates vs your version:
 - Adds current_january_url() + current_january_filename()
 - Adds CLI flags to set:
     1) destination path of downloaded XLSX  (either --dest-xlsx or --download-dir)
-    2) output directory for generated CSVs (--out-dir)
+    2) output directory for generated files (--out-dir)
+    3) output format (--output-format: csv or parquet)
 - Keeps dynamic row/column detection (safe if rows expand)
 
 Examples:
-  # default locations (download into data/raw/... ; csvs into data/staging/...)
+  # default locations (download into data/raw/... ; extracted files into data/staging/...)
   python ingest_state_to_state_capacity.py
 
   # explicit destinations
@@ -190,6 +191,18 @@ def safe_filename(name: str) -> str:
     return name
 
 
+def _normalize_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Make DataFrame parquet-safe for pyarrow when Excel-origin columns are mixed-type
+    objects (e.g., strings and ints in the same column).
+    """
+    out = df.copy()
+    object_cols = out.select_dtypes(include=["object"]).columns
+    for col in object_cols:
+        out[col] = out[col].astype("string")
+    return out
+
+
 def read_table(
     ws: Worksheet,
     header_cell: str,
@@ -247,6 +260,7 @@ def parse_workbook(
     xlsx_path: str,
     specs: list[SheetSpec] = SPECS,
     out_dir: Optional[str] = "out_csv",
+    output_format: str = "csv",
 ) -> Dict[str, pd.DataFrame]:
     wb = load_workbook(xlsx_path, read_only=True, data_only=True, keep_links=False)
     out: Dict[str, pd.DataFrame] = {}
@@ -265,8 +279,16 @@ def parse_workbook(
         out[spec.sheet] = df
 
         if out_dir:
-            csv_path = os.path.join(out_dir, f"{safe_filename(spec.sheet)}.csv")
-            df.to_csv(csv_path, index=False)
+            base_path = os.path.join(out_dir, safe_filename(spec.sheet))
+            if output_format == "csv":
+                df.to_csv(f"{base_path}.csv", index=False)
+            elif output_format == "parquet":
+                parquet_df = _normalize_for_parquet(df)
+                parquet_df.to_parquet(f"{base_path}.parquet", index=False)
+            else:
+                raise ValueError(
+                    f"Unsupported output_format={output_format!r}. Use 'csv' or 'parquet'."
+                )
 
         print(f"[OK] {spec.sheet}: rows={len(df):,} cols={df.shape[1]:,}")
 
@@ -277,7 +299,8 @@ def main():
     """
     Controls:
     - where the XLSX is downloaded (dest)
-    - where CSVs are written (out_dir)
+    - where extracted files are written (out_dir)
+    - which extracted file format is written (output-format)
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -294,7 +317,13 @@ def main():
     parser.add_argument(
         "--out-dir",
         default="data/processed/eia/ng/pipeline/",
-        help="Directory to write one CSV per sheet.",
+        help="Directory to write one extracted file per sheet.",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["csv", "parquet"],
+        default="csv",
+        help="Output file format.",
     )
     args = parser.parse_args()
 
@@ -309,9 +338,14 @@ def main():
         print(f"Downloading: {args.download_url}")
         download_if_needed(args.download_url, str(xlsx_path))
 
-    # Parse + write CSVs
+    # Parse + write extracted files
     out_dir = args.out_dir if args.out_dir.strip() else None
-    parse_workbook(str(xlsx_path), SPECS, out_dir=out_dir)
+    parse_workbook(
+        str(xlsx_path),
+        SPECS,
+        out_dir=out_dir,
+        output_format=args.output_format,
+    )
 
 
 if __name__ == "__main__":
