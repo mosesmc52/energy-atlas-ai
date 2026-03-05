@@ -1,7 +1,6 @@
 # apps/chainlit/app.py
 from __future__ import annotations
 
-import json
 import os
 import pathlib
 import sys
@@ -164,33 +163,11 @@ async def on_message(message: cl.Message):
         msg = await cl.Message(content=payload.answer_text).send()
 
         if payload.chart_spec is not None:
-            fig = render_plotly(
-                payload.chart_spec, result.df
-            )  # or payload.df if you store it
+            fig = render_plotly(payload.chart_spec, result.df)
+
             await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
                 for_id=msg.id
             )
-
-            if payload.data_preview:
-                # render preview as markdown table (simple)
-                cols = payload.data_preview.columns
-                rows = payload.data_preview.rows
-
-                # Build a small markdown table
-                header = "| " + " | ".join(cols) + " |"
-                sep = "| " + " | ".join(["---"] * len(cols)) + " |"
-                body = "\n".join(
-                    "| " + " | ".join(str(x) for x in r) + " |" for r in rows
-                )
-                table_md = "\n".join([header, sep, body])
-
-                preview_md = (
-                    "<details>\n"
-                    "<summary><strong>Data (preview)</strong></summary>\n\n"
-                    f"{table_md}\n"
-                    "</details>"
-                )
-                await cl.Message(content=preview_md).send()
 
         # sources
         if payload.sources:
