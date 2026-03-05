@@ -20,16 +20,16 @@ class CacheFetchInfo:
 
 class CacheBackedTimeseriesAdapterBase:
     """
-    Reusable CSV cache layer for time series adapters.
+    Reusable parquet cache layer for time series adapters.
 
     Responsibilities (generic):
-      - Load CSV cache
+      - Load cache
       - Normalize dates
       - Infer frequency (daily-first)
       - Compute missing segments (daily internal gaps; edge fill fallback)
       - Fetch missing segments via subclass-provided fetch function
       - Merge/dedupe/sort
-      - Save to CSV atomically
+      - Save to parquet atomically
       - Return requested window + cache metadata
 
     Subclasses provide:
@@ -176,19 +176,19 @@ class CacheBackedTimeseriesAdapterBase:
         for k in sorted(parts.keys()):
             elems.append(f"{k}={parts[k]}")
         safe = "__".join(elems).replace("/", "_").replace(" ", "_")
-        return self.cache_dir / f"{safe}.csv"
+        return self.cache_dir / f"{safe}.parquet"
 
     def _load_cache(self, path: Path) -> Optional[pd.DataFrame]:
-        if not path.exists():
-            return None
         try:
-            return pd.read_csv(path)
+            if not path.exists():
+                return None
+            return pd.read_parquet(path)
         except Exception:
             return None
 
     def _save_cache(self, path: Path, df: pd.DataFrame) -> None:
-        tmp = path.with_suffix(".tmp.csv")
-        df.to_csv(tmp, index=False)
+        tmp = path.with_suffix(".tmp.parquet")
+        df.to_parquet(tmp, index=False)
         tmp.replace(path)
 
     def _merge_cache(
