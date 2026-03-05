@@ -20,6 +20,7 @@ plotly = "^6.5.2"
 openpyxl = "^3.1.5"
 requests = "^2.32.5"
 pyarrow = "^23.0.1"
+gridstatus = "^0.34.0"
 
 
 [build-system]

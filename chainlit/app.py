@@ -20,6 +20,7 @@ from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import render_plotly
 from executer import ExecuteRequest, MetricExecutor
 from tools.eia_adapter import EIAAdapter
+from tools.gridstatus_adapter import GridStatusAdapter
 from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 # -------------------------
@@ -28,21 +29,10 @@ from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 
 def build_container():
-    """
-    Build and return the app dependencies once.
-    This is essentially your "DI container".
-    """
-    # Replace with your actual eia-ng-client initialization
-    # Example (placeholder):
-    # from eia_ng_client import EIAClient
-    # eia_client = EIAClient(api_key=os.environ["EIA_API_KEY"])
-    eia_client = None  # TODO: set this
-
     eia_adapter = EIAAdapter()
-    executor = MetricExecutor(eia=eia_adapter)
+    grid_adapter = GridStatusAdapter()
+    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
 
-    # OpenAI client is created inside build_answer_with_openai in the earlier example,
-    # but you can also inject it if you prefer.
     return {"executor": executor}
 
 
