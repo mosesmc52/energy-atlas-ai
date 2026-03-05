@@ -184,18 +184,19 @@ async def on_message(message: cl.Message):
                 )
                 table_md = "\n".join([header, sep, body])
 
-                await cl.Message(content=f"**Data (preview)**\n\n{table_md}").send()
+                preview_md = (
+                    "<details>\n"
+                    "<summary><strong>Data (preview)</strong></summary>\n\n"
+                    f"{table_md}\n"
+                    "</details>"
+                )
+                await cl.Message(content=preview_md).send()
 
         # sources
         if payload.sources:
             lines = [f"• {s.label}" for s in payload.sources]
 
             await cl.Message(content="**Sources**\n" + "\n".join(lines)).send()
-
-        # chart (later): payload.chart_spec -> renderer -> cl.Plotly(...)
-        if payload.chart_spec:
-            fig = render_plotly(payload.chart_spec)
-            await cl.Plotly(name=payload.chart_spec.title, figure=fig).send()
 
     except Exception as e:
         # Keep errors visible during development

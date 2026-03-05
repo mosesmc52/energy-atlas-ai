@@ -130,7 +130,7 @@ def build_answer_with_openai(
     # 3) Assemble AnswerPayload
     df = df.sort_values("date").reset_index(drop=True)
     metric = result.meta.get("metric", "")
-    chart_spec = chart_policy(metric=metric, mode=mode, df=df)
+    chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
     payload = AnswerPayload(
         query=query,
         mode=mode,
