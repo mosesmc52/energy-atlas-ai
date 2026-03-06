@@ -77,14 +77,16 @@ SINGLE_VALUE_TERMS = (
 
 METRIC_TITLES = {
     "henry_hub_spot": "Henry Hub Natural Gas Spot Price",
-    "working_gas_storage_lower48": "Working Gas in Storage (Lower 48)",
-    "lng_exports": "U.S. LNG Exports",
-    "lng_imports": "U.S. LNG Imports",
+    "working_gas_storage_lower48": "Working Gas in Storage",
+    "working_gas_storage_change_weekly": "Weekly Change in Working Gas Storage",
+    "lng_exports": "U.S. Natural Gas Exports",
+    "lng_imports": "U.S. Natural Gas Imports",
     "ng_electricity": "Natural Gas Electricity Generation",
     "ng_consumption_lower48": "Natural Gas Consumption (Lower 48)",
     "ng_production_lower48": "Natural Gas Production (Lower 48)",
     "iso_load": "ISO Load",
     "iso_gas_dependency": "ISO Gas Dependency",
+    "iso_renewables": "ISO Renewables (Wind + Solar)",
     "iso_fuel_mix": "ISO Fuel Mix",
 }
 
@@ -160,6 +162,7 @@ def _default_y(metric: str, df) -> list[str]:
     defaults = {
         "henry_hub_spot": ["value"],
         "working_gas_storage_lower48": ["value"],
+        "working_gas_storage_change_weekly": ["value"],
         "lng_exports": ["value"],
         "lng_imports": ["value"],
         "ng_electricity": ["value"],
@@ -167,6 +170,7 @@ def _default_y(metric: str, df) -> list[str]:
         "ng_production_lower48": ["value"],
         "iso_load": ["value"],
         "iso_gas_dependency": ["gas_share", "gas_generation"],
+        "iso_renewables": ["renewable_generation"],
     }
     preferred = defaults.get(metric, ["value"])
     y = [c for c in preferred if c in df.columns]
@@ -250,6 +254,55 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
             y_label="Frequency",
         )
 
+    if metric == "iso_renewables":
+        share_view = _has_any(q, ("share", "mix", "percent", "percentage"))
+        breakdown_view = _has_any(
+            q,
+            (
+                "wind and solar",
+                "solar and wind",
+                "wind solar",
+                "breakdown",
+                "by source",
+                "split",
+            ),
+        )
+
+        if share_view and "renewable_share" in df.columns:
+            return ChartSpec(
+                chart_type="line",
+                title=f"{title}: Share",
+                x="date",
+                y=["renewable_share"],
+                x_label="Date",
+                y_label="Renewable Share",
+                notes="v1 renewables include wind + solar only.",
+            )
+
+        if breakdown_view:
+            ys = [c for c in ("wind_generation", "solar_generation") if c in df.columns]
+            if ys:
+                return ChartSpec(
+                    chart_type="stacked_area",
+                    title=f"{title}: Wind + Solar Breakdown",
+                    x="date",
+                    y=ys,
+                    x_label="Date",
+                    y_label="Generation (MW)",
+                    notes="v1 renewables include wind + solar only.",
+                )
+
+        if "renewable_generation" in df.columns:
+            return ChartSpec(
+                chart_type="line",
+                title=title,
+                x="date",
+                y=["renewable_generation"],
+                x_label="Date",
+                y_label="Renewable Generation",
+                notes="v1 renewables include wind + solar only.",
+            )
+
     if metric == "iso_fuel_mix" or has_composition:
         fuels = _top_fuels(df, limit=5)
         if not fuels:
@@ -302,12 +355,14 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
     if has_trend or metric in {
         "henry_hub_spot",
         "working_gas_storage_lower48",
+        "working_gas_storage_change_weekly",
         "lng_exports",
         "lng_imports",
         "ng_electricity",
         "ng_consumption_lower48",
         "ng_production_lower48",
         "iso_load",
+        "iso_renewables",
     }:
         y = _default_y(metric, df)
         if not y:

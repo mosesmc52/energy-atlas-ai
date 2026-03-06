@@ -47,15 +47,27 @@ def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
     chart_type = spec.chart_type
     template = "plotly_white"
 
-    if chart_type in ("line", "area", "stacked_area"):
+    if chart_type == "stacked_area":
+        fig = go.Figure()
+        for y in y_fields:
+            trace_kwargs = {
+                "x": d[x_field],
+                "y": d[y],
+                "mode": "lines",
+                "name": y,
+                "stackgroup": "one",
+            }
+            if spec.groupnorm:
+                trace_kwargs["groupnorm"] = spec.groupnorm
+            fig.add_trace(go.Scatter(**trace_kwargs))
+        fig.update_layout(title=spec.title, template=template)
+
+    elif chart_type in ("line", "area"):
         fig = px.line(d, x=x_field, y=y_fields, title=spec.title, template=template)
         fig.update_traces(line=dict(width=3))
 
-        if chart_type in ("area", "stacked_area"):
+        if chart_type == "area":
             fig.update_traces(fill="tozeroy")
-
-        if chart_type == "stacked_area":
-            fig.update_traces(stackgroup="one", groupnorm=spec.groupnorm)
 
     elif chart_type == "bar":
         fig = px.bar(d, x=x_field, y=y_fields, title=spec.title, template=template)

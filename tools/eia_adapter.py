@@ -35,6 +35,20 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
       - (Optional) attach meta like units/frequency
     """
 
+    STORAGE_REGIONS = {
+        "lower48",
+        "east",
+        "midwest",
+        "south_central",
+        "mountain",
+        "pacific",
+    }
+    TRADE_REGIONS = {
+        "united_states_pipeline_total",
+        "canada_pipeline",
+        "mexico_pipeline",
+    }
+
     def __init__(self, cache_dir: str = "data/cache/eia"):
         super().__init__(cache_dir=cache_dir, date_col="date")
         self.client = EIAClient(api_key=os.getenv("EIA_API_KEY"))
@@ -43,26 +57,31 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # Public methods (router calls these)
     # ----------------------------
 
-    def storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
+    def storage_working_gas(self, start: str, end: str, region: str = "lower48") -> EIAResult:
         """
-        Lower 48 working gas in storage (weekly).
+        Working gas in storage (weekly), optionally by region.
         Cache-first: load CSV, fetch missing edges via eia-ng, save, return window.
         """
+        if region not in self.STORAGE_REGIONS:
+            raise ValueError(
+                f"Invalid storage region '{region}'. Expected one of: {sorted(self.STORAGE_REGIONS)}"
+            )
+
         df, cache_info = self._cached_timeseries(
             metric_key="working_gas_storage_lower48",
             start=start,
             end=end,
-            cache_key_parts={"region": "lower48"},
-            fetch_ctx={"_fetch": "storage_working_gas", "region": "lower48"},
+            cache_key_parts={"region": region},
+            fetch_ctx={"_fetch": "storage_working_gas", "region": region},
             allow_internal_gap_fill_daily=True,  # weekly series: edge fill is safer initially
             expected_calendar="B",
         )
 
         src = self._make_source(
-            label="EIA Natural Gas Storage: Working Gas (Lower 48)",
+            label=f"EIA Natural Gas Storage: Working Gas ({region.replace('_', ' ').title()})",
             reference="eia-ng-client:natural_gas.storage",
             parameters={
-                "region": "lower48",
+                "region": region,
                 "start": start,
                 "end": end,
                 "cache": cache_info.__dict__,  # <-- include cache behavior
@@ -70,6 +89,42 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         )
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
+
+    def storage_working_gas_lower48(self, start: str, end: str) -> EIAResult:
+        return self.storage_working_gas(start=start, end=end, region="lower48")
+
+    def storage_working_gas_change_weekly(
+        self, start: str, end: str, region: str = "lower48"
+    ) -> EIAResult:
+        """
+        Weekly change in working gas storage, derived from weekly storage levels.
+        v1 uses simple row-to-row difference on the weekly series.
+        """
+        base = self.storage_working_gas(start=start, end=end, region=region)
+        df = base.df.copy()
+
+        if df is None or df.empty:
+            out = pd.DataFrame(columns=["date", "value"])
+        else:
+            out = df[["date", "value"]].copy()
+            out["value"] = pd.to_numeric(out["value"], errors="coerce").diff()
+            out = out.dropna(subset=["date", "value"]).reset_index(drop=True)
+
+        src = self._make_source(
+            label=f"EIA Natural Gas Storage: Weekly Change ({region.replace('_', ' ').title()})",
+            reference="eia-ng-client:derived_natural_gas.storage_change_weekly",
+            parameters={
+                "region": region,
+                "start": start,
+                "end": end,
+                "source_storage_reference": base.source.reference,
+            },
+        )
+        meta = {
+            "cache": (base.meta or {}).get("cache"),
+            "note": "Derived as row-to-row weekly difference of working gas storage levels.",
+        }
+        return EIAResult(df=out, source=src, meta=meta)
 
     def henry_hub_spot(self, start: str, end: str) -> EIAResult:
         """
@@ -98,27 +153,33 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def lng_exports(self, start: str, end: str) -> EIAResult:
+    def lng_exports(
+        self, start: str, end: str, region: str = "united_states_pipeline_total"
+    ) -> EIAResult:
         """
-        LNG exports (canonical series).
+        Natural gas exports (canonical series), optionally by trade region.
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
+        if region not in self.TRADE_REGIONS:
+            raise ValueError(
+                f"Invalid trade region '{region}'. Expected one of: {sorted(self.TRADE_REGIONS)}"
+            )
+
         df, cache_info = self._cached_timeseries(
             metric_key="lng_exports",
             start=start,
             end=end,
-            cache_key_parts={
-                "region": "united_states_pipeline_total"
-            },  # add facets if you later support export type/region
-            fetch_ctx={"_fetch": "lng_exports"},
+            cache_key_parts={"region": region},
+            fetch_ctx={"_fetch": "lng_exports", "region": region},
             allow_internal_gap_fill_daily=False,
             expected_calendar="M",
         )
 
         src = self._make_source(
-            label="EIA Natural Gas: LNG Exports",
+            label=f"EIA Natural Gas: Exports ({region.replace('_', ' ').title()})",
             reference="eia-ng-client:natural_gas.exports",
             parameters={
+                "region": region,
                 "start": start,
                 "end": end,
                 "cache": cache_info.__dict__,
@@ -127,27 +188,33 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def lng_imports(self, start: str, end: str) -> EIAResult:
+    def lng_imports(
+        self, start: str, end: str, region: str = "united_states_pipeline_total"
+    ) -> EIAResult:
         """
-        LNG imports (canonical series).
+        Natural gas imports (canonical series), optionally by trade region.
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
+        if region not in self.TRADE_REGIONS:
+            raise ValueError(
+                f"Invalid trade region '{region}'. Expected one of: {sorted(self.TRADE_REGIONS)}"
+            )
+
         df, cache_info = self._cached_timeseries(
             metric_key="lng_imports",
             start=start,
             end=end,
-            cache_key_parts={
-                "region": "united_states_pipeline_total"
-            },  # add facets if you later support export type/region
-            fetch_ctx={"_fetch": "lng_imports"},
+            cache_key_parts={"region": region},
+            fetch_ctx={"_fetch": "lng_imports", "region": region},
             allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
             expected_calendar="M",
         )
 
         src = self._make_source(
-            label="EIA Natural Gas: LNG Imports",
+            label=f"EIA Natural Gas: Imports ({region.replace('_', ' ').title()})",
             reference="eia-ng-client:natural_gas.imports",
             parameters={
+                "region": region,
                 "start": start,
                 "end": end,
                 "cache": cache_info.__dict__,
@@ -394,9 +461,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "lng_exports":
-            rows = self.client.natural_gas.exports(start=start, end=end)
+            region = kwargs.get("region", "united_states_pipeline_total")
+            rows = self.client.natural_gas.exports(start=start, end=end, region=region)
             print(
-                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
+                f"[DEBUG] eia-ng lng_exports {region} {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"
             )
             if not rows:
@@ -424,19 +492,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "lng_imports":
-            rows = self.client.natural_gas.imports(start=start, end=end)
+            region = kwargs.get("region", "united_states_pipeline_total")
+            rows = self.client.natural_gas.imports(start=start, end=end, region=region)
             print(
-                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
-            if not rows:
-                return pd.DataFrame(columns=["date", "value"])
-            return pd.DataFrame(rows)
-
-        if which == "lng_exports":
-            rows = self.client.natural_gas.exports(start=start, end=end)
-            print(
-                f"[DEBUG] eia-ng lng_exports {start}..{end} -> "
+                f"[DEBUG] eia-ng lng_imports {region} {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"
             )
             if not rows:
@@ -461,9 +520,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         # keep your other ones (storage, etc.)
         if which == "storage_working_gas":
-            rows = self.client.natural_gas.storage(start=start, end=end)
+            region = kwargs.get("region", "lower48")
+            rows = self.client.natural_gas.storage(start=start, end=end, region=region)
             print(
-                f"[DEBUG] eia-ng storage_working_gas {start}..{end} -> "
+                f"[DEBUG] eia-ng storage_working_gas {region} {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"
             )
             if not rows:

@@ -37,6 +37,7 @@ class MetricExecutor:
         self._metric_to_handler = {
             # --- EIA ---
             "working_gas_storage_lower48": self._eia_storage_lower48,
+            "working_gas_storage_change_weekly": self._eia_storage_change_weekly,
             "henry_hub_spot": self._eia_henry_hub_spot,
             "lng_exports": self._eia_lng_exports,
             "lng_imports": self._eia_lng_imports,
@@ -48,6 +49,7 @@ class MetricExecutor:
             "iso_fuel_mix": self._grid_iso_fuel_mix,
             "iso_load": self._grid_iso_load,
             "iso_gas_dependency": self._grid_iso_gas_dependency,
+            "iso_renewables": self._grid_iso_renewables,
         }
 
     def execute(self, req: ExecuteRequest) -> MetricResult:
@@ -102,7 +104,16 @@ class MetricExecutor:
     def _eia_storage_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        return self.eia.storage_working_gas_lower48(start=start, end=end)
+        region = str(filters.get("region") or "lower48")
+        return self.eia.storage_working_gas(start=start, end=end, region=region)
+
+    def _eia_storage_change_weekly(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        region = str(filters.get("region") or "lower48")
+        return self.eia.storage_working_gas_change_weekly(
+            start=start, end=end, region=region
+        )
 
     def _eia_henry_hub_spot(
         self, *, start: str, end: str, filters: Dict[str, Any]
@@ -112,12 +123,14 @@ class MetricExecutor:
     def _eia_lng_exports(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        return self.eia.lng_exports(start=start, end=end)
+        region = str(filters.get("region") or "united_states_pipeline_total")
+        return self.eia.lng_exports(start=start, end=end, region=region)
 
     def _eia_lng_imports(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        return self.eia.lng_imports(start=start, end=end)
+        region = str(filters.get("region") or "united_states_pipeline_total")
+        return self.eia.lng_imports(start=start, end=end, region=region)
 
     def _eia_ng_electricity(
         self, *, start: str, end: str, filters: Dict[str, Any]
@@ -166,3 +179,9 @@ class MetricExecutor:
             end=end,
             heat_rate_mmbtu_per_mwh=heat_rate,
         )
+
+    def _grid_iso_renewables(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> GridStatusResult:
+        iso = str(filters.get("iso") or "ercot")
+        return self.grid.iso_renewables(iso=iso, start=start, end=end)

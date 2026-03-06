@@ -214,6 +214,117 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
         }
         return GridStatusResult(df=out, source=src, meta=meta)
 
+    def iso_renewables(
+        self,
+        *,
+        iso: str,
+        start: str,
+        end: str,
+    ) -> GridStatusResult:
+        """
+        v1 renewables metric derived from fuel mix.
+
+        Important:
+          - v1 renewables = wind + solar only
+          - excludes hydro, batteries, geothermal, and nuclear
+        """
+        mix_res = self.iso_fuel_mix(iso=iso, start=start, end=end)
+        df = mix_res.df.copy()
+
+        wind_col = self._pick_first_existing_column(
+            df,
+            (
+                "wind",
+                "wind_generation",
+                "wind generation",
+                "wind_mw",
+                "wind mw",
+            ),
+        )
+        solar_col = self._pick_first_existing_column(
+            df,
+            (
+                "solar",
+                "solar_generation",
+                "solar generation",
+                "solar_mw",
+                "solar mw",
+                "solar_pv",
+                "solar pv",
+            ),
+        )
+
+        if wind_col is None and solar_col is None:
+            raise ValueError(
+                f"Fuel mix for {iso} did not include wind/solar columns. "
+                f"Columns={list(df.columns)}"
+            )
+
+        total_col = self._pick_first_existing_column(
+            df, ("total_generation_mw", "total_generation")
+        )
+        if total_col is None:
+            df = self._enrich_fuel_mix_df(df)
+            total_col = "total_generation_mw"
+
+        wind = (
+            pd.to_numeric(df[wind_col], errors="coerce")
+            if wind_col is not None
+            else pd.Series(0.0, index=df.index, dtype="float64")
+        )
+        solar = (
+            pd.to_numeric(df[solar_col], errors="coerce")
+            if solar_col is not None
+            else pd.Series(0.0, index=df.index, dtype="float64")
+        )
+        total = pd.to_numeric(df[total_col], errors="coerce")
+
+        out = pd.DataFrame(
+            {
+                "date": df["date"],
+                "wind_generation": wind.fillna(0.0),
+                "solar_generation": solar.fillna(0.0),
+                "total_generation": total,
+            }
+        )
+        out["renewable_generation"] = (
+            out["wind_generation"] + out["solar_generation"]
+        )
+        out["renewable_share"] = out["renewable_generation"] / out[
+            "total_generation"
+        ].replace({0: pd.NA})
+
+        out = (
+            out[
+                [
+                    "date",
+                    "wind_generation",
+                    "solar_generation",
+                    "renewable_generation",
+                    "total_generation",
+                    "renewable_share",
+                ]
+            ]
+            .dropna(subset=["date"])
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
+
+        src = self._make_source(
+            label=f"GridStatus Derived: {iso.upper()} Renewables (Wind + Solar)",
+            reference="gridstatus:derived_renewables_from_fuel_mix",
+            parameters={
+                "iso": iso,
+                "start": start,
+                "end": end,
+                "source_fuel_mix_reference": mix_res.source.reference,
+            },
+        )
+        meta = {
+            "note": "v1 renewables include wind + solar only (exclude hydro, batteries, geothermal, nuclear)."
+        }
+        return GridStatusResult(df=out, source=src, meta=meta)
+
     # ----------------------------
     # Subclass hooks required by CacheBackedTimeseriesAdapterBase
     # ----------------------------
@@ -395,6 +506,31 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
             for c in cols:
                 if c.lower() == p.lower():
                     return c
+        return None
+
+    def _pick_first_existing_column(
+        self, df: pd.DataFrame, candidates: Tuple[str, ...]
+    ) -> Optional[str]:
+        cols = list(df.columns)
+        if not cols:
+            return None
+
+        def _norm(s: str) -> str:
+            return "".join(ch for ch in s.lower() if ch.isalnum())
+
+        norm_to_col = {_norm(c): c for c in cols}
+
+        for cand in candidates:
+            if cand in cols:
+                return cand
+            for c in cols:
+                if c.lower() == cand.lower():
+                    return c
+
+            n = _norm(cand)
+            if n in norm_to_col:
+                return norm_to_col[n]
+
         return None
 
     def _enrich_fuel_mix_df(self, df: pd.DataFrame) -> pd.DataFrame:
