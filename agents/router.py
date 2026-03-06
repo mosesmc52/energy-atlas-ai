@@ -33,12 +33,48 @@ ISO_KEYWORDS = {
     "caiso": ["caiso", "california iso", "california"],
 }
 
+STORAGE_REGION_KEYWORDS = {
+    "lower48": ["lower48", "lower 48"],
+    "east": ["east", "eastern"],
+    "midwest": ["midwest", "mid-west"],
+    "south_central": ["south_central", "south central"],
+    "mountain": ["mountain"],
+    "pacific": ["pacific", "west coast"],
+}
+
+TRADE_REGION_KEYWORDS = {
+    "united_states_pipeline_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "total pipeline",
+    ],
+    "canada_pipeline": ["canada_pipeline", "canada pipeline", "canadian pipeline"],
+    "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
+}
+
 
 def route_iso(q: str) -> str | None:
     q = q.lower()
     for iso, keys in ISO_KEYWORDS.items():
         if contains_any(keys, q):
             return iso
+    return None
+
+
+def route_storage_region(q: str) -> str | None:
+    q = q.lower()
+    for region, keys in STORAGE_REGION_KEYWORDS.items():
+        if contains_any(keys, q):
+            return region
+    return None
+
+
+def route_trade_region(q: str) -> str | None:
+    q = q.lower()
+    for region, keys in TRADE_REGION_KEYWORDS.items():
+        if contains_any(keys, q):
+            return region
     return None
 
 
@@ -56,6 +92,16 @@ ROUTE_MAP = {
         "dispatch",
         "how much gas generation",
     ],
+    "iso_renewables": [
+        "renewables",
+        "renewable generation",
+        "renewable share",
+        "wind and solar",
+        "wind solar",
+        "solar and wind",
+        "wind generation",
+        "solar generation",
+    ],
     "iso_fuel_mix": [
         "fuel mix",
         "generation mix",
@@ -71,6 +117,15 @@ ROUTE_MAP = {
         "system demand",
     ],
     # --- EIA (your existing) ---
+    "working_gas_storage_change_weekly": [
+        "storage change",
+        "weekly storage change",
+        "week over week storage",
+        "storage wow",
+        "net injection",
+        "net withdrawal",
+        "change in storage",
+    ],
     "working_gas_storage_lower48": [
         "storage",
         "inventory",
@@ -79,8 +134,24 @@ ROUTE_MAP = {
         "withdrawal",
     ],
     "henry_hub_spot": ["henry hub", "spot price", "gas price", "benchmark price"],
-    "lng_exports": ["lng exports", "export lng", "liquefied natural gas export"],
-    "lng_imports": ["lng imports", "import lng", "liquefied natural gas import"],
+    "lng_exports": [
+        "lng exports",
+        "lng export",
+        "lng export capacity",
+        "lng capacity utilization",
+        "export capacity",
+        "export lng",
+        "liquefied natural gas export",
+        "gas exports",
+        "pipeline exports",
+    ],
+    "lng_imports": [
+        "lng imports",
+        "import lng",
+        "liquefied natural gas import",
+        "gas imports",
+        "pipeline imports",
+    ],
     "ng_consumption_lower48": [
         "consumption",
         "consumes",
@@ -112,5 +183,11 @@ def route_query(user_query: str) -> RouteResult:
     if metric.startswith("iso_"):
         iso = route_iso(user_query) or "ercot"  # v1 default (sensible)
         filters["iso"] = iso
+    elif metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}:
+        filters["region"] = route_storage_region(user_query) or "lower48"
+    elif metric in {"lng_exports", "lng_imports"}:
+        filters["region"] = (
+            route_trade_region(user_query) or "united_states_pipeline_total"
+        )
 
     return RouteResult(metric=metric, start=start, end=end, filters=filters or None)

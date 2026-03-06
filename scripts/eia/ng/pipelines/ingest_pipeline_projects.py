@@ -218,6 +218,43 @@ def read_table(ws: Worksheet, header_cell: str, data_cell: str) -> pd.DataFrame:
     return df
 
 
+def _normalize_object_cols_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Make object columns Arrow-safe:
+    - Normalize common NA-like tokens to missing values
+    - Convert fully numeric-like object columns to numeric dtype
+    - Convert remaining object columns to pandas string dtype
+    """
+    out = df.copy()
+    na_tokens = {"", "na", "n/a", "none", "null", "nan", "n.a."}
+
+    object_cols = out.select_dtypes(include=["object"]).columns.tolist()
+    for col in object_cols:
+        s = out[col]
+
+        # normalize string noise and NA markers
+        s_norm = s.map(
+            lambda v: (
+                pd.NA
+                if isinstance(v, str) and v.strip().lower() in na_tokens
+                else (v.strip() if isinstance(v, str) else v)
+            )
+        )
+
+        # if all non-null values are numeric-like, coerce to numeric
+        non_null = s_norm.dropna()
+        if len(non_null) > 0:
+            as_num = pd.to_numeric(non_null, errors="coerce")
+            if as_num.notna().all():
+                out[col] = pd.to_numeric(s_norm, errors="coerce")
+                continue
+
+        # otherwise keep as string for stable parquet typing
+        out[col] = s_norm.astype("string")
+
+    return out
+
+
 # -----------------------------
 # Main
 # -----------------------------
@@ -247,7 +284,8 @@ def parse_workbook(
             if output_format == "csv":
                 df.to_csv(f"{base_path}.csv", index=False)
             elif output_format == "parquet":
-                df.to_parquet(f"{base_path}.parquet", index=False)
+                df_parquet = _normalize_object_cols_for_parquet(df)
+                df_parquet.to_parquet(f"{base_path}.parquet", index=False)
             else:
                 raise ValueError(
                     f"Unsupported output_format={output_format!r}. Use 'csv' or 'parquet'."
