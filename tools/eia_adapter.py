@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
 import pandas as pd
@@ -48,10 +49,38 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "canada_pipeline",
         "mexico_pipeline",
     }
+    WEATHER_REQUIRED_COLUMNS = {
+        "region_id",
+        "date",
+        "n_stations_used",
+        "tavg_c_median",
+        "tavg_f_median",
+        "hdd_median",
+        "tavg_c_mean",
+        "tavg_f_mean",
+        "hdd_mean",
+    }
+    WEATHER_METRICS = {
+        "hdd_mean",
+        "hdd_median",
+        "tavg_f_mean",
+        "tavg_f_median",
+        "tavg_c_mean",
+        "tavg_c_median",
+    }
 
-    def __init__(self, cache_dir: str = "data/cache/eia"):
+    def __init__(
+        self,
+        cache_dir: str = "data/cache/eia",
+        api_key: str | None = None,
+        weather_csv_path: str | Path | None = None,
+    ):
         super().__init__(cache_dir=cache_dir, date_col="date")
-        self.client = EIAClient(api_key=os.getenv("EIA_API_KEY"))
+        self.client = EIAClient(api_key=api_key or os.getenv("EIA_API_KEY"))
+        self.weather_csv_path = (
+            Path(weather_csv_path) if weather_csv_path is not None else None
+        )
+        self._weather_df_cache: pd.DataFrame | None = None
 
     # ----------------------------
     # Public methods (router calls these)
@@ -125,6 +154,93 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             "note": "Derived as row-to-row weekly difference of working gas storage levels.",
         }
         return EIAResult(df=out, source=src, meta=meta)
+
+    def get_weather_metric(
+        self,
+        *,
+        region_id: str,
+        start: str,
+        end: str,
+        metric: str,
+    ) -> pd.DataFrame:
+        """
+        Generic weather metric getter backed by the configured weather CSV.
+        """
+        if metric not in self.WEATHER_METRICS:
+            raise ValueError(
+                f"Invalid weather metric '{metric}'. Expected one of: {sorted(self.WEATHER_METRICS)}"
+            )
+
+        df = self._weather_timeseries(
+            region_id=region_id,
+            start=start,
+            end=end,
+            value_columns=[metric],
+        )
+        return df.rename(columns={metric: "value"})
+
+    def get_weather_hdd(
+        self,
+        *,
+        region_id: str,
+        start: str,
+        end: str,
+        method: str = "mean",
+    ) -> pd.DataFrame:
+        """
+        Daily heating degree days for a region.
+        Returns columns: date, region_id, hdd.
+        """
+        metric_map = {
+            "mean": "hdd_mean",
+            "median": "hdd_median",
+        }
+        if method not in metric_map:
+            raise ValueError("Invalid method for HDD. Expected one of: ['mean', 'median']")
+
+        col = metric_map[method]
+        df = self._weather_timeseries(
+            region_id=region_id,
+            start=start,
+            end=end,
+            value_columns=[col],
+        )
+        return df.rename(columns={col: "hdd"})
+
+    def get_weather_tavg(
+        self,
+        *,
+        region_id: str,
+        start: str,
+        end: str,
+        unit: str = "f",
+        method: str = "mean",
+    ) -> pd.DataFrame:
+        """
+        Daily average temperature for a region.
+        Returns columns: date, region_id, tavg.
+        """
+        metric_map = {
+            ("f", "mean"): "tavg_f_mean",
+            ("f", "median"): "tavg_f_median",
+            ("c", "mean"): "tavg_c_mean",
+            ("c", "median"): "tavg_c_median",
+        }
+        key = (unit, method)
+        if key not in metric_map:
+            raise ValueError(
+                "Invalid unit/method combination for tavg. "
+                "Expected unit in ['f','c'] and method in ['mean','median']."
+            )
+
+        col = metric_map[key]
+        df = self._weather_timeseries(
+            region_id=region_id,
+            start=start,
+            end=end,
+            value_columns=[col],
+        )
+        return df.rename(columns={col: "tavg"})
 
     def henry_hub_spot(self, start: str, end: str) -> EIAResult:
         """
@@ -338,6 +454,87 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # ----------------------------
     # Library calling + normalization helpers
     # ----------------------------
+
+    def _load_weather_csv(self) -> pd.DataFrame:
+        """
+        Load weather CSV once, validate schema, parse dates, and coerce numeric columns.
+        """
+        if self._weather_df_cache is not None:
+            return self._weather_df_cache
+
+        if self.weather_csv_path is None:
+            raise FileNotFoundError(
+                "Weather CSV path is not configured. Pass weather_csv_path to EIAAdapter."
+            )
+        if not self.weather_csv_path.exists():
+            raise FileNotFoundError(
+                f"Weather CSV file not found at: {self.weather_csv_path}"
+            )
+
+        df = pd.read_csv(self.weather_csv_path)
+        missing = sorted(self.WEATHER_REQUIRED_COLUMNS - set(df.columns))
+        if missing:
+            raise ValueError(
+                f"Weather CSV is missing required columns: {missing}. "
+                f"Found columns: {list(df.columns)}"
+            )
+
+        out = df.copy()
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out = out.dropna(subset=["date"])
+
+        numeric_cols = [c for c in out.columns if c not in {"region_id", "date"}]
+        for c in numeric_cols:
+            out[c] = pd.to_numeric(out[c], errors="coerce")
+
+        out = out.sort_values(["region_id", "date"]).reset_index(drop=True)
+        self._weather_df_cache = out
+        return out
+
+    def _weather_timeseries(
+        self,
+        *,
+        region_id: str,
+        start: str,
+        end: str,
+        value_columns: list[str],
+    ) -> pd.DataFrame:
+        """
+        Generic weather timeseries filter by region + inclusive date range.
+        Returns date, region_id and requested value columns.
+        """
+        base = self._load_weather_csv()
+
+        missing_cols = [c for c in value_columns if c not in base.columns]
+        if missing_cols:
+            raise ValueError(
+                f"Requested weather columns not found in CSV: {missing_cols}. "
+                f"Available columns: {list(base.columns)}"
+            )
+
+        available_regions = set(base["region_id"].dropna().astype(str).unique().tolist())
+        if region_id not in available_regions:
+            raise ValueError(
+                f"Requested weather region_id '{region_id}' not found. "
+                f"Available region_id values: {sorted(available_regions)}"
+            )
+
+        start_ts = pd.to_datetime(start, errors="coerce")
+        end_ts = pd.to_datetime(end, errors="coerce")
+        if pd.isna(start_ts) or pd.isna(end_ts):
+            raise ValueError(f"Invalid weather date window start='{start}' end='{end}'.")
+
+        subset = base.loc[base["region_id"] == region_id].copy()
+        subset = subset.loc[(subset["date"] >= start_ts) & (subset["date"] <= end_ts)]
+
+        cols = ["date", "region_id", *value_columns]
+        if subset.empty:
+            return pd.DataFrame(columns=cols)
+
+        out = subset[cols].copy()
+        out = out.dropna(subset=value_columns, how="all")
+        out = out.sort_values("date").reset_index(drop=True)
+        return out
 
     def _call_library(
         self,
