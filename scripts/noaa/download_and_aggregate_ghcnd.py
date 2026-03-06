@@ -3,14 +3,12 @@
 Download NOAA GHCND daily station CSVs from:
   https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/
 
-Filter stations from an input CSV where pipeline == ..., download station files,
+Filter stations from an input CSV where region == ..., download station files,
 then compute a region-level daily aggregation and save.
-
-Optionally upsert station-day and region-day results into MongoDB.
 
 Expected station CSV columns (minimum):
   - ghcnd_station_id
-  - pipeline
+  - region
 Optional:
   - station_name
   - state
@@ -29,13 +27,6 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-# Optional dependency
-try:
-    from pymongo import MongoClient, UpdateOne
-except Exception:  # pragma: no cover
-    MongoClient = None
-    UpdateOne = None
-
 load_dotenv()
 
 NOAA_GHCND_ACCESS_BASE = (
@@ -50,7 +41,7 @@ NOAA_GHCND_ACCESS_BASE = (
 
 @dataclass(frozen=True)
 class StationMetaItem:
-    pipeline: str
+    region: str
     ghcnd_station_id: str
     station_name: Optional[str] = None
     state: Optional[str] = None
@@ -104,7 +95,7 @@ def read_and_normalize_station_file(
 ) -> pd.DataFrame:
     """
     Normalize station data to:
-      pipeline-independent fields: station_id, date, tavg_c, tmin_c, tmax_c, hdd
+      region-independent fields: station_id, date, tavg_c, tmin_c, tmax_c, hdd
     Temperatures are tenths of °C in the NOAA access files.
     """
     df = pd.read_csv(filepath)
@@ -155,9 +146,7 @@ def read_and_normalize_station_file(
     return df[["ghcnd_station_id", "date", "tavg_c", "tmin_c", "tmax_c", "hdd"]].copy()
 
 
-def aggregate_region_daily(
-    df_all: pd.DataFrame, pipeline: str, region_id: str
-) -> pd.DataFrame:
+def aggregate_region_daily(df_all: pd.DataFrame, region_id: str) -> pd.DataFrame:
     """
     Aggregate across stations by day.
     Outputs both median and mean. Median is recommended for robustness.
@@ -184,12 +173,10 @@ def aggregate_region_daily(
         lambda x: c_to_f(float(x)) if pd.notna(x) else pd.NA
     )
 
-    agg.insert(0, "pipeline", pipeline)
-    agg.insert(1, "region_id", region_id)
+    agg.insert(0, "region_id", region_id)
 
     return agg[
         [
-            "pipeline",
             "region_id",
             "date",
             "n_stations_used",
@@ -203,26 +190,43 @@ def aggregate_region_daily(
     ].copy()
 
 
-def load_station_meta(csv_path: str, pipeline_filter: str) -> List[StationMetaItem]:
+def load_station_meta(csv_path: str, region_filter: str) -> List[StationMetaItem]:
     df = pd.read_csv(csv_path)
 
-    required = {"pipeline", "ghcnd_station_id"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"stations csv missing columns: {sorted(missing)}")
+    if "ghcnd_station_id" not in df.columns:
+        raise ValueError("stations csv missing required column: 'ghcnd_station_id'")
 
-    df["pipeline"] = df["pipeline"].astype(str).str.strip().str.lower()
+    # Backward compatibility:
+    # - prefer explicit 'region'
+    # - fall back to legacy 'pipeline'
+    # - if neither exists, allow lower_48/all-stations mode
+    if "region" in df.columns:
+        pass
+    elif "pipeline" in df.columns:
+        df = df.rename(columns={"pipeline": "region"})
+    else:
+        if region_filter.strip().lower() != "lower_48":
+            raise ValueError(
+                "stations csv missing 'region' column. "
+                "Provide a stations CSV with a 'region' (or legacy 'pipeline') column "
+                "for region-specific filtering."
+            )
+        # Default all listed stations to lower_48 when no region column exists.
+        df = df.copy()
+        df["region"] = "lower_48"
+
+    df["region"] = df["region"].astype(str).str.strip().str.lower()
     df["ghcnd_station_id"] = df["ghcnd_station_id"].astype(str).str.strip()
 
-    df = df[df["pipeline"] == pipeline_filter.strip().lower()].copy()
+    df = df[df["region"] == region_filter.strip().lower()].copy()
     if df.empty:
-        raise ValueError(f"No stations found for pipeline == {pipeline_filter!r}")
+        raise ValueError(f"No stations found for region == {region_filter!r}")
 
     items: List[StationMetaItem] = []
     for _, r in df.iterrows():
         items.append(
             StationMetaItem(
-                pipeline=str(r["pipeline"]),
+                region=str(r["region"]),
                 ghcnd_station_id=str(r["ghcnd_station_id"]),
                 station_name=(
                     str(r["station_name"])
@@ -248,160 +252,6 @@ def load_station_meta(csv_path: str, pipeline_filter: str) -> List[StationMetaIt
 
 
 # -----------------------------
-# MongoDB sink
-# -----------------------------
-
-
-def mongo_upsert_weather(
-    *,
-    mongo_uri: str,
-    mongo_db: str,
-    pipeline: str,
-    stations_meta: List[StationMetaItem],
-    df_station_norm: pd.DataFrame,
-    df_region_daily: pd.DataFrame,
-    station_collection: str,
-    region_collection: str,
-    batch_size: int = 2000,
-) -> Dict[str, Any]:
-    """
-    Upsert station-day and region-day documents.
-
-    Station unique key: (pipeline, ghcnd_station_id, date)
-    Region unique key:  (pipeline, region_id, date)
-    """
-    if MongoClient is None or UpdateOne is None:
-        raise RuntimeError(
-            "pymongo is not installed. Install with: pip install pymongo"
-        )
-
-    client = MongoClient(mongo_uri)
-    db = client[mongo_db]
-    col_station = db[station_collection]
-    col_region = db[region_collection]
-
-    # Ensure indexes (safe to call repeatedly)
-    col_station.create_index(
-        [("pipeline", 1), ("ghcnd_station_id", 1), ("date", 1)], unique=True
-    )
-    col_region.create_index(
-        [("pipeline", 1), ("region_id", 1), ("date", 1)], unique=True
-    )
-
-    # Station meta map
-    meta_by_id = {s.ghcnd_station_id: asdict(s) for s in stations_meta}
-
-    # Station documents
-    ops = []
-    station_upserts = 0
-    for rec in df_station_norm.to_dict(orient="records"):
-        sid = rec["ghcnd_station_id"]
-        doc = {
-            "pipeline": pipeline,
-            "ghcnd_station_id": sid,
-            "date": rec["date"],
-            "tavg_c": None if pd.isna(rec.get("tavg_c")) else float(rec["tavg_c"]),
-            "tmin_c": None if pd.isna(rec.get("tmin_c")) else float(rec["tmin_c"]),
-            "tmax_c": None if pd.isna(rec.get("tmax_c")) else float(rec["tmax_c"]),
-            "hdd": None if pd.isna(rec.get("hdd")) else float(rec["hdd"]),
-            "station_meta": meta_by_id.get(sid, {}),
-            "updated_at_utc": datetime.now(timezone.utc),
-            "source": {
-                "provider": "NOAA",
-                "dataset": "GHCND",
-                "access_base": NOAA_GHCND_ACCESS_BASE,
-            },
-        }
-
-        ops.append(
-            UpdateOne(
-                {"pipeline": pipeline, "ghcnd_station_id": sid, "date": rec["date"]},
-                {"$set": doc},
-                upsert=True,
-            )
-        )
-
-        if len(ops) >= batch_size:
-            res = col_station.bulk_write(ops, ordered=False)
-            station_upserts += (res.upserted_count or 0) + (res.modified_count or 0)
-            ops = []
-
-    if ops:
-        res = col_station.bulk_write(ops, ordered=False)
-        station_upserts += (res.upserted_count or 0) + (res.modified_count or 0)
-
-    # Region documents
-    ops = []
-    region_upserts = 0
-    for rec in df_region_daily.to_dict(orient="records"):
-        doc = {
-            "pipeline": rec["pipeline"],
-            "region_id": rec["region_id"],
-            "date": rec["date"],
-            "n_stations_used": int(rec["n_stations_used"]),
-            "tavg_c_median": (
-                None
-                if pd.isna(rec.get("tavg_c_median"))
-                else float(rec["tavg_c_median"])
-            ),
-            "tavg_f_median": (
-                None
-                if pd.isna(rec.get("tavg_f_median"))
-                else float(rec["tavg_f_median"])
-            ),
-            "hdd_median": (
-                None if pd.isna(rec.get("hdd_median")) else float(rec["hdd_median"])
-            ),
-            "tavg_c_mean": (
-                None if pd.isna(rec.get("tavg_c_mean")) else float(rec["tavg_c_mean"])
-            ),
-            "tavg_f_mean": (
-                None if pd.isna(rec.get("tavg_f_mean")) else float(rec["tavg_f_mean"])
-            ),
-            "hdd_mean": (
-                None if pd.isna(rec.get("hdd_mean")) else float(rec["hdd_mean"])
-            ),
-            "updated_at_utc": datetime.now(timezone.utc),
-            "source": {
-                "provider": "NOAA",
-                "dataset": "GHCND",
-                "access_base": NOAA_GHCND_ACCESS_BASE,
-            },
-        }
-
-        ops.append(
-            UpdateOne(
-                {
-                    "pipeline": doc["pipeline"],
-                    "region_id": doc["region_id"],
-                    "date": doc["date"],
-                },
-                {"$set": doc},
-                upsert=True,
-            )
-        )
-
-        if len(ops) >= batch_size:
-            res = col_region.bulk_write(ops, ordered=False)
-            region_upserts += (res.upserted_count or 0) + (res.modified_count or 0)
-            ops = []
-
-    if ops:
-        res = col_region.bulk_write(ops, ordered=False)
-        region_upserts += (res.upserted_count or 0) + (res.modified_count or 0)
-
-    client.close()
-
-    return {
-        "mongo_db": mongo_db,
-        "station_collection": station_collection,
-        "region_collection": region_collection,
-        "station_upserts_or_updates": station_upserts,
-        "region_upserts_or_updates": region_upserts,
-    }
-
-
-# -----------------------------
 # Main
 # -----------------------------
 
@@ -410,16 +260,16 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument(
         "--stations-csv",
-        default="scripts/noaa/pipeline_airport_ghcnd_mapping.csv",
+        default="scripts/noaa/major_airports_by_state_ghcnd.csv",
         required=False,
         help="Path to stations CSV",
     )
     p.add_argument(
-        "--pipeline",
-        default="algonquin",
-        help="Filter pipeline name (default: algonquin)",
+        "--region",
+        default="lower_48",
+        help="Region filter (default: lower_48)",
     )
-    p.add_argument("--out-dir", default="data/noaa", help="Output directory")
+    p.add_argument("--out-dir", default="data/raw/noaa", help="Output directory")
     p.add_argument("--start", default=None, help="YYYY-MM-DD (optional)")
     p.add_argument(
         "--days_ago", type=int, default=0, help="The number of days ago to start"
@@ -427,42 +277,22 @@ def main():
     p.add_argument("--end", default=None, help="YYYY-MM-DD (optional)")
     p.add_argument("--timeout", type=int, default=60, help="HTTP timeout seconds")
 
-    # Mongo options
-    p.add_argument(
-        "--mongo-uri",
-        default=os.getenv("MONGO_URI", None),
-        help="MongoDB URI (optional). If set, upserts to Mongo.",
-    )
-    p.add_argument(
-        "--mongo-db", default=os.getenv("MONGO_DB", None), help="MongoDB database name."
-    ),
-    p.add_argument(
-        "--mongo-station-collection",
-        default="noaa_station_daily",
-        help="Collection for station-day docs",
-    )
-    p.add_argument(
-        "--mongo-region-collection",
-        default="noaa_region_daily",
-        help="Collection for region-day docs",
-    )
-
     args = p.parse_args()
 
-    pipeline = args.pipeline.strip().lower()
-    region_id = pipeline  # simple default
+    region_id = args.region.strip().lower()
 
     # 1) Load stations
-    stations = load_station_meta(args.stations_csv, pipeline_filter=pipeline)
+    stations = load_station_meta(args.stations_csv, region_filter=region_id)
 
     # 2) Download + normalize each station file
-    station_dir = os.path.join(args.out_dir, "stations", pipeline)
+    station_dir = os.path.join(args.out_dir, "stations", region_id)
     agg_dir = os.path.join(args.out_dir, "regional")
     safe_mkdir(station_dir)
     safe_mkdir(agg_dir)
 
     frames = []
 
+    start_date = None
     if args.start:
         start_date = args.start
     elif args.days_ago > 0:
@@ -485,18 +315,17 @@ def main():
     df_all = pd.concat(frames, ignore_index=True)
 
     # 3) Aggregate daily region series
-    df_region = aggregate_region_daily(df_all, pipeline=pipeline, region_id=region_id)
+    df_region = aggregate_region_daily(df_all, region_id=region_id)
 
     # 4) Save outputs (CSV)
-    station_norm_path = os.path.join(agg_dir, f"{pipeline}_stations_normalized.csv")
-    region_path = os.path.join(agg_dir, f"{pipeline}_region_daily.csv")
-    meta_path = os.path.join(agg_dir, f"{pipeline}_region_daily.meta.json")
+    station_norm_path = os.path.join(agg_dir, f"{region_id}_stations_normalized.csv")
+    region_path = os.path.join(agg_dir, f"{region_id}_region_daily.csv")
+    meta_path = os.path.join(agg_dir, f"{region_id}_region_daily.meta.json")
 
     df_all.to_csv(station_norm_path, index=False)
     df_region.to_csv(region_path, index=False)
 
     meta = {
-        "pipeline": pipeline,
         "region_id": region_id,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "stations_count": len(stations),
@@ -521,20 +350,6 @@ def main():
     print(f"Saved station-normalized: {station_norm_path}")
     print(f"Saved region daily:      {region_path}")
     print(f"Saved metadata:          {meta_path}")
-
-    # 5) Optional Mongo write
-    if args.mongo_uri:
-        result = mongo_upsert_weather(
-            mongo_uri=args.mongo_uri,
-            mongo_db=args.mongo_db,
-            pipeline=pipeline,
-            stations_meta=stations,
-            df_station_norm=df_all,
-            df_region_daily=df_region,
-            station_collection=args.mongo_station_collection,
-            region_collection=args.mongo_region_collection,
-        )
-        print("Mongo upsert result:", result)
 
 
 if __name__ == "__main__":
