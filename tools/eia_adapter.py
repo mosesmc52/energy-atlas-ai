@@ -86,7 +86,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # Public methods (router calls these)
     # ----------------------------
 
-    def storage_working_gas(self, start: str, end: str, region: str = "lower48") -> EIAResult:
+    def storage_working_gas(
+        self, start: str, end: str, region: str = "lower48"
+    ) -> EIAResult:
         """
         Working gas in storage (weekly), optionally by region.
         Cache-first: load CSV, fetch missing edges via eia-ng, save, return window.
@@ -196,7 +198,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             "median": "hdd_median",
         }
         if method not in metric_map:
-            raise ValueError("Invalid method for HDD. Expected one of: ['mean', 'median']")
+            raise ValueError(
+                "Invalid method for HDD. Expected one of: ['mean', 'median']"
+            )
 
         col = metric_map[method]
         df = self._weather_timeseries(
@@ -512,7 +516,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 f"Available columns: {list(base.columns)}"
             )
 
-        available_regions = set(base["region_id"].dropna().astype(str).unique().tolist())
+        available_regions = set(
+            base["region_id"].dropna().astype(str).unique().tolist()
+        )
         if region_id not in available_regions:
             raise ValueError(
                 f"Requested weather region_id '{region_id}' not found. "
@@ -522,7 +528,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         start_ts = pd.to_datetime(start, errors="coerce")
         end_ts = pd.to_datetime(end, errors="coerce")
         if pd.isna(start_ts) or pd.isna(end_ts):
-            raise ValueError(f"Invalid weather date window start='{start}' end='{end}'.")
+            raise ValueError(
+                f"Invalid weather date window start='{start}' end='{end}'."
+            )
 
         subset = base.loc[base["region_id"] == region_id].copy()
         subset = subset.loc[(subset["date"] >= start_ts) & (subset["date"] <= end_ts)]
@@ -659,7 +667,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "lng_exports":
             region = kwargs.get("region", "united_states_pipeline_total")
-            rows = self.client.natural_gas.exports(start=start, end=end, region=region)
+            rows = self.client.natural_gas.exports(start=start, end=end, country=region)
             print(
                 f"[DEBUG] eia-ng lng_exports {region} {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"
@@ -690,7 +698,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "lng_imports":
             region = kwargs.get("region", "united_states_pipeline_total")
-            rows = self.client.natural_gas.imports(start=start, end=end, region=region)
+            rows = self.client.natural_gas.imports(start=start, end=end, country=region)
             print(
                 f"[DEBUG] eia-ng lng_imports {region} {start}..{end} -> "
                 f"{0 if rows is None else len(rows)} rows"

@@ -136,6 +136,10 @@ ROUTE_MAP = {
     "henry_hub_spot": ["henry hub", "spot price", "gas price", "benchmark price"],
     "lng_exports": [
         "lng exports",
+        "lng export",
+        "lng export capacity",
+        "lng capacity utilization",
+        "export capacity",
         "export lng",
         "liquefied natural gas export",
         "gas exports",
