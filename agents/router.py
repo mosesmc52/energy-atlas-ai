@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+from agents.llm_router import LLMRouterError
+from agents.llm_router import llm_route_structured as llm_route_structured_impl
 from utils.dates import resolve_date_range
 from utils.helpers import contains_any
 
@@ -389,8 +391,6 @@ class LLMRouteOutput:
 
 
 def llm_route_structured(user_query: str, normalized_query: str) -> LLMRouteOutput:
-    from agents.llm_router import LLMRouterError
-    from agents.llm_router import llm_route_structured as llm_route_structured_impl
 
     try:
         return llm_route_structured_impl(
@@ -478,6 +478,7 @@ def validate_llm_route(
 # Main hybrid router
 # ----------------------------
 def route_query(user_query: str) -> HybridRouteResult:
+
     normalized = normalize_query(user_query)
     start, end = resolve_date_range(user_query)
     intent = detect_intent(normalized)

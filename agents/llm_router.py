@@ -98,7 +98,6 @@ def _build_route_schema() -> Dict[str, Any]:
             "metrics": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(METRICS)},
-                "uniqueItems": True,
             },
             "filters": {
                 "anyOf": [
@@ -106,12 +105,20 @@ def _build_route_schema() -> Dict[str, Any]:
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "iso": {"type": "string", "enum": list(ISO_FILTERS)},
+                            "iso": {
+                                "anyOf": [
+                                    {"type": "string", "enum": list(ISO_FILTERS)},
+                                    {"type": "null"},
+                                ]
+                            },
                             "region": {
-                                "type": "string",
-                                "enum": list(REGION_FILTERS),
+                                "anyOf": [
+                                    {"type": "string", "enum": list(REGION_FILTERS)},
+                                    {"type": "null"},
+                                ]
                             },
                         },
+                        "required": ["iso", "region"],
                     },
                     {"type": "null"},
                 ]
@@ -242,12 +249,17 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
 
 def _sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     intent_value = payload.get("intent")
-    intent = intent_value if isinstance(intent_value, str) and intent_value in _ALLOWED_INTENTS else "unsupported"
+    intent = (
+        intent_value
+        if isinstance(intent_value, str) and intent_value in _ALLOWED_INTENTS
+        else "unsupported"
+    )
 
     primary_metric_value = payload.get("primary_metric")
     primary_metric = (
         primary_metric_value
-        if isinstance(primary_metric_value, str) and primary_metric_value in _ALLOWED_METRICS
+        if isinstance(primary_metric_value, str)
+        and primary_metric_value in _ALLOWED_METRICS
         else None
     )
 
@@ -255,7 +267,11 @@ def _sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     raw_metrics = payload.get("metrics")
     if isinstance(raw_metrics, list):
         for metric in raw_metrics:
-            if isinstance(metric, str) and metric in _ALLOWED_METRICS and metric not in metrics:
+            if (
+                isinstance(metric, str)
+                and metric in _ALLOWED_METRICS
+                and metric not in metrics
+            ):
                 metrics.append(metric)
 
     if primary_metric and primary_metric not in metrics:
@@ -319,6 +335,7 @@ def llm_route_structured(user_query: str, normalized_query: str) -> "LLMRouteOut
 
     for attempt in range(1, max_attempts + 1):
         try:
+
             raw_payload = _request_structured_route(
                 user_query=user_query,
                 normalized_query=normalized_query,

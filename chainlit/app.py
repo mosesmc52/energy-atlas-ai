@@ -131,11 +131,14 @@ async def on_message(message: cl.Message):
 
     try:
         # (A) Route the query -> metric + params
+
         route = route_query(user_query)
+        if route.primary_metric is None:
+            raise ValueError(f"Unable to determine a metric for intent: {route.intent}")
 
         # (B) Execute -> fetch data (df + SourceRef)
         req = ExecuteRequest(
-            metric=route.metric,
+            metric=route.primary_metric,
             start=route.start,
             end=route.end,
             filters=route.filters,
@@ -166,5 +169,6 @@ async def on_message(message: cl.Message):
             await cl.Message(content="**Sources**\n" + "\n".join(lines)).send()
 
     except Exception as e:
+
         # Keep errors visible during development
         await cl.Message(content=f"Error: {e}").send()

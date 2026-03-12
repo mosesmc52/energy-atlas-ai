@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -77,7 +77,7 @@ class CacheBackedTimeseriesAdapterBase:
         end_ts = self._norm_date(end)
 
         cache_path = self._cache_path(metric_key, cache_key_parts)
-        df_cache = self._load_cache(cache_path)
+        df_cache, cache_format = self._load_cache(cache_path)
         if df_cache is not None and not df_cache.empty:
             df_cache = self._normalize_df(df_cache)
 
@@ -126,7 +126,7 @@ class CacheBackedTimeseriesAdapterBase:
             df_merged = self._merge_cache(df_merged, df_new)
 
         # Persist if we had to fetch or cache didn't exist
-        if fetched_segments or df_cache is None:
+        if fetched_segments or df_cache is None or cache_format == "csv":
             if df_merged is None:
                 df_merged = pd.DataFrame(columns=[self.date_col])
             self._save_cache(cache_path, df_merged)
@@ -178,13 +178,21 @@ class CacheBackedTimeseriesAdapterBase:
         safe = "__".join(elems).replace("/", "_").replace(" ", "_")
         return self.cache_dir / f"{safe}.parquet"
 
-    def _load_cache(self, path: Path) -> Optional[pd.DataFrame]:
+    def _legacy_csv_cache_path(self, path: Path) -> Path:
+        return path.with_suffix(".csv")
+
+    def _load_cache(self, path: Path) -> tuple[Optional[pd.DataFrame], Optional[str]]:
         try:
-            if not path.exists():
-                return None
-            return pd.read_parquet(path)
+            if path.exists():
+                return pd.read_parquet(path), "parquet"
+
+            legacy_csv_path = self._legacy_csv_cache_path(path)
+            if legacy_csv_path.exists():
+                return pd.read_csv(legacy_csv_path), "csv"
+
+            return None, None
         except Exception:
-            return None
+            return None, None
 
     def _save_cache(self, path: Path, df: pd.DataFrame) -> None:
         tmp = path.with_suffix(".tmp.parquet")
