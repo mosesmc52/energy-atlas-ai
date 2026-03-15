@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import pathlib
 import sys
+import tempfile
 
 cwd = pathlib.Path.cwd()
 if cwd.name == "notebooks":
@@ -29,8 +30,14 @@ from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 
 def build_container():
-    eia_adapter = EIAAdapter()
-    grid_adapter = GridStatusAdapter()
+    cache_root = pathlib.Path(
+        os.getenv(
+            "ATLAS_CACHE_ROOT",
+            str(pathlib.Path(tempfile.gettempdir()) / "energy-atlas-ai-cache"),
+        )
+    )
+    eia_adapter = EIAAdapter(cache_dir=cache_root / "eia")
+    grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
     executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
 
     return {"executor": executor}
