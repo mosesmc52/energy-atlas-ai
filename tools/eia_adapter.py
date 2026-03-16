@@ -14,6 +14,12 @@ from schemas.answer import SourceRef
 from tools.cache_base import CacheBackedTimeseriesAdapterBase
 
 load_dotenv()
+DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 @dataclass(frozen=True)
@@ -75,7 +81,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         api_key: str | None = None,
         weather_csv_path: str | Path | None = None,
     ):
-        super().__init__(cache_dir=cache_dir, date_col="date")
+        super().__init__(
+            cache_dir=cache_dir,
+            date_col="date",
+            enable_debug_timing=DEBUG_ENABLED,
+        )
         self.client = EIAClient(api_key=api_key or os.getenv("EIA_API_KEY"))
         self.weather_csv_path = (
             Path(weather_csv_path) if weather_csv_path is not None else None
@@ -657,10 +667,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "henry_hub_spot":
             rows = self.client.natural_gas.spot_prices(start=start, end=end)
-            print(
-                f"[DEBUG] eia-ng henry_hub_spot {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng henry_hub_spot {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
@@ -668,30 +679,33 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         if which == "lng_exports":
             region = kwargs.get("region", "united_states_pipeline_total")
             rows = self.client.natural_gas.exports(start=start, end=end, country=region)
-            print(
-                f"[DEBUG] eia-ng lng_exports {region} {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng lng_exports {region} {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
         if which == "ng_production":
             rows = self.client.natural_gas.production(start=start, end=end)
-            print(
-                f"[DEBUG] eia-ng production {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng production {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
         if which == "ng_consumption":
             rows = self.client.natural_gas.consumption(start=start, end=end)
-            print(
-                f"[DEBUG] eia-ng consumption {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng consumption {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
@@ -699,20 +713,22 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         if which == "lng_imports":
             region = kwargs.get("region", "united_states_pipeline_total")
             rows = self.client.natural_gas.imports(start=start, end=end, country=region)
-            print(
-                f"[DEBUG] eia-ng lng_imports {region} {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng lng_imports {region} {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
 
         if which == "ng_electricity":
             rows = self.client.electricity.generation_natural_gas(start=start, end=end)
-            print(
-                f"[DEBUG] eia-ng electricity {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng electricity {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
@@ -727,10 +743,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         if which == "storage_working_gas":
             region = kwargs.get("region", "lower48")
             rows = self.client.natural_gas.storage(start=start, end=end, region=region)
-            print(
-                f"[DEBUG] eia-ng storage_working_gas {region} {start}..{end} -> "
-                f"{0 if rows is None else len(rows)} rows"
-            )
+            if DEBUG_ENABLED:
+                print(
+                    f"[DEBUG] eia-ng storage_working_gas {region} {start}..{end} -> "
+                    f"{0 if rows is None else len(rows)} rows"
+                )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)

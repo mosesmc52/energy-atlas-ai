@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import threading
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -16,6 +18,8 @@ class CacheFetchInfo:
     fetched_segments: List[Dict[str, Any]]
     inferred_freq: Optional[str] = None
     freq_confidence: Optional[float] = None
+    timings_ms: Dict[str, float] | None = None
+    background_refresh_scheduled: bool = False
 
 
 class CacheBackedTimeseriesAdapterBase:
@@ -44,10 +48,14 @@ class CacheBackedTimeseriesAdapterBase:
         *,
         cache_dir: str | Path = "data/cache",
         date_col: str = "date",
+        enable_debug_timing: bool = False,
     ):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.date_col = date_col
+        self._refresh_lock = threading.Lock()
+        self._active_refreshes: set[str] = set()
+        self.enable_debug_timing = enable_debug_timing
 
     # -------------------------
     # Public entrypoint used by subclasses
@@ -76,12 +84,19 @@ class CacheBackedTimeseriesAdapterBase:
         start_ts = self._norm_date(start)
         end_ts = self._norm_date(end)
 
+        load_started = perf_counter() if self.enable_debug_timing else 0.0
         cache_path = self._cache_path(metric_key, cache_key_parts)
         df_cache, cache_format = self._load_cache(cache_path)
         if df_cache is not None and not df_cache.empty:
             df_cache = self._normalize_df(df_cache)
+        load_elapsed_ms = (
+            (perf_counter() - load_started) * 1000 if self.enable_debug_timing else 0.0
+        )
+
+        cached_window = self._slice_window(df_cache, start_ts, end_ts)
 
         # Decide missing segments
+        missing_started = perf_counter() if self.enable_debug_timing else 0.0
         freq = (
             self._infer_frequency_daily_base(df_cache)
             if df_cache is not None and not df_cache.empty
@@ -95,9 +110,32 @@ class CacheBackedTimeseriesAdapterBase:
             allow_internal_gap_fill_daily=allow_internal_gap_fill_daily,
             expected_calendar=expected_calendar,
         )
+        missing_elapsed_ms = (
+            (perf_counter() - missing_started) * 1000
+            if self.enable_debug_timing
+            else 0.0
+        )
+
+        background_refresh_scheduled = False
+        if (
+            df_cache is not None
+            and not df_cache.empty
+            and not cached_window.empty
+            and len(missing) > 0
+        ):
+            background_refresh_scheduled = self._schedule_background_refresh(
+                cache_path=cache_path,
+                df_cache=df_cache,
+                missing=missing,
+                fetch_ctx=fetch_ctx,
+            )
+            missing = []
 
         fetched_segments: List[Dict[str, Any]] = []
         df_merged = df_cache
+        fetch_total_elapsed_ms = 0.0
+        normalize_total_elapsed_ms = 0.0
+        merge_total_elapsed_ms = 0.0
 
         for seg_start, seg_end in missing:
             if seg_end < seg_start:
@@ -108,30 +146,59 @@ class CacheBackedTimeseriesAdapterBase:
             if seg_start == seg_end:
                 fetch_end_ts = seg_end + pd.Timedelta(days=1)
 
+            fetch_started = perf_counter() if self.enable_debug_timing else 0.0
             df_new = self._fetch_timeseries(
                 start=fetch_start,
                 end=fetch_end_ts.date().isoformat(),
                 **fetch_ctx,
             )
-
-            df_new = self._normalize_df(df_new)
-
-            fetched_segments.append(
-                {
-                    "start": seg_start.date().isoformat(),
-                    "end": seg_end.date().isoformat(),
-                    "rows": int(len(df_new)),
-                }
+            fetch_elapsed_ms = (
+                (perf_counter() - fetch_started) * 1000
+                if self.enable_debug_timing
+                else 0.0
             )
+            fetch_total_elapsed_ms += fetch_elapsed_ms
+
+            normalize_started = perf_counter() if self.enable_debug_timing else 0.0
+            df_new = self._normalize_df(df_new)
+            normalize_elapsed_ms = (
+                (perf_counter() - normalize_started) * 1000
+                if self.enable_debug_timing
+                else 0.0
+            )
+            normalize_total_elapsed_ms += normalize_elapsed_ms
+
+            segment_info = {
+                "start": seg_start.date().isoformat(),
+                "end": seg_end.date().isoformat(),
+                "rows": int(len(df_new)),
+            }
+            if self.enable_debug_timing:
+                segment_info["fetch_ms"] = round(fetch_elapsed_ms, 1)
+                segment_info["normalize_ms"] = round(normalize_elapsed_ms, 1)
+            fetched_segments.append(segment_info)
+            merge_started = perf_counter() if self.enable_debug_timing else 0.0
             df_merged = self._merge_cache(df_merged, df_new)
+            if self.enable_debug_timing:
+                merge_total_elapsed_ms += (perf_counter() - merge_started) * 1000
 
         # Persist if we had to fetch or cache didn't exist
+        save_elapsed_ms = 0.0
         if fetched_segments or df_cache is None or cache_format == "csv":
             if df_merged is None:
                 df_merged = pd.DataFrame(columns=[self.date_col])
+            save_started = perf_counter() if self.enable_debug_timing else 0.0
             self._save_cache(cache_path, df_merged)
+            if self.enable_debug_timing:
+                save_elapsed_ms = (perf_counter() - save_started) * 1000
 
+        slice_started = perf_counter() if self.enable_debug_timing else 0.0
         df_out = self._slice_window(df_merged, start_ts, end_ts)
+        slice_elapsed_ms = (
+            (perf_counter() - slice_started) * 1000
+            if self.enable_debug_timing
+            else 0.0
+        )
 
         info = CacheFetchInfo(
             cache_path=str(cache_path),
@@ -141,8 +208,85 @@ class CacheBackedTimeseriesAdapterBase:
             fetched_segments=fetched_segments,
             inferred_freq=(freq["freq"] if freq else None),
             freq_confidence=(freq["confidence"] if freq else None),
+            timings_ms=(
+                {
+                    "load": round(load_elapsed_ms, 1),
+                    "missing": round(missing_elapsed_ms, 1),
+                    "fetch": round(fetch_total_elapsed_ms, 1),
+                    "normalize": round(normalize_total_elapsed_ms, 1),
+                    "merge": round(merge_total_elapsed_ms, 1),
+                    "save": round(save_elapsed_ms, 1),
+                    "slice": round(slice_elapsed_ms, 1),
+                }
+                if self.enable_debug_timing
+                else None
+            ),
+            background_refresh_scheduled=background_refresh_scheduled,
         )
         return df_out, info
+
+    def _schedule_background_refresh(
+        self,
+        *,
+        cache_path: Path,
+        df_cache: pd.DataFrame,
+        missing: List[Tuple[pd.Timestamp, pd.Timestamp]],
+        fetch_ctx: Dict[str, Any],
+    ) -> bool:
+        refresh_key = str(cache_path)
+        with self._refresh_lock:
+            if refresh_key in self._active_refreshes:
+                return False
+            self._active_refreshes.add(refresh_key)
+
+        thread = threading.Thread(
+            target=self._background_refresh_worker,
+            kwargs={
+                "refresh_key": refresh_key,
+                "cache_path": cache_path,
+                "df_cache": df_cache.copy(),
+                "missing": list(missing),
+                "fetch_ctx": dict(fetch_ctx),
+            },
+            daemon=True,
+        )
+        thread.start()
+        return True
+
+    def _background_refresh_worker(
+        self,
+        *,
+        refresh_key: str,
+        cache_path: Path,
+        df_cache: pd.DataFrame,
+        missing: List[Tuple[pd.Timestamp, pd.Timestamp]],
+        fetch_ctx: Dict[str, Any],
+    ) -> None:
+        try:
+            df_merged = df_cache
+            for seg_start, seg_end in missing:
+                if seg_end < seg_start:
+                    continue
+
+                fetch_start = seg_start.date().isoformat()
+                fetch_end_ts = seg_end
+                if seg_start == seg_end:
+                    fetch_end_ts = seg_end + pd.Timedelta(days=1)
+
+                df_new = self._fetch_timeseries(
+                    start=fetch_start,
+                    end=fetch_end_ts.date().isoformat(),
+                    **fetch_ctx,
+                )
+                df_new = self._normalize_df(df_new)
+                df_merged = self._merge_cache(df_merged, df_new)
+
+            if df_merged is None:
+                df_merged = pd.DataFrame(columns=[self.date_col])
+            self._save_cache(cache_path, df_merged)
+        finally:
+            with self._refresh_lock:
+                self._active_refreshes.discard(refresh_key)
 
     # -------------------------
     # Subclass hooks

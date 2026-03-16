@@ -497,8 +497,8 @@ def route_query(user_query: str) -> HybridRouteResult:
     top = candidates[0]
     filters = build_filters(top.metric, normalized, confidence)
 
-    # Fast path: strong deterministic route
-    if intent == "single_metric" and not ambiguous and confidence >= 0.72:
+    # Fast path: for single-metric questions, stay on rules unless the match is ambiguous.
+    if intent == "single_metric" and not ambiguous:
         return HybridRouteResult(
             intent="single_metric",
             primary_metric=top.metric,
@@ -522,7 +522,7 @@ def route_query(user_query: str) -> HybridRouteResult:
         )
 
     # Ambiguous rule route -> LLM assist
-    if ambiguous or confidence < 0.72:
+    if ambiguous:
         llm = llm_route_structured(user_query=user_query, normalized_query=normalized)
         return validate_llm_route(
             llm, start=start, end=end, normalized_query=normalized
