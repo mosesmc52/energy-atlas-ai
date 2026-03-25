@@ -367,7 +367,10 @@ def is_ambiguous(candidates: List[RouteCandidate]) -> bool:
     if not candidates:
         return True
     if len(candidates) == 1:
-        return candidates[0].score < 2.5
+        # A lone metric hit should not require LLM fallback unless the match is
+        # extremely weak. Otherwise common single-term questions like
+        # "Is production growing year over year?" can be misrouted as unsupported.
+        return candidates[0].score < 1.5
 
     top = candidates[0].score
     second = candidates[1].score

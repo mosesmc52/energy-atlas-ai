@@ -170,6 +170,23 @@ async def on_message(message: cl.Message):
         route_elapsed_ms = (
             (perf_counter() - route_started) * 1000 if DEBUG_ENABLED else 0.0
         )
+        if route.intent == "ambiguous":
+            await cl.Message(
+                content=(
+                    "That question is ambiguous. Try naming the metric explicitly, "
+                    "for example: 'Is Lower 48 dry gas production growing year over year?'"
+                )
+            ).send()
+            return
+        if route.intent == "unsupported" or route.primary_metric is None:
+            fallback_reason = route.reason or "This question did not map cleanly to a supported metric."
+            await cl.Message(
+                content=(
+                    "I couldn't map that question to a supported metric yet. "
+                    f"{fallback_reason}"
+                )
+            ).send()
+            return
         if route.primary_metric is None:
             raise ValueError(f"Unable to determine a metric for intent: {route.intent}")
 
