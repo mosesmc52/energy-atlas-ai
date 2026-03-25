@@ -43,6 +43,7 @@ class MetricExecutor:
             "lng_imports": self._eia_lng_imports,
             "ng_electricity": self._eia_ng_electricity,
             "ng_consumption_lower48": self._eia_ng_consumption_lower48,
+            "ng_consumption_by_sector": self._eia_ng_consumption_by_sector,
             "ng_production_lower48": self._eia_ng_production_lower48,
             "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
             # --- GridStatus (v1) ---
@@ -141,6 +142,11 @@ class MetricExecutor:
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
         return self.eia.ng_consumption_lower48(start=start, end=end)
+
+    def _eia_ng_consumption_by_sector(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        return self.eia.ng_consumption_by_sector(start=start, end=end)
 
     def _eia_ng_production_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]

@@ -364,8 +364,12 @@ class CacheBackedTimeseriesAdapterBase:
     def _slice_window(
         self, df: Optional[pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp
     ) -> pd.DataFrame:
-        if df is None or df.empty or self.date_col not in df.columns:
+        if df is None:
             return pd.DataFrame()
+        if self.date_col not in df.columns:
+            return pd.DataFrame(columns=list(df.columns))
+        if df.empty:
+            return df.iloc[0:0].copy()
 
         d = pd.to_datetime(df[self.date_col], errors="coerce")  # DO NOT dropna here
         mask = d.notna() & (d >= start) & (d <= end)

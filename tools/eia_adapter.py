@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import os
+from io import StringIO
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 from eia_ng import EIAClient
 from schemas.answer import SourceRef
@@ -73,6 +75,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "tavg_f_median",
         "tavg_c_mean",
         "tavg_c_median",
+    }
+    NG_CONSUMPTION_SECTOR_SERIES = {
+        "residential": "N3010US2",
+        "commercial": "N3020US2",
+        "industrial": "N3035US2",
+        "electric_power": "N3045US2",
+    }
+    NG_CONSUMPTION_SECTOR_DNAV_URLS = {
+        "residential": "https://www.eia.gov/dnav/ng/hist/n3010us2m.htm",
+        "commercial": "https://www.eia.gov/dnav/ng/hist/n3020us2m.htm",
+        "industrial": "https://www.eia.gov/dnav/ng/hist/n3035us2m.htm",
+        "electric_power": "https://www.eia.gov/dnav/ng/hist/n3045us2m.htm",
     }
 
     def __init__(
@@ -409,6 +423,34 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
+    def ng_consumption_by_sector(self, start: str, end: str) -> EIAResult:
+        """
+        U.S. natural gas consumption by end-use sector (monthly).
+        Returns long-form rows with columns: date, value, series.
+        """
+        df, cache_info = self._cached_timeseries(
+            metric_key="ng_consumption_by_sector",
+            start=start,
+            end=end,
+            cache_key_parts={},
+            fetch_ctx={"_fetch": "ng_consumption_by_sector"},
+            allow_internal_gap_fill_daily=False,
+            expected_calendar="M",
+        )
+
+        src = self._make_source(
+            label="EIA Natural Gas: Consumption by Sector",
+            reference="eia-ng-client:natural_gas.consumption_by_sector",
+            parameters={
+                "start": start,
+                "end": end,
+                "sectors": sorted(self.NG_CONSUMPTION_SECTOR_SERIES.keys()),
+                "cache": cache_info.__dict__,
+            },
+        )
+        meta = {"cache": cache_info.__dict__}
+        return EIAResult(df=df, source=src, meta=meta)
+
     def ng_production_lower48(self, start: str, end: str) -> EIAResult:
         """
         NG Production (canonical series).
@@ -596,6 +638,80 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             f"Unsupported return type from eia-ng-client call {fn_name}: {type(out)}"
         )
 
+    def _fetch_ng_consumption_sector_history(
+        self, *, sector: str, start: str, end: str
+    ) -> pd.DataFrame:
+        url = self.NG_CONSUMPTION_SECTOR_DNAV_URLS[sector]
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+
+        tables = pd.read_html(StringIO(response.text))
+        if not tables:
+            return pd.DataFrame(columns=["date", "value", "series"])
+
+        month_map = {
+            "Jan": 1,
+            "Feb": 2,
+            "Mar": 3,
+            "Apr": 4,
+            "May": 5,
+            "Jun": 6,
+            "Jul": 7,
+            "Aug": 8,
+            "Sep": 9,
+            "Oct": 10,
+            "Nov": 11,
+            "Dec": 12,
+        }
+
+        table = None
+        year_col = None
+        for candidate in tables:
+            candidate = candidate.copy()
+            candidate.columns = [str(col).strip() for col in candidate.columns]
+            found_year_col = next(
+                (col for col in candidate.columns if str(col).strip().lower() == "year"),
+                None,
+            )
+            month_cols = {m for m in month_map if m in candidate.columns}
+            if found_year_col is not None and len(month_cols) >= 3:
+                table = candidate
+                year_col = found_year_col
+                break
+
+        if table is None or year_col is None:
+            return pd.DataFrame(columns=["date", "value", "series"])
+        start_ts = pd.to_datetime(start, errors="coerce")
+        end_ts = pd.to_datetime(end, errors="coerce")
+        rows: list[dict[str, Any]] = []
+
+        for _, row in table.iterrows():
+            year = pd.to_numeric(row.get(year_col), errors="coerce")
+            if pd.isna(year):
+                continue
+            year_int = int(year)
+            for month_name, month_num in month_map.items():
+                raw_value = row.get(month_name)
+                if pd.isna(raw_value):
+                    continue
+                value = pd.to_numeric(
+                    str(raw_value).replace(",", "").strip(), errors="coerce"
+                )
+                if pd.isna(value):
+                    continue
+                date = pd.Timestamp(year=year_int, month=month_num, day=1)
+                if date < start_ts or date > end_ts:
+                    continue
+                rows.append(
+                    {
+                        "date": date,
+                        "value": float(value),
+                        "series": sector,
+                    }
+                )
+
+        return pd.DataFrame(rows, columns=["date", "value", "series"])
+
     def _normalize_timeseries_df(
         self,
         df: pd.DataFrame,
@@ -709,6 +825,20 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)
+
+        if which == "ng_consumption_by_sector":
+            frames: list[pd.DataFrame] = []
+            for sector in self.NG_CONSUMPTION_SECTOR_DNAV_URLS:
+                frame = self._fetch_ng_consumption_sector_history(
+                    sector=sector, start=start, end=end
+                )
+                if frame.empty:
+                    continue
+                frames.append(frame)
+
+            if not frames:
+                return pd.DataFrame(columns=["date", "value", "series"])
+            return pd.concat(frames, ignore_index=True)
 
         if which == "lng_imports":
             region = kwargs.get("region", "united_states_pipeline_total")

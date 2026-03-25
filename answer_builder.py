@@ -31,7 +31,15 @@ METRIC_UNITS = {
     "lng_imports": "MMcf",
     "ng_electricity": "MMcf",
     "ng_consumption_lower48": "MMcf",
+    "ng_consumption_by_sector": "MMcf",
     "ng_production_lower48": "MMcf",
+}
+
+SECTOR_LABELS = {
+    "residential": "residential",
+    "commercial": "commercial",
+    "industrial": "industrial",
+    "electric_power": "power",
 }
 
 
@@ -126,6 +134,56 @@ def _format_delta(delta: Optional[float], unit: Optional[str]) -> Optional[str]:
     return f"{direction} {_format_number(abs(delta))}{unit_suffix} from the previous observation"
 
 
+def _deterministic_sector_consumption_answer(query: str, df: pd.DataFrame) -> str:
+    if df is None or df.empty or "date" not in df.columns or "value" not in df.columns:
+        return "No data was returned for the requested period."
+
+    latest_date = pd.to_datetime(df["date"], errors="coerce").max()
+    if pd.isna(latest_date):
+        return "No data was returned for the requested period."
+
+    latest_rows = df.loc[pd.to_datetime(df["date"], errors="coerce") == latest_date].copy()
+    if latest_rows.empty or "series" not in latest_rows.columns:
+        return "No data was returned for the requested period."
+
+    requested_sectors: list[str] = []
+    q = (query or "").lower()
+    sector_terms = {
+        "electric_power": ("power", "electric power"),
+        "residential": ("residential",),
+        "industrial": ("industrial",),
+        "commercial": ("commercial",),
+    }
+    for sector, terms in sector_terms.items():
+        if any(term in q for term in terms):
+            requested_sectors.append(sector)
+
+    latest_rows["series"] = latest_rows["series"].astype(str)
+    if requested_sectors:
+        latest_rows = latest_rows[latest_rows["series"].isin(requested_sectors)]
+
+    latest_rows = latest_rows.dropna(subset=["value"])
+    if latest_rows.empty:
+        return "No data was returned for the requested period."
+
+    latest_rows["value"] = pd.to_numeric(latest_rows["value"], errors="coerce")
+    latest_rows = latest_rows.dropna(subset=["value"]).sort_values("value", ascending=False)
+    if latest_rows.empty:
+        return "No data was returned for the requested period."
+
+    leader = latest_rows.iloc[0]
+    ranking = ", ".join(
+        f"{SECTOR_LABELS.get(str(row['series']), str(row['series']))} ({_format_number(float(row['value']))} MMcf)"
+        for _, row in latest_rows.iterrows()
+    )
+    leader_label = SECTOR_LABELS.get(str(leader["series"]), str(leader["series"]))
+    return (
+        f"As of {latest_date.date().isoformat()}, the {leader_label} sector consumed the most gas "
+        f"at {_format_number(float(leader['value']))} MMcf. "
+        f"Ranking: {ranking}."
+    )
+
+
 def _deterministic_answer_text(
     *, metric: str, query: str, facts: dict[str, Any], mode: str
 ) -> str:
@@ -169,6 +227,21 @@ def build_answer_with_openai(
     src = result.source
 
     metric = result.meta.get("metric", "") if result.meta else ""
+
+    if metric == "ng_consumption_by_sector":
+        answer_text = _deterministic_sector_consumption_answer(query=query, df=df)
+        if df is not None and "date" in df.columns:
+            df = df.sort_values("date").reset_index(drop=True)
+        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
 
     # 1) Deterministic facts
     if df is None or len(df) == 0:

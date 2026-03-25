@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from agents.llm_router import LLMRouterError
 from agents.llm_router import llm_route_structured as llm_route_structured_impl
-from utils.dates import resolve_date_range
+from utils.dates import has_explicit_date_reference, resolve_date_range
 from utils.helpers import contains_any
 
 # ----------------------------
@@ -140,6 +140,17 @@ ROUTE_MAP = {
         "consumes",
         "usage",
     ],
+    "ng_consumption_by_sector": [
+        "sector consumption",
+        "consumption by sector",
+        "end use",
+        "residential",
+        "commercial",
+        "industrial",
+        "electric power",
+        "power sector",
+        "which sector",
+    ],
     "ng_electricity": ["electricity", "power plants", "power generation"],
     "ng_production_lower48": ["production", "output", "supply", "dry gas production"],
     "ng_exploration_reserves_lower48": [
@@ -182,6 +193,14 @@ BONUS_TERMS: Dict[str, List[str]] = {
     "lng_exports": ["exports", "export", "pipeline flow", "throughput"],
     "lng_imports": ["imports", "import"],
     "ng_consumption_lower48": ["consumption", "usage"],
+    "ng_consumption_by_sector": [
+        "sector",
+        "residential",
+        "commercial",
+        "industrial",
+        "electric power",
+        "power",
+    ],
     "ng_electricity": ["power plants", "electricity", "power generation"],
     "ng_production_lower48": ["production", "output", "supply"],
     "ng_exploration_reserves_lower48": ["reserves", "exploration"],
@@ -305,6 +324,8 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         score -= 1.0
     if metric == "ng_consumption_lower48" and "texas" in q:
         score -= 0.5
+    if metric == "ng_consumption_by_sector" and "most" in q:
+        score += 0.75
     if metric == "ng_electricity" and "share" in q:
         score -= 0.75
     if metric == "iso_fuel_mix" and "consumption" in q:
@@ -484,6 +505,7 @@ def route_query(user_query: str) -> HybridRouteResult:
 
     normalized = normalize_query(user_query)
     start, end = resolve_date_range(user_query)
+    has_explicit_dates = has_explicit_date_reference(user_query)
     intent = detect_intent(normalized)
 
     candidates = score_routes(normalized)
@@ -498,12 +520,30 @@ def route_query(user_query: str) -> HybridRouteResult:
         )
 
     top = candidates[0]
+    if not has_explicit_dates and top.metric == "ng_exploration_reserves_lower48":
+        start = "2000-01-01"
     filters = build_filters(top.metric, normalized, confidence)
 
     # Fast path: for single-metric questions, stay on rules unless the match is ambiguous.
     if intent == "single_metric" and not ambiguous:
         return HybridRouteResult(
             intent="single_metric",
+            primary_metric=top.metric,
+            metrics=[top.metric],
+            start=start,
+            end=end,
+            filters=filters,
+            confidence=confidence,
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
+            normalized_query=normalized,
+        )
+
+    if intent == "ranking" and top.metric == "ng_consumption_by_sector" and not ambiguous:
+        return HybridRouteResult(
+            intent="ranking",
             primary_metric=top.metric,
             metrics=[top.metric],
             start=start,
