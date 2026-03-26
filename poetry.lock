@@ -354,6 +354,44 @@ files = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.42.76"
+description = "The AWS SDK for Python"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "boto3-1.42.76-py3-none-any.whl", hash = "sha256:63c6779c814847016b89ae1b72ed968f8a63d80e589ba337511aa6fc1b59585e"},
+    {file = "boto3-1.42.76.tar.gz", hash = "sha256:aa2b1973eee8973a9475d24bb579b1dee7176595338d4e4f7880b5c6189b8814"},
+]
+
+[package.dependencies]
+botocore = ">=1.42.76,<1.43.0"
+jmespath = ">=0.7.1,<2.0.0"
+s3transfer = ">=0.16.0,<0.17.0"
+
+[package.extras]
+crt = ["botocore[crt] (>=1.21.0,<2.0a0)"]
+
+[[package]]
+name = "botocore"
+version = "1.42.76"
+description = "Low-level, data-driven core of boto 3."
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "botocore-1.42.76-py3-none-any.whl", hash = "sha256:151e714ae3c32f68ea0b4dc60751401e03f84a87c6cf864ea0ee64aa10eb4607"},
+    {file = "botocore-1.42.76.tar.gz", hash = "sha256:c553fa0ae29e36a5c407f74da78b78404b81b74b15fb62bf640a3cd9385f0874"},
+]
+
+[package.dependencies]
+jmespath = ">=0.7.1,<2.0.0"
+python-dateutil = ">=2.1,<3.0.0"
+urllib3 = {version = ">=1.25.4,<2.2.0 || >2.2.0,<3", markers = "python_version >= \"3.10\""}
+
+[package.extras]
+crt = ["awscrt (==0.31.2)"]
+
+[[package]]
 name = "certifi"
 version = "2026.1.4"
 description = "Python package for providing Mozilla's CA Bundle."
@@ -823,6 +861,20 @@ files = [
 ]
 
 [[package]]
+name = "dj-database-url"
+version = "3.1.2"
+description = "Use Database URLs in your Django Application."
+optional = false
+python-versions = ">=3.10"
+files = [
+    {file = "dj_database_url-3.1.2-py3-none-any.whl", hash = "sha256:544e015fee3efa5127a1eb1cca465f4ace578265b3671fe61d0ed7dbafb5ec8a"},
+    {file = "dj_database_url-3.1.2.tar.gz", hash = "sha256:63c20e4bbaa51690dfd4c8d189521f6bf6bc9da9fcdb23d95d2ee8ee87f9ec62"},
+]
+
+[package.dependencies]
+django = ">=4.2"
+
+[[package]]
 name = "django"
 version = "6.0.3"
 description = "A high-level Python web framework that encourages rapid development and clean, pragmatic design."
@@ -841,6 +893,57 @@ tzdata = {version = "*", markers = "sys_platform == \"win32\""}
 [package.extras]
 argon2 = ["argon2-cffi (>=23.1.0)"]
 bcrypt = ["bcrypt (>=4.1.1)"]
+
+[[package]]
+name = "django-admin-colors"
+version = "0.2.0"
+description = "Customizable Django admin themes"
+optional = false
+python-versions = "*"
+files = [
+    {file = "django-admin-colors-0.2.0.tar.gz", hash = "sha256:fd0c66ef2c52529093c1d3e9146f93f25b48d48ed6b9705f565bbd1cba3acdd3"},
+    {file = "django_admin_colors-0.2.0-py3-none-any.whl", hash = "sha256:035e5d0c135ce4f3f9a522b44d65504092bd798b256626a4ef8ae9ce5dc4c3cc"},
+]
+
+[[package]]
+name = "django-configurations"
+version = "2.5.1"
+description = "A helper for organizing Django settings."
+optional = false
+python-versions = "<4.0,>=3.8"
+files = [
+    {file = "django-configurations-2.5.1.tar.gz", hash = "sha256:6e5083757e2bbdf9bb7850567536b96a93515f6b17503d74928ff628db2e0e94"},
+    {file = "django_configurations-2.5.1-py3-none-any.whl", hash = "sha256:ceb84858da2dac846b15e715c2fd936cfc4c7917c074aff8d31700564093955e"},
+]
+
+[package.dependencies]
+django = ">=3.2"
+
+[package.extras]
+cache = ["django-cache-url"]
+database = ["dj-database-url"]
+email = ["dj-email-url"]
+search = ["dj-search-url"]
+testing = ["dj-database-url", "dj-email-url", "dj-search-url", "django-cache-url (>=1.0.0)"]
+
+[[package]]
+name = "django-ses"
+version = "4.7.2"
+description = "A Django email backend for Amazon's Simple Email Service (SES)"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "django_ses-4.7.2-py3-none-any.whl", hash = "sha256:f3db567fb6f43c01d7d890f5c991e1ebbfa48220de0be24d497ba6332004abcb"},
+    {file = "django_ses-4.7.2.tar.gz", hash = "sha256:a36f2af0e4ce060bf36053ed4c94feac1703ea3351e677c6f6421abd01433a35"},
+]
+
+[package.dependencies]
+boto3 = ">=1.0.0"
+django = ">=3.2"
+
+[package.extras]
+bounce = ["cryptography (>=36.0.2)", "requests (>=2.32.1)"]
+events = ["cryptography (>=36.0.2)", "requests (>=2.32.1)"]
 
 [[package]]
 name = "docstring-parser"
@@ -1817,6 +1920,17 @@ files = [
     {file = "jiter-0.12.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d96b264ab7d34bbb2312dedc47ce07cd53f06835eacbc16dde3761f47c3a9e7f"},
     {file = "jiter-0.12.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c24e864cb30ab82311c6425655b0cdab0a98c5d973b065c66a3f020740c2324c"},
     {file = "jiter-0.12.0.tar.gz", hash = "sha256:64dfcd7d5c168b38d3f9f8bba7fc639edb3418abcc74f22fdbe6b8938293f30b"},
+]
+
+[[package]]
+name = "jmespath"
+version = "1.1.0"
+description = "JSON Matching Expressions"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64"},
+    {file = "jmespath-1.1.0.tar.gz", hash = "sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d"},
 ]
 
 [[package]]
@@ -5017,6 +5131,23 @@ files = [
 pyasn1 = ">=0.1.3"
 
 [[package]]
+name = "s3transfer"
+version = "0.16.0"
+description = "An Amazon S3 Transfer Manager"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "s3transfer-0.16.0-py3-none-any.whl", hash = "sha256:18e25d66fed509e3868dc1572b3f427ff947dd2c56f844a5bf09481ad3f3b2fe"},
+    {file = "s3transfer-0.16.0.tar.gz", hash = "sha256:8e990f13268025792229cd52fa10cb7163744bf56e719e0b9cb925ab79abf920"},
+]
+
+[package.dependencies]
+botocore = ">=1.37.4,<2.0a.0"
+
+[package.extras]
+crt = ["botocore[crt] (>=1.37.4,<2.0a.0)"]
+
+[[package]]
 name = "setuptools"
 version = "80.10.1"
 description = "Easily download, build, install, upgrade, and uninstall Python packages"
@@ -6117,4 +6248,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<3.13"
-content-hash = "4a0c18c781ab49204270afbeefd6991a49de29d2a5e717242ac9e117fb8af11a"
+content-hash = "a7d38cbf4cab6d38e93534fe054e4734a41e72179c2b05af92c5e99371eb10b5"

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alert Sandbox</title>
+</head>
+<body>
+  <main>
+    <h1>Alert sandbox</h1>
+    <p>Test an alert question before saving it.</p>
+    <p><a href="{% url 'alerts:list' %}">Back to alerts</a></p>
+
+    {% if messages %}
+      <ul>
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <form method="post" action="{% url 'alerts:sandbox' %}">
+      {% csrf_token %}
+
+      <label for="name">Alert name</label>
+      <input id="name" type="text" name="name" value="{{ request.POST.name|default:'' }}">
+
+      <label for="question">Question</label>
+      <textarea id="question" name="question" rows="4" required>{{ request.POST.question|default:'' }}</textarea>
+
+      <label for="frequency">Frequency</label>
+      <select id="frequency" name="frequency">
+        {% for value, label in frequency_choices %}
+          <option value="{{ value }}" {% if request.POST.frequency == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="trigger_type">Trigger type</label>
+      <select id="trigger_type" name="trigger_type">
+        {% for value, label in trigger_type_choices %}
+          <option value="{{ value }}" {% if request.POST.trigger_type == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="cooldown_hours">Cooldown hours</label>
+      <input id="cooldown_hours" type="number" min="0" name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:'24' }}">
+
+      <fieldset>
+        <legend>Delivery channels</legend>
+        {% for value, label in delivery_channel_choices %}
+          <label for="sandbox_delivery_{{ value }}">
+            <input
+              id="sandbox_delivery_{{ value }}"
+              type="checkbox"
+              name="delivery_channels"
+              value="{{ value }}"
+              {% if value in selected_delivery_channels %}checked{% endif %}
+            >
+            {{ label }}
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <button type="submit" name="action" value="test">Test alert</button>
+      {% if evaluation and not evaluation.error_code %}
+        <button type="submit" name="action" value="save">Save alert</button>
+      {% endif %}
+    </form>
+
+    {% if evaluation %}
+      <section>
+        <h2>Evaluation result</h2>
+        <p><strong>Question:</strong> {{ evaluation.question }}</p>
+        <p><strong>Result:</strong>
+          {% if evaluation.result == None %}
+            unknown
+          {% elif evaluation.result %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        </p>
+        <p><strong>Explanation:</strong> {{ evaluation.explanation }}</p>
+        {% if evaluation.as_of %}
+          <p><strong>As of:</strong> {{ evaluation.as_of }}</p>
+        {% endif %}
+        {% if evaluation.metric %}
+          <p><strong>Metric:</strong> {{ evaluation.metric }}</p>
+        {% endif %}
+        {% if evaluation.error_code %}
+          <p><strong>Error code:</strong> {{ evaluation.error_code }}</p>
+        {% endif %}
+        {% if evaluation.values %}
+          <h3>Values</h3>
+          <pre>{{ evaluation.values }}</pre>
+        {% endif %}
+        {% if evaluation.metadata %}
+          <h3>Metadata</h3>
+          <pre>{{ evaluation.metadata }}</pre>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

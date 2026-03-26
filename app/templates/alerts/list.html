@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alerts</title>
+</head>
+<body>
+  <main>
+    <h1>Your alerts</h1>
+    <p><a href="{% url 'alerts:create' %}">Create a new alert</a></p>
+    <p><a href="{% url 'alerts:sandbox' %}">Test an alert in sandbox</a></p>
+
+    {% if messages %}
+      <ul>
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if alert_rules %}
+      <ul>
+        {% for rule in alert_rules %}
+          <li>
+            <h2><a href="{% url 'alerts:detail' rule.id %}">{{ rule.name }}</a></h2>
+            <p>{{ rule.question }}</p>
+            <p>Status: {{ rule.get_status_display }} | Frequency: {{ rule.get_frequency_display }}</p>
+            <p>Last result:
+              {% if rule.last_result == None %}
+                unknown
+              {% elif rule.last_result %}
+                true
+              {% else %}
+                false
+              {% endif %}
+            </p>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No alerts yet.</p>
+    {% endif %}
+  </main>
+</body>
+</html>

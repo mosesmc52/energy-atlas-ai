@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign Up</title>
+  <title>Sign In</title>
 </head>
 <body>
   <main>
-    <h1>Create account</h1>
+    <h1>Sign in</h1>
 
     {% if messages %}
       <ul>
@@ -17,8 +17,9 @@
       </ul>
     {% endif %}
 
-    <form method="post" action="{% url 'auth:signup' %}">
+    <form method="post" action="{% url 'auth:signin' %}">
       {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
 
       <label for="email">Email</label>
       <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required>
@@ -26,13 +27,16 @@
       <label for="password">Password</label>
       <input id="password" type="password" name="password" required>
 
-      <label for="confirm_password">Confirm password</label>
-      <input id="confirm_password" type="password" name="confirm_password" required>
+      <label for="remember-me">
+        <input id="remember-me" type="checkbox" name="remember_me">
+        Remember me
+      </label>
 
-      <button type="submit">Create account</button>
+      <button type="submit">Sign in</button>
     </form>
 
-    <p>Already have an account? <a href="{% url 'auth:signin' %}">Sign in</a></p>
+    <p><a href="{% url 'auth:forgot' %}">Forgot password?</a></p>
+    <p>Need an account? <a href="{% url 'auth:signup' %}">Sign up</a></p>
   </main>
 </body>
 </html>

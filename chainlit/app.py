@@ -16,10 +16,14 @@ else:
     proj_root = cwd  # if you launched from project root
 if str(proj_root) not in sys.path:
     sys.path.insert(0, str(proj_root))
+app_root = proj_root / "app"
+if app_root.exists() and str(app_root) not in sys.path:
+    sys.path.insert(0, str(app_root))
 
 
 import chainlit as cl
 from agents.router import route_query
+from alerts.services import build_signal_evaluator, evaluation_as_json, parse_signal_question
 from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import render_plotly
 from executer import ExecuteRequest, MetricExecutor
@@ -63,8 +67,9 @@ def build_container():
     eia_adapter = EIAAdapter(cache_dir=cache_root / "eia")
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
     executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
+    signal_evaluator = build_signal_evaluator()
 
-    return {"executor": executor}
+    return {"executor": executor, "signal_evaluator": signal_evaluator}
 
 
 @cl.set_starters
@@ -139,10 +144,19 @@ async def on_message(message: cl.Message):
     request_started = perf_counter() if DEBUG_ENABLED else 0.0
     deps = cl.user_session.get("deps") or {}
     executor: MetricExecutor = deps.get("executor")  # type: ignore[assignment]
+    signal_evaluator = deps.get("signal_evaluator")
 
     user_query = (message.content or "").strip()
     if not user_query:
         await cl.Message(content="Please enter a question.").send()
+        return
+
+    parsed_signal = parse_signal_question(user_query)
+    if parsed_signal is not None and signal_evaluator is not None:
+        evaluation = signal_evaluator.evaluate(parsed_signal)
+        await cl.Message(
+            content=f"```json\n{evaluation_as_json(evaluation)}\n```"
+        ).send()
         return
 
     # Best-effort question logging

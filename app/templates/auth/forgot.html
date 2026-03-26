@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forgot Password</title>
+</head>
+<body>
+  <main>
+    <h1>Reset password</h1>
+
+    {% if messages %}
+      <ul>
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <form method="post" action="{% url 'auth:forgot' %}">
+      {% csrf_token %}
+
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required>
+
+      <button type="submit">Send reset instructions</button>
+    </form>
+
+    <p><a href="{% url 'auth:signin' %}">Back to sign in</a></p>
+  </main>
+</body>
+</html>

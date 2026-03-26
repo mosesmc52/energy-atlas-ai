@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create Alert</title>
+</head>
+<body>
+  <main>
+    <h1>Create alert</h1>
+    <p><a href="{% url 'alerts:list' %}">Back to alerts</a></p>
+
+    {% if messages %}
+      <ul>
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <form method="post" action="{% url 'alerts:create' %}">
+      {% csrf_token %}
+
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" value="{{ request.POST.name|default:'' }}">
+
+      <label for="question">Question</label>
+      <textarea id="question" name="question" rows="4" required>{{ request.POST.question|default:'' }}</textarea>
+
+      <label for="frequency">Frequency</label>
+      <select id="frequency" name="frequency">
+        {% for value, label in frequency_choices %}
+          <option value="{{ value }}" {% if request.POST.frequency == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="trigger_type">Trigger type</label>
+      <select id="trigger_type" name="trigger_type">
+        {% for value, label in trigger_type_choices %}
+          <option value="{{ value }}" {% if request.POST.trigger_type == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="cooldown_hours">Cooldown hours</label>
+      <input id="cooldown_hours" type="number" min="0" name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:'24' }}">
+
+      <fieldset>
+        <legend>Delivery channels</legend>
+        {% for value, label in delivery_channel_choices %}
+          <label for="delivery_{{ value }}">
+            <input
+              id="delivery_{{ value }}"
+              type="checkbox"
+              name="delivery_channels"
+              value="{{ value }}"
+              {% if value in selected_delivery_channels %}checked{% endif %}
+            >
+            {{ label }}
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <button type="submit">Create alert</button>
+    </form>
+  </main>
+</body>
+</html>

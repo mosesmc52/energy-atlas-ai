@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Onboarding</title>
+</head>
+<body>
+  <main>
+    <h1>Welcome</h1>
+    <p>Complete your profile.</p>
+
+    {% if messages %}
+      <ul>
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <form method="post" action="{% url 'auth:onboard' %}">
+      {% csrf_token %}
+
+      <label for="first_name">First name</label>
+      <input id="first_name" type="text" name="first_name" value="{{ request.user.first_name|default:'' }}">
+
+      <label for="last_name">Last name</label>
+      <input id="last_name" type="text" name="last_name" value="{{ request.user.last_name|default:'' }}">
+
+      <button type="submit">Save profile</button>
+    </form>
+
+    <p><a href="{% url 'auth:logout' %}">Sign out</a></p>
+  </main>
+</body>
+</html>

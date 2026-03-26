@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ alert_rule.name }}</title>
+</head>
+<body>
+  <main>
+    <h1>{{ alert_rule.name }}</h1>
+    <p><a href="{% url 'alerts:list' %}">Back to alerts</a></p>
+
+    {% if messages %}
+      <ul>
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <section>
+      <h2>Rule</h2>
+      <p>{{ alert_rule.question }}</p>
+      <p>Signal: {{ alert_rule.signal_id }}</p>
+      <p>Metric: {{ alert_rule.metric }}</p>
+      <p>Region: {{ alert_rule.region|default:'-' }}</p>
+      <p>Status: {{ alert_rule.get_status_display }}</p>
+      <p>Frequency: {{ alert_rule.get_frequency_display }}</p>
+      <p>Trigger type: {{ alert_rule.get_trigger_type_display }}</p>
+      <p>Last explanation: {{ alert_rule.last_explanation|default:'-' }}</p>
+      <pre>{{ alert_rule.last_values_json }}</pre>
+    </section>
+
+    <section>
+      <h2>Evaluate now</h2>
+      <form method="post" action="{% url 'alerts:detail' alert_rule.id %}">
+        {% csrf_token %}
+        <button type="submit">Run evaluation</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Recent events</h2>
+      {% if events %}
+        <ul>
+          {% for event in events %}
+            <li>
+              <p>{{ event.evaluated_at }}</p>
+              <p>Result:
+                {% if event.result == None %}
+                  unknown
+                {% elif event.result %}
+                  true
+                {% else %}
+                  false
+                {% endif %}
+              </p>
+              <p>{{ event.explanation }}</p>
+              {% if event.error_code %}
+                <p>Error: {{ event.error_code }}</p>
+              {% endif %}
+              <pre>{{ event.values_json }}</pre>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No events yet.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
