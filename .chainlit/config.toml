@@ -94,6 +94,7 @@ reaction_on_message_received = false
 # Name of the assistant.
 name = "Assistant"
 
+sidebar = false
 default_theme = "light"
 
 # Force a specific language for all users (e.g., "en-US", "he-IL", "fr-FR")

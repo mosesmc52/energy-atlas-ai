@@ -22,6 +22,14 @@ def _y_fields(y: list[str] | str | AxisSpec) -> list[str]:
     return y
 
 
+def _bar_datetime_label(series: pd.Series, aggregation: str | None) -> pd.Series:
+    if aggregation == "monthly":
+        return series.dt.strftime("%Y-%m")
+    if aggregation == "weekly":
+        return series.dt.strftime("%Y-%m-%d")
+    return series.dt.strftime("%Y-%m-%d")
+
+
 def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
     if df is None or df.empty:
         fig = go.Figure()
@@ -70,7 +78,16 @@ def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
             fig.update_traces(fill="tozeroy")
 
     elif chart_type == "bar":
-        fig = px.bar(d, x=x_field, y=y_fields, title=spec.title, template=template)
+        bar_x_field = x_field
+        if x_is_datetime:
+            # Datetime bars with month-formatted ticks can show repeated labels for
+            # distinct dates within the same month. Use explicit category labels.
+            bar_x_field = "__bar_x_label"
+            d[bar_x_field] = _bar_datetime_label(d[x_field], spec.aggregation)
+
+        fig = px.bar(d, x=bar_x_field, y=y_fields, title=spec.title, template=template)
+        if x_is_datetime:
+            fig.update_xaxes(type="category", categoryorder="array", categoryarray=d[bar_x_field].tolist())
 
     elif chart_type == "histogram":
         if not y_fields:
@@ -161,7 +178,7 @@ def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
         ticklen=6,
     )
 
-    if x_is_datetime:
+    if x_is_datetime and chart_type != "bar":
         fig.update_xaxes(tickformat="%Y-%m")
 
     fig.update_yaxes(
@@ -184,11 +201,11 @@ def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
         if chart_type in {"histogram", "heatmap"}:
             continue
         name_line = "<br>%{fullData.name}" if len(fig.data) > 1 else ""
-        x_fmt = "%{x|%Y-%m-%d}" if x_is_datetime else "%{x}"
+        x_fmt = "%{x|%Y-%m-%d}" if x_is_datetime and chart_type != "bar" else "%{x}"
         y_suffix = f" {y_units}" if y_units else ""
         tr.hovertemplate = f"{x_fmt}{name_line}<br>%{{y:,.2f}}{y_suffix}<extra></extra>"
 
-    if x_is_datetime and chart_type in {"line", "area", "stacked_area", "bar"}:
+    if x_is_datetime and chart_type in {"line", "area", "stacked_area"}:
         fig.update_xaxes(
             rangeslider_visible=True,
             rangeselector=dict(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from typing import Any, Optional
 
@@ -21,6 +22,25 @@ SYSTEM_INSTRUCTIONS = (
 )
 
 client = OpenAI()  # expects OPENAI_API_KEY in env
+
+METRIC_UNITS = {
+    "henry_hub_spot": "$/MMBtu",
+    "working_gas_storage_lower48": "Bcf",
+    "working_gas_storage_change_weekly": "Bcf",
+    "lng_exports": "MMcf",
+    "lng_imports": "MMcf",
+    "ng_electricity": "MMcf",
+    "ng_consumption_lower48": "MMcf",
+    "ng_consumption_by_sector": "MMcf",
+    "ng_production_lower48": "MMcf",
+}
+
+SECTOR_LABELS = {
+    "residential": "residential",
+    "commercial": "commercial",
+    "industrial": "industrial",
+    "electric_power": "power",
+}
 
 
 def _json_safe(v: Any) -> Any:
@@ -93,6 +113,109 @@ def _pick_fact_value_col(df: pd.DataFrame, metric: str) -> Optional[str]:
     return numeric_cols[0]
 
 
+def _format_number(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    abs_value = abs(value)
+    if abs_value >= 100:
+        return f"{value:,.0f}"
+    if abs_value >= 10:
+        return f"{value:,.1f}"
+    return f"{value:,.2f}"
+
+
+def _format_delta(delta: Optional[float], unit: Optional[str]) -> Optional[str]:
+    if delta is None:
+        return None
+    direction = "up" if delta > 0 else "down" if delta < 0 else "unchanged"
+    if direction == "unchanged":
+        return "unchanged from the previous observation"
+    unit_suffix = f" {unit}" if unit else ""
+    return f"{direction} {_format_number(abs(delta))}{unit_suffix} from the previous observation"
+
+
+def _deterministic_sector_consumption_answer(query: str, df: pd.DataFrame) -> str:
+    if df is None or df.empty or "date" not in df.columns or "value" not in df.columns:
+        return "No data was returned for the requested period."
+
+    latest_date = pd.to_datetime(df["date"], errors="coerce").max()
+    if pd.isna(latest_date):
+        return "No data was returned for the requested period."
+
+    latest_rows = df.loc[pd.to_datetime(df["date"], errors="coerce") == latest_date].copy()
+    if latest_rows.empty or "series" not in latest_rows.columns:
+        return "No data was returned for the requested period."
+
+    requested_sectors: list[str] = []
+    q = (query or "").lower()
+    sector_terms = {
+        "electric_power": ("power", "electric power"),
+        "residential": ("residential",),
+        "industrial": ("industrial",),
+        "commercial": ("commercial",),
+    }
+    for sector, terms in sector_terms.items():
+        if any(term in q for term in terms):
+            requested_sectors.append(sector)
+
+    latest_rows["series"] = latest_rows["series"].astype(str)
+    if requested_sectors:
+        latest_rows = latest_rows[latest_rows["series"].isin(requested_sectors)]
+
+    latest_rows = latest_rows.dropna(subset=["value"])
+    if latest_rows.empty:
+        return "No data was returned for the requested period."
+
+    latest_rows["value"] = pd.to_numeric(latest_rows["value"], errors="coerce")
+    latest_rows = latest_rows.dropna(subset=["value"]).sort_values("value", ascending=False)
+    if latest_rows.empty:
+        return "No data was returned for the requested period."
+
+    leader = latest_rows.iloc[0]
+    ranking = ", ".join(
+        f"{SECTOR_LABELS.get(str(row['series']), str(row['series']))} ({_format_number(float(row['value']))} MMcf)"
+        for _, row in latest_rows.iterrows()
+    )
+    leader_label = SECTOR_LABELS.get(str(leader["series"]), str(leader["series"]))
+    return (
+        f"As of {latest_date.date().isoformat()}, the {leader_label} sector consumed the most gas "
+        f"at {_format_number(float(leader['value']))} MMcf. "
+        f"Ranking: {ranking}."
+    )
+
+
+def _deterministic_answer_text(
+    *, metric: str, query: str, facts: dict[str, Any], mode: str
+) -> str:
+    latest_date = facts.get("latest_date")
+    latest_value = facts.get("latest_value")
+    prior_value = facts.get("prior_value")
+    delta = facts.get("delta")
+    n_points = int(facts.get("n_points") or 0)
+    unit = METRIC_UNITS.get(metric)
+    unit_suffix = f" {unit}" if unit else ""
+
+    if n_points == 0 or latest_date is None or latest_value is None:
+        return "No data was returned for the requested period."
+
+    latest_value_text = _format_number(latest_value)
+    delta_text = _format_delta(delta, unit)
+
+    if prior_value is None or delta_text is None:
+        return f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}."
+
+    if mode == "observed":
+        return (
+            f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}, "
+            f"{delta_text}."
+        )
+
+    return (
+        f"The latest observed value is {latest_value_text}{unit_suffix} on {latest_date}, "
+        f"{delta_text}."
+    )
+
+
 def build_answer_with_openai(
     *,
     query: str,
@@ -104,6 +227,21 @@ def build_answer_with_openai(
     src = result.source
 
     metric = result.meta.get("metric", "") if result.meta else ""
+
+    if metric == "ng_consumption_by_sector":
+        answer_text = _deterministic_sector_consumption_answer(query=query, df=df)
+        if df is not None and "date" in df.columns:
+            df = df.sort_values("date").reset_index(drop=True)
+        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
 
     # 1) Deterministic facts
     if df is None or len(df) == 0:
@@ -139,19 +277,32 @@ def build_answer_with_openai(
             "value_column": value_col,
         }
 
-    # 2) OpenAI narration (text only)
-    user_text = (
-        f"User query: {query}\n\n"
-        f"Facts JSON:\n{json.dumps(facts, ensure_ascii=False)}"
+    # 2) Prefer deterministic narration for routine latest/delta summaries.
+    use_llm_narration = (
+        os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
+        in {"1", "true", "yes", "on"}
     )
 
-    resp = client.responses.create(
-        model=model,
-        instructions=SYSTEM_INSTRUCTIONS,
-        input=user_text,
-    )
+    if use_llm_narration:
+        user_text = (
+            f"User query: {query}\n\n"
+            f"Facts JSON:\n{json.dumps(facts, ensure_ascii=False)}"
+        )
 
-    answer_text = (resp.output_text or "").strip()
+        resp = client.responses.create(
+            model=model,
+            instructions=SYSTEM_INSTRUCTIONS,
+            input=user_text,
+        )
+
+        answer_text = (resp.output_text or "").strip()
+    else:
+        answer_text = _deterministic_answer_text(
+            metric=metric,
+            query=query,
+            facts=facts,
+            mode=mode,
+        )
 
     # 3) Assemble AnswerPayload
     df = df.sort_values("date").reset_index(drop=True)

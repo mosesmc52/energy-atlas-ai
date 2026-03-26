@@ -5,6 +5,23 @@ from typing import Tuple
 import pandas as pd
 
 
+def has_explicit_date_reference(query: str) -> bool:
+    q = query.lower()
+
+    if re.search(r"(20\d{2})-(\d{2})", q):
+        return True
+    if re.search(r"last\s+(\d+)\s+(day|days|month|months|year|years)", q):
+        return True
+    if "ytd" in q or "year to date" in q:
+        return True
+    if "this year" in q:
+        return True
+    if "latest" in q or "current" in q:
+        return True
+
+    return False
+
+
 def resolve_date_range(query: str) -> Tuple[str, str]:
     """
     Resolve date range from natural language.

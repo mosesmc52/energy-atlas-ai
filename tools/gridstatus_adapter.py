@@ -1,6 +1,7 @@
 # atlas/tools/gridstatus_adapter.py
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
@@ -8,6 +9,13 @@ from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 from schemas.answer import SourceRef
 from tools.cache_base import CacheBackedTimeseriesAdapterBase
+
+DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 @dataclass(frozen=True)
@@ -38,7 +46,11 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
 
     def __init__(self, cache_dir: str = "data/cache/gridstatus"):
         # Store canonical time column as "date" like your EIA adapter.
-        super().__init__(cache_dir=cache_dir, date_col="date")
+        super().__init__(
+            cache_dir=cache_dir,
+            date_col="date",
+            enable_debug_timing=DEBUG_ENABLED,
+        )
 
         try:
             import gridstatus  # noqa: F401
