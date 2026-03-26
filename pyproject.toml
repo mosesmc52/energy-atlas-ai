@@ -21,6 +21,7 @@ openpyxl = "^3.1.5"
 requests = "^2.32.5"
 pyarrow = "^23.0.1"
 gridstatus = "^0.34.0"
+django = "^6.0.3"
 
 
 [build-system]

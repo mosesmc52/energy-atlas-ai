@@ -47,6 +47,7 @@ async def _append_question_async(qlog, *, question: str, session_id: str) -> Non
     except Exception as e:  # noqa: BLE001
         logger.warning("Sheets logging failed asynchronously: %s", e)
 
+
 # -------------------------
 # 1) Dependency wiring (startup)
 # -------------------------
@@ -159,9 +160,7 @@ async def on_message(message: cl.Message):
         err = cl.user_session.get("qlog_error")
         if err:
             print(f"[INFO] Sheets disabled (init error): {err}")
-    qlog_elapsed_ms = (
-        (perf_counter() - qlog_started) * 1000 if DEBUG_ENABLED else 0.0
-    )
+    qlog_elapsed_ms = (perf_counter() - qlog_started) * 1000 if DEBUG_ENABLED else 0.0
 
     try:
         # (A) Route the query -> metric + params
@@ -179,7 +178,10 @@ async def on_message(message: cl.Message):
             ).send()
             return
         if route.intent == "unsupported" or route.primary_metric is None:
-            fallback_reason = route.reason or "This question did not map cleanly to a supported metric."
+            fallback_reason = (
+                route.reason
+                or "This question did not map cleanly to a supported metric."
+            )
             await cl.Message(
                 content=(
                     "I couldn't map that question to a supported metric yet. "

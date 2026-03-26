@@ -141,7 +141,8 @@ class MetricExecutor:
     def _eia_ng_consumption_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        return self.eia.ng_consumption_lower48(start=start, end=end)
+        state = str(filters.get("region") or "united_states_total")
+        return self.eia.ng_consumption_lower48(start=start, end=end, state=state)
 
     def _eia_ng_consumption_by_sector(
         self, *, start: str, end: str, filters: Dict[str, Any]
@@ -151,12 +152,22 @@ class MetricExecutor:
     def _eia_ng_production_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        return self.eia.ng_production_lower48(start=start, end=end)
+        state = str(filters.get("region") or "united_states_total")
+        return self.eia.ng_production_lower48(start=start, end=end, state=state)
 
     def _eia_ng_exploration_reserves_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        return self.eia.ng_exploration_reserves_lower48(start=start, end=end)
+        state = str(filters.get("region") or "all")
+        resource_category = str(
+            filters.get("resource_category") or "proved_associated_gas"
+        )
+        return self.eia.ng_exploration_reserves_lower48(
+            start=start,
+            end=end,
+            state=state,
+            resource_category=resource_category,
+        )
 
     # -----------------------
     # Metric handlers (GridStatus v1)

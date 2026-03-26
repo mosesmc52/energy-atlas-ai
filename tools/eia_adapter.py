@@ -57,6 +57,211 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "canada_pipeline",
         "mexico_pipeline",
     }
+    IMPORT_REGIONS = {
+        "canada_pipeline",
+        "mexico_pipeline",
+        "united_states_pipeline_total",
+        "canada_compressed",
+        "united_states_compressed_total",
+        "algeria",
+        "australia",
+        "brunei",
+        "egypt",
+        "equatorial_guinea",
+        "france",
+        "indonesia",
+        "jamaica",
+        "malaysia",
+        "nigeria",
+        "norway",
+        "oman",
+        "peru",
+        "qatar",
+        "trinidad_and_tobago",
+        "united_arab_emirates",
+        "united_kingdom",
+        "yemen",
+    }
+    EXPORT_REGIONS = {
+        "canada_pipeline",
+        "mexico_pipeline",
+        "united_states_pipeline_total",
+        "united_states_lng_total",
+        "canada_truck",
+        "mexico_truck",
+        "united_states_truck_total",
+        "canada_compressed",
+        "united_states_compressed_total",
+        "argentina",
+        "australia",
+        "bahrain",
+        "bangladesh",
+        "barbados",
+        "belgium",
+        "brazil",
+        "chile",
+        "china",
+        "colombia",
+        "croatia",
+        "dominican_republic",
+        "egypt",
+        "el_salvador",
+        "finland",
+        "france",
+        "germany",
+        "greece",
+        "haiti",
+        "india",
+        "indonesia",
+        "israel",
+        "italy",
+        "jamaica",
+        "japan",
+        "jordan",
+        "kuwait",
+        "lithuania",
+        "malta",
+        "mauritania",
+        "mexico",
+        "netherlands",
+        "nicaragua",
+        "pakistan",
+        "panama",
+        "philippines",
+        "poland",
+        "portugal",
+        "russia",
+        "senegal",
+        "singapore",
+        "south_korea",
+        "spain",
+        "taiwan",
+        "thailand",
+        "turkiye",
+        "united_arab_emirates",
+        "united_kingdom",
+    }
+    CONSUMPTION_STATES = {
+        "al",
+        "ak",
+        "az",
+        "ar",
+        "ca",
+        "co",
+        "ct",
+        "de",
+        "fl",
+        "ga",
+        "hi",
+        "id",
+        "il",
+        "in",
+        "ia",
+        "ks",
+        "ky",
+        "la",
+        "me",
+        "md",
+        "ma",
+        "mi",
+        "mn",
+        "ms",
+        "mo",
+        "mt",
+        "ne",
+        "nv",
+        "nh",
+        "nj",
+        "nm",
+        "ny",
+        "nc",
+        "nd",
+        "oh",
+        "ok",
+        "or",
+        "pa",
+        "ri",
+        "sc",
+        "sd",
+        "tn",
+        "tx",
+        "ut",
+        "vt",
+        "va",
+        "wa",
+        "wv",
+        "wi",
+        "wy",
+        "united_states_total",
+    }
+    PRODUCTION_STATES = {
+        "al",
+        "ak",
+        "az",
+        "ar",
+        "ca",
+        "co",
+        "fl",
+        "il",
+        "in",
+        "ks",
+        "ky",
+        "la",
+        "md",
+        "mi",
+        "mo",
+        "ms",
+        "mt",
+        "ne",
+        "nv",
+        "nm",
+        "ny",
+        "nd",
+        "oh",
+        "ok",
+        "or",
+        "pa",
+        "sd",
+        "tn",
+        "tx",
+        "ut",
+        "va",
+        "wv",
+        "united_states_total",
+    }
+    RESERVES_STATES = {
+        "al",
+        "ak",
+        "ar",
+        "ca",
+        "co",
+        "fl",
+        "ks",
+        "ky",
+        "la",
+        "mi",
+        "ms",
+        "mt",
+        "nd",
+        "nm",
+        "ny",
+        "oh",
+        "ok",
+        "pa",
+        "tx",
+        "ut",
+        "va",
+        "wv",
+        "wy",
+        "us",
+        "all",
+    }
+    RESERVES_RESOURCE_CATEGORIES = {
+        "proved_associated_gas",
+        "proved_nonassociated_gas",
+        "proved_ngl",
+        "expected_future_gas_production",
+    }
     WEATHER_REQUIRED_COLUMNS = {
         "region_id",
         "date",
@@ -304,9 +509,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         Natural gas exports (canonical series), optionally by trade region.
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
-        if region not in self.TRADE_REGIONS:
+        if region not in self.EXPORT_REGIONS:
             raise ValueError(
-                f"Invalid trade region '{region}'. Expected one of: {sorted(self.TRADE_REGIONS)}"
+                f"Invalid export region '{region}'. Expected one of: {sorted(self.EXPORT_REGIONS)}"
             )
 
         df, cache_info = self._cached_timeseries(
@@ -339,9 +544,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         Natural gas imports (canonical series), optionally by trade region.
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
-        if region not in self.TRADE_REGIONS:
+        if region not in self.IMPORT_REGIONS:
             raise ValueError(
-                f"Invalid trade region '{region}'. Expected one of: {sorted(self.TRADE_REGIONS)}"
+                f"Invalid import region '{region}'. Expected one of: {sorted(self.IMPORT_REGIONS)}"
             )
 
         df, cache_info = self._cached_timeseries(
@@ -394,19 +599,24 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def ng_consumption_lower48(self, start: str, end: str) -> EIAResult:
+    def ng_consumption_lower48(
+        self, start: str, end: str, state: str = "united_states_total"
+    ) -> EIAResult:
         """
         NG Consumption (canonical series).
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
+        if state not in self.CONSUMPTION_STATES:
+            raise ValueError(
+                f"Invalid consumption state '{state}'. Expected one of: {sorted(self.CONSUMPTION_STATES)}"
+            )
+
         df, cache_info = self._cached_timeseries(
             metric_key="consumption",
             start=start,
             end=end,
-            cache_key_parts={
-                "region": "united_states_total"
-            },  # add facets if you later support export type/region
-            fetch_ctx={"_fetch": "ng_consumption"},
+            cache_key_parts={"region": state},
+            fetch_ctx={"_fetch": "ng_consumption", "state": state},
             allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
             expected_calendar="M",
         )
@@ -417,6 +627,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             parameters={
                 "start": start,
                 "end": end,
+                "state": state,
                 "cache": cache_info.__dict__,
             },
         )
@@ -451,56 +662,87 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def ng_production_lower48(self, start: str, end: str) -> EIAResult:
+    def ng_production_lower48(
+        self, start: str, end: str, state: str = "united_states_total"
+    ) -> EIAResult:
         """
         NG Production (canonical series).
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
+        if state not in self.PRODUCTION_STATES:
+            raise ValueError(
+                f"Invalid production state '{state}'. Expected one of: {sorted(self.PRODUCTION_STATES)}"
+            )
+
         df, cache_info = self._cached_timeseries(
             metric_key="ng_production",
             start=start,
             end=end,
-            cache_key_parts={
-                "region": "united_states_total"
-            },  # add facets if you later support export type/region
-            fetch_ctx={"_fetch": "ng_production"},
+            cache_key_parts={"region": state},
+            fetch_ctx={"_fetch": "ng_production", "state": state},
             allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
             expected_calendar="M",
         )
 
         src = self._make_source(
-            label="EIA Natural Gas: Production",
+            label=f"EIA Natural Gas: Production ({state.replace('_', ' ').upper() if len(state) == 2 else state.replace('_', ' ').title()})",
             reference="eia-ng-client:natural_gas.production",
             parameters={
                 "start": start,
                 "end": end,
+                "state": state,
                 "cache": cache_info.__dict__,
             },
         )
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
-    def ng_exploration_reserves_lower48(self, start: str, end: str) -> EIAResult:
+    def ng_exploration_reserves_lower48(
+        self,
+        start: str,
+        end: str,
+        state: str = "all",
+        resource_category: str = "proved_associated_gas",
+    ) -> EIAResult:
         """
         NG Exploration (canonical series).
         Cache-first: load CSV, fetch missing edges (and optionally internal daily gaps), save, return window.
         """
+        if state not in self.RESERVES_STATES:
+            raise ValueError(
+                f"Invalid reserves state '{state}'. Expected one of: {sorted(self.RESERVES_STATES)}"
+            )
+        if resource_category not in self.RESERVES_RESOURCE_CATEGORIES:
+            raise ValueError(
+                "Invalid reserves resource category "
+                f"'{resource_category}'. Expected one of: {sorted(self.RESERVES_RESOURCE_CATEGORIES)}"
+            )
+
         df, cache_info = self._cached_timeseries(
             metric_key="ng_exploration_reserves",
             start=start,
             end=end,
-            cache_key_parts={},  # add facets if you later support export type/region
-            fetch_ctx={"_fetch": "ng_exploration_reserves"},
+            cache_key_parts={
+                "state": state,
+                "resource_category": resource_category,
+            },
+            fetch_ctx={
+                "_fetch": "ng_exploration_reserves",
+                "state": state,
+                "resource_category": resource_category,
+            },
             allow_internal_gap_fill_daily=False,  # set False if series is weekly/monthly
             expected_calendar="A",
         )
 
         src = self._make_source(
-            label="EIA Natural Gas: Production",
+            label="EIA Natural Gas: Exploration And Reserves",
             reference="eia-ng-client:natural_gas.exploration_and_reserves",
             parameters={
                 "start": start,
                 "end": end,
+                "state": state,
+                "resource_category": resource_category,
                 "cache": cache_info.__dict__,
             },
         )
@@ -805,10 +1047,13 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "ng_production":
-            rows = self.client.natural_gas.production(start=start, end=end)
+            state = kwargs.get("state", "united_states_total")
+            rows = self.client.natural_gas.production(
+                start=start, end=end, state=state
+            )
             if DEBUG_ENABLED:
                 print(
-                    f"[DEBUG] eia-ng production {start}..{end} -> "
+                    f"[DEBUG] eia-ng production {state} {start}..{end} -> "
                     f"{0 if rows is None else len(rows)} rows"
                 )
             if not rows:
@@ -816,10 +1061,13 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "ng_consumption":
-            rows = self.client.natural_gas.consumption(start=start, end=end)
+            state = kwargs.get("state", "united_states_total")
+            rows = self.client.natural_gas.consumption(
+                start=start, end=end, state=state
+            )
             if DEBUG_ENABLED:
                 print(
-                    f"[DEBUG] eia-ng consumption {start}..{end} -> "
+                    f"[DEBUG] eia-ng consumption {state} {start}..{end} -> "
                     f"{0 if rows is None else len(rows)} rows"
                 )
             if not rows:
@@ -864,7 +1112,16 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "ng_exploration_reserves":
-            rows = self.client.natural_gas.exploration_and_reserves(start=2000)
+            state = kwargs.get("state", "all")
+            resource_category = kwargs.get(
+                "resource_category", "proved_associated_gas"
+            )
+            rows = self.client.natural_gas.exploration_and_reserves(
+                start=start,
+                end=end,
+                state=state,
+                resource_category=resource_category,
+            )
             if not rows:
                 return pd.DataFrame(columns=["date", "value"])
             return pd.DataFrame(rows)

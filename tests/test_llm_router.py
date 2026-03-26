@@ -83,6 +83,119 @@ class TestLLMRouterStructured(unittest.TestCase):
         self.assertEqual(result.intent, "compare")
         self.assertEqual(result.metrics, ["lng_exports", "lng_imports"])
 
+    def test_production_state_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "ng_production_lower48",
+                "metrics": ["ng_production_lower48"],
+                "filters": {"region": "tx"},
+                "reason": "Texas production",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "ng_production_lower48")
+        self.assertEqual(result.filters, {"region": "tx"})
+
+    def test_consumption_state_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "ng_consumption_lower48",
+                "metrics": ["ng_consumption_lower48"],
+                "filters": {"region": "ca"},
+                "reason": "California consumption",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "ng_consumption_lower48")
+        self.assertEqual(result.filters, {"region": "ca"})
+
+    def test_import_region_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "lng_imports",
+                "metrics": ["lng_imports"],
+                "filters": {"region": "qatar"},
+                "reason": "Qatar imports",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "lng_imports")
+        self.assertEqual(result.filters, {"region": "qatar"})
+
+    def test_export_region_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "lng_exports",
+                "metrics": ["lng_exports"],
+                "filters": {"region": "japan"},
+                "reason": "Japan exports",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "lng_exports")
+        self.assertEqual(result.filters, {"region": "japan"})
+
+    def test_import_compressed_region_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "lng_imports",
+                "metrics": ["lng_imports"],
+                "filters": {"region": "united_states_compressed_total"},
+                "reason": "Compressed imports total",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "lng_imports")
+        self.assertEqual(
+            result.filters, {"region": "united_states_compressed_total"}
+        )
+
+    def test_export_truck_region_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "lng_exports",
+                "metrics": ["lng_exports"],
+                "filters": {"region": "united_states_truck_total"},
+                "reason": "Truck exports total",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "lng_exports")
+        self.assertEqual(result.filters, {"region": "united_states_truck_total"})
+
+    def test_reserves_filters_are_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "ng_exploration_reserves_lower48",
+                "metrics": ["ng_exploration_reserves_lower48"],
+                "filters": {
+                    "region": "tx",
+                    "resource_category": "proved_ngl",
+                },
+                "reason": "Texas proved ngl reserves",
+                "confidence": 0.88,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "ng_exploration_reserves_lower48")
+        self.assertEqual(
+            result.filters,
+            {"region": "tx", "resource_category": "proved_ngl"},
+        )
+
     def test_derived_clamps_confidence_and_filters(self) -> None:
         result = self._call_with_payload(
             {

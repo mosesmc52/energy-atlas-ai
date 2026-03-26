@@ -50,6 +50,274 @@ TRADE_REGION_KEYWORDS = {
     "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
 }
 
+IMPORT_REGION_KEYWORDS = {
+    "united_states_pipeline_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "total pipeline",
+    ],
+    "canada_compressed": ["canada_compressed", "canada compressed"],
+    "united_states_compressed_total": [
+        "united_states_compressed_total",
+        "united states compressed total",
+        "us compressed total",
+        "u.s. compressed total",
+    ],
+    "canada_pipeline": ["canada_pipeline", "canada pipeline", "canadian pipeline"],
+    "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
+    "algeria": ["algeria"],
+    "australia": ["australia"],
+    "brunei": ["brunei"],
+    "egypt": ["egypt"],
+    "equatorial_guinea": ["equatorial_guinea", "equatorial guinea"],
+    "france": ["france"],
+    "indonesia": ["indonesia"],
+    "jamaica": ["jamaica"],
+    "malaysia": ["malaysia"],
+    "nigeria": ["nigeria"],
+    "norway": ["norway"],
+    "oman": ["oman"],
+    "peru": ["peru"],
+    "qatar": ["qatar"],
+    "trinidad_and_tobago": ["trinidad_and_tobago", "trinidad and tobago"],
+    "united_arab_emirates": ["united_arab_emirates", "united arab emirates", "uae"],
+    "united_kingdom": ["united_kingdom", "united kingdom", "uk"],
+    "yemen": ["yemen"],
+}
+
+EXPORT_REGION_KEYWORDS = {
+    "united_states_lng_total": [
+        "united_states_lng_total",
+        "united states lng total",
+        "us lng total",
+        "u.s. lng total",
+    ],
+    "canada_truck": ["canada_truck", "canada truck"],
+    "mexico_truck": ["mexico_truck", "mexico truck"],
+    "united_states_truck_total": [
+        "united_states_truck_total",
+        "united states truck total",
+        "us truck total",
+        "u.s. truck total",
+    ],
+    "canada_compressed": ["canada_compressed", "canada compressed"],
+    "united_states_compressed_total": [
+        "united_states_compressed_total",
+        "united states compressed total",
+        "us compressed total",
+        "u.s. compressed total",
+    ],
+    "united_states_pipeline_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "total pipeline",
+    ],
+    "canada_pipeline": ["canada_pipeline", "canada pipeline", "canadian pipeline"],
+    "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
+    "argentina": ["argentina"],
+    "australia": ["australia"],
+    "bahrain": ["bahrain"],
+    "bangladesh": ["bangladesh"],
+    "barbados": ["barbados"],
+    "belgium": ["belgium"],
+    "brazil": ["brazil"],
+    "chile": ["chile"],
+    "china": ["china"],
+    "colombia": ["colombia"],
+    "croatia": ["croatia"],
+    "dominican_republic": ["dominican_republic", "dominican republic"],
+    "egypt": ["egypt"],
+    "el_salvador": ["el_salvador", "el salvador"],
+    "finland": ["finland"],
+    "france": ["france"],
+    "germany": ["germany"],
+    "greece": ["greece"],
+    "haiti": ["haiti"],
+    "india": ["india"],
+    "indonesia": ["indonesia"],
+    "israel": ["israel"],
+    "italy": ["italy"],
+    "jamaica": ["jamaica"],
+    "japan": ["japan"],
+    "jordan": ["jordan"],
+    "kuwait": ["kuwait"],
+    "lithuania": ["lithuania"],
+    "malta": ["malta"],
+    "mauritania": ["mauritania"],
+    "mexico": ["mexico"],
+    "netherlands": ["netherlands"],
+    "nicaragua": ["nicaragua"],
+    "pakistan": ["pakistan"],
+    "panama": ["panama"],
+    "philippines": ["philippines"],
+    "poland": ["poland"],
+    "portugal": ["portugal"],
+    "russia": ["russia"],
+    "senegal": ["senegal"],
+    "singapore": ["singapore"],
+    "south_korea": ["south_korea", "south korea"],
+    "spain": ["spain"],
+    "taiwan": ["taiwan"],
+    "thailand": ["thailand"],
+    "turkiye": ["turkiye", "turkey"],
+    "united_arab_emirates": ["united_arab_emirates", "united arab emirates", "uae"],
+    "united_kingdom": ["united_kingdom", "united kingdom", "uk"],
+}
+
+CONSUMPTION_STATE_KEYWORDS = {
+    "al": ["al", "alabama"],
+    "ak": ["ak", "alaska"],
+    "az": ["az", "arizona"],
+    "ar": ["ar", "arkansas"],
+    "ca": ["ca", "california"],
+    "co": ["co", "colorado"],
+    "ct": ["ct", "connecticut"],
+    "de": ["de", "delaware"],
+    "fl": ["fl", "florida"],
+    "ga": ["ga", "georgia"],
+    "hi": ["hi", "hawaii"],
+    "id": ["id", "idaho"],
+    "il": ["il", "illinois"],
+    "in": ["in", "indiana"],
+    "ia": ["ia", "iowa"],
+    "ks": ["ks", "kansas"],
+    "ky": ["ky", "kentucky"],
+    "la": ["la", "louisiana"],
+    "me": ["me", "maine"],
+    "md": ["md", "maryland"],
+    "ma": ["ma", "massachusetts"],
+    "mi": ["mi", "michigan"],
+    "mn": ["mn", "minnesota"],
+    "ms": ["ms", "mississippi"],
+    "mo": ["mo", "missouri"],
+    "mt": ["mt", "montana"],
+    "ne": ["ne", "nebraska"],
+    "nv": ["nv", "nevada"],
+    "nh": ["nh", "new hampshire"],
+    "nj": ["nj", "new jersey"],
+    "nm": ["nm", "new mexico"],
+    "ny": ["ny", "new york"],
+    "nc": ["nc", "north carolina"],
+    "nd": ["nd", "north dakota"],
+    "oh": ["oh", "ohio"],
+    "ok": ["ok", "oklahoma"],
+    "or": ["or", "oregon"],
+    "pa": ["pa", "pennsylvania"],
+    "ri": ["ri", "rhode island"],
+    "sc": ["sc", "south carolina"],
+    "sd": ["sd", "south dakota"],
+    "tn": ["tn", "tennessee"],
+    "tx": ["tx", "texas"],
+    "ut": ["ut", "utah"],
+    "vt": ["vt", "vermont"],
+    "va": ["va", "virginia"],
+    "wa": ["wa", "washington"],
+    "wv": ["wv", "west virginia"],
+    "wi": ["wi", "wisconsin"],
+    "wy": ["wy", "wyoming"],
+    "united_states_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "united_states_total",
+        "national total",
+    ],
+}
+
+PRODUCTION_STATE_KEYWORDS = {
+    "al": ["al", "alabama"],
+    "ak": ["ak", "alaska"],
+    "az": ["az", "arizona"],
+    "ar": ["ar", "arkansas"],
+    "ca": ["ca", "california"],
+    "co": ["co", "colorado"],
+    "fl": ["fl", "florida"],
+    "il": ["il", "illinois"],
+    "in": ["in", "indiana"],
+    "ks": ["ks", "kansas"],
+    "ky": ["ky", "kentucky"],
+    "la": ["la", "louisiana"],
+    "md": ["md", "maryland"],
+    "mi": ["mi", "michigan"],
+    "mo": ["mo", "missouri"],
+    "ms": ["ms", "mississippi"],
+    "mt": ["mt", "montana"],
+    "ne": ["ne", "nebraska"],
+    "nv": ["nv", "nevada"],
+    "nm": ["nm", "new mexico"],
+    "ny": ["ny", "new york"],
+    "nd": ["nd", "north dakota"],
+    "oh": ["oh", "ohio"],
+    "ok": ["ok", "oklahoma"],
+    "or": ["or", "oregon"],
+    "pa": ["pa", "pennsylvania"],
+    "sd": ["sd", "south dakota"],
+    "tn": ["tn", "tennessee"],
+    "tx": ["tx", "texas"],
+    "ut": ["ut", "utah"],
+    "va": ["va", "virginia"],
+    "wv": ["wv", "west virginia"],
+    "united_states_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "united_states_total",
+        "national total",
+    ],
+}
+
+RESERVES_STATE_KEYWORDS = {
+    "al": ["al", "alabama"],
+    "ak": ["ak", "alaska"],
+    "ar": ["ar", "arkansas"],
+    "ca": ["ca", "california"],
+    "co": ["co", "colorado"],
+    "fl": ["fl", "florida"],
+    "ks": ["ks", "kansas"],
+    "ky": ["ky", "kentucky"],
+    "la": ["la", "louisiana"],
+    "mi": ["mi", "michigan"],
+    "ms": ["ms", "mississippi"],
+    "mt": ["mt", "montana"],
+    "nd": ["nd", "north dakota"],
+    "nm": ["nm", "new mexico"],
+    "ny": ["ny", "new york"],
+    "oh": ["oh", "ohio"],
+    "ok": ["ok", "oklahoma"],
+    "pa": ["pa", "pennsylvania"],
+    "tx": ["tx", "texas"],
+    "ut": ["ut", "utah"],
+    "va": ["va", "virginia"],
+    "wv": ["wv", "west virginia"],
+    "wy": ["wy", "wyoming"],
+    "us": ["us", "u.s.", "united states"],
+    "all": ["all"],
+}
+
+RESERVES_RESOURCE_CATEGORY_KEYWORDS = {
+    "proved_associated_gas": [
+        "proved associated gas",
+        "associated gas",
+    ],
+    "proved_nonassociated_gas": [
+        "proved nonassociated gas",
+        "nonassociated gas",
+        "non-associated gas",
+    ],
+    "proved_ngl": [
+        "proved ngl",
+        "ngl",
+        "natural gas liquids",
+    ],
+    "expected_future_gas_production": [
+        "expected future gas production",
+        "future gas production",
+        "expected future production",
+    ],
+}
+
 ROUTE_MAP = {
     "iso_gas_dependency": [
         "gas share",
@@ -164,6 +432,14 @@ ALLOWED_METRICS = set(ROUTE_MAP.keys())
 ALLOWED_ISOS = set(ISO_KEYWORDS.keys())
 ALLOWED_STORAGE_REGIONS = set(STORAGE_REGION_KEYWORDS.keys())
 ALLOWED_TRADE_REGIONS = set(TRADE_REGION_KEYWORDS.keys())
+ALLOWED_PRODUCTION_STATES = set(PRODUCTION_STATE_KEYWORDS.keys())
+ALLOWED_CONSUMPTION_STATES = set(CONSUMPTION_STATE_KEYWORDS.keys())
+ALLOWED_IMPORT_REGIONS = set(IMPORT_REGION_KEYWORDS.keys())
+ALLOWED_EXPORT_REGIONS = set(EXPORT_REGION_KEYWORDS.keys())
+ALLOWED_RESERVES_STATES = set(RESERVES_STATE_KEYWORDS.keys())
+ALLOWED_RESERVES_RESOURCE_CATEGORIES = set(
+    RESERVES_RESOURCE_CATEGORY_KEYWORDS.keys()
+)
 
 # ----------------------------
 # Normalization
@@ -293,6 +569,87 @@ def route_trade_region(q: str) -> str | None:
     return None
 
 
+def route_import_region(q: str) -> str | None:
+    q = q.lower()
+    for region, keys in IMPORT_REGION_KEYWORDS.items():
+        if contains_any(keys, q):
+            return region
+    return None
+
+
+def route_export_region(q: str) -> str | None:
+    q = q.lower()
+    for region, keys in EXPORT_REGION_KEYWORDS.items():
+        if contains_any(keys, q):
+            return region
+    return None
+
+
+def route_production_state(q: str) -> str | None:
+    q = q.lower()
+    for state, keys in PRODUCTION_STATE_KEYWORDS.items():
+        long_keys = [key for key in keys if len(key) > 2]
+        if long_keys and contains_any(long_keys, q):
+            return state
+
+    safe_abbrev_states = ALLOWED_PRODUCTION_STATES - {"ar", "in", "or", "united_states_total"}
+    tokens = set(re.findall(r"\b[a-z]{2}\b", q))
+    for state in safe_abbrev_states:
+        if state in tokens:
+            return state
+
+    return None
+
+
+def route_consumption_state(q: str) -> str | None:
+    q = q.lower()
+    for state, keys in CONSUMPTION_STATE_KEYWORDS.items():
+        long_keys = [key for key in keys if len(key) > 2]
+        if long_keys and contains_any(long_keys, q):
+            return state
+
+    safe_abbrev_states = ALLOWED_CONSUMPTION_STATES - {
+        "ar",
+        "de",
+        "hi",
+        "id",
+        "in",
+        "me",
+        "or",
+        "united_states_total",
+    }
+    tokens = set(re.findall(r"\b[a-z]{2}\b", q))
+    for state in safe_abbrev_states:
+        if state in tokens:
+            return state
+
+    return None
+
+
+def route_reserves_state(q: str) -> str | None:
+    q = q.lower()
+    for state, keys in RESERVES_STATE_KEYWORDS.items():
+        long_keys = [key for key in keys if len(key) > 2]
+        if long_keys and contains_any(long_keys, q):
+            return state
+
+    safe_abbrev_states = ALLOWED_RESERVES_STATES - {"al", "ar", "oh", "ok", "all", "us"}
+    tokens = set(re.findall(r"\b[a-z]{2}\b", q))
+    for state in safe_abbrev_states:
+        if state in tokens:
+            return state
+
+    return None
+
+
+def route_reserves_resource_category(q: str) -> str | None:
+    q = q.lower()
+    for category, keys in RESERVES_RESOURCE_CATEGORY_KEYWORDS.items():
+        if contains_any(keys, q):
+            return category
+    return None
+
+
 def detect_intent(q: str) -> str:
     if any(re.search(p, q) for p in COMPARE_PATTERNS):
         return "compare"
@@ -363,12 +720,41 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
         elif confidence >= 0.85:
             filters["region"] = "lower48"
 
-    elif metric in {"lng_exports", "lng_imports"}:
-        region = route_trade_region(q)
+    elif metric == "lng_exports":
+        region = route_export_region(q)
         if region:
             filters["region"] = region
         elif confidence >= 0.85:
             filters["region"] = "united_states_pipeline_total"
+
+    elif metric == "lng_imports":
+        region = route_import_region(q)
+        if region:
+            filters["region"] = region
+        elif confidence >= 0.85:
+            filters["region"] = "united_states_pipeline_total"
+
+    elif metric == "ng_consumption_lower48":
+        state = route_consumption_state(q)
+        if state:
+            filters["region"] = state
+        else:
+            filters["region"] = "united_states_total"
+
+    elif metric == "ng_production_lower48":
+        state = route_production_state(q)
+        if state:
+            filters["region"] = state
+        else:
+            filters["region"] = "united_states_total"
+
+    elif metric == "ng_exploration_reserves_lower48":
+        state = route_reserves_state(q)
+        if state:
+            filters["region"] = state
+        category = route_reserves_resource_category(q)
+        if category:
+            filters["resource_category"] = category
 
     return filters or None
 
@@ -460,11 +846,29 @@ def validate_llm_route(
         }:
             if region not in ALLOWED_STORAGE_REGIONS:
                 filters.pop("region", None)
-        elif primary_metric in {"lng_exports", "lng_imports"}:
-            if region not in ALLOWED_TRADE_REGIONS:
+        elif primary_metric == "lng_exports":
+            if region not in ALLOWED_EXPORT_REGIONS:
+                filters.pop("region", None)
+        elif primary_metric == "lng_imports":
+            if region not in ALLOWED_IMPORT_REGIONS:
+                filters.pop("region", None)
+        elif primary_metric == "ng_consumption_lower48":
+            if region not in ALLOWED_CONSUMPTION_STATES:
+                filters.pop("region", None)
+        elif primary_metric == "ng_production_lower48":
+            if region not in ALLOWED_PRODUCTION_STATES:
+                filters.pop("region", None)
+        elif primary_metric == "ng_exploration_reserves_lower48":
+            if region not in ALLOWED_RESERVES_STATES:
                 filters.pop("region", None)
         else:
             filters.pop("region", None)
+    if "resource_category" in filters:
+        resource_category = filters["resource_category"]
+        if primary_metric != "ng_exploration_reserves_lower48":
+            filters.pop("resource_category", None)
+        elif resource_category not in ALLOWED_RESERVES_RESOURCE_CATEGORIES:
+            filters.pop("resource_category", None)
 
     if llm.intent not in {
         "single_metric",

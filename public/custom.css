@@ -97,3 +97,7 @@
 #chat-submit {
     background-color: #176bb2 !important; /* Example color */
 }
+
+#new-chat-button {
+    display: none !important;
+}

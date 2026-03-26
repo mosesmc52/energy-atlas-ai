@@ -54,8 +54,128 @@ REGION_FILTERS: Final[tuple[str, ...]] = (
     "mountain",
     "pacific",
     "united_states_pipeline_total",
+    "canada_compressed",
+    "united_states_compressed_total",
     "canada_pipeline",
     "mexico_pipeline",
+    "algeria",
+    "argentina",
+    "al",
+    "ak",
+    "australia",
+    "az",
+    "ar",
+    "bahrain",
+    "bangladesh",
+    "barbados",
+    "belgium",
+    "brazil",
+    "brunei",
+    "ca",
+    "chile",
+    "china",
+    "colombia",
+    "co",
+    "croatia",
+    "ct",
+    "de",
+    "dominican_republic",
+    "egypt",
+    "el_salvador",
+    "equatorial_guinea",
+    "finland",
+    "fl",
+    "france",
+    "ga",
+    "germany",
+    "greece",
+    "haiti",
+    "hi",
+    "id",
+    "india",
+    "indonesia",
+    "il",
+    "in",
+    "ia",
+    "israel",
+    "italy",
+    "jamaica",
+    "japan",
+    "jordan",
+    "ks",
+    "kuwait",
+    "ky",
+    "la",
+    "lithuania",
+    "ma",
+    "malaysia",
+    "malta",
+    "md",
+    "mauritania",
+    "me",
+    "mi",
+    "mn",
+    "mo",
+    "ms",
+    "mt",
+    "ne",
+    "netherlands",
+    "nv",
+    "nigeria",
+    "nh",
+    "nj",
+    "nm",
+    "ny",
+    "nc",
+    "nd",
+    "oh",
+    "oman",
+    "ok",
+    "or",
+    "pa",
+    "pakistan",
+    "panama",
+    "peru",
+    "philippines",
+    "poland",
+    "portugal",
+    "qatar",
+    "ri",
+    "russia",
+    "sc",
+    "sd",
+    "senegal",
+    "singapore",
+    "south_korea",
+    "spain",
+    "tn",
+    "taiwan",
+    "thailand",
+    "trinidad_and_tobago",
+    "tx",
+    "united_states_lng_total",
+    "canada_truck",
+    "mexico_truck",
+    "united_states_truck_total",
+    "turkiye",
+    "ut",
+    "va",
+    "vt",
+    "wa",
+    "wv",
+    "wi",
+    "wy",
+    "united_arab_emirates",
+    "united_kingdom",
+    "united_states_total",
+    "yemen",
+)
+
+RESOURCE_CATEGORY_FILTERS: Final[tuple[str, ...]] = (
+    "proved_associated_gas",
+    "proved_nonassociated_gas",
+    "proved_ngl",
+    "expected_future_gas_production",
 )
 
 METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
@@ -66,13 +186,13 @@ METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
     "working_gas_storage_change_weekly": "Weekly change in underground working gas storage.",
     "working_gas_storage_lower48": "Total underground working gas storage inventory for lower 48/regions.",
     "henry_hub_spot": "Henry Hub natural gas spot benchmark price.",
-    "lng_exports": "Natural gas exports flows; includes LNG export framing in this app.",
-    "lng_imports": "Natural gas imports flows; includes LNG import framing in this app.",
-    "ng_consumption_lower48": "Total lower 48 natural gas consumption/use.",
+    "lng_exports": "Natural gas exports flows; supports allowed pipeline and destination-country filters.",
+    "lng_imports": "Natural gas imports flows; supports allowed pipeline and source-country filters.",
+    "ng_consumption_lower48": "Natural gas consumption/use; supports allowed state filters and united_states_total.",
     "ng_consumption_by_sector": "Monthly U.S. natural gas consumption by end-use sector (residential, commercial, industrial, electric power).",
     "ng_electricity": "Natural gas consumed by electric power sector.",
-    "ng_production_lower48": "Lower 48 dry natural gas production/supply.",
-    "ng_exploration_reserves_lower48": "Natural gas exploration/proved reserves in lower 48 context.",
+    "ng_production_lower48": "Dry natural gas production/supply; supports allowed state filters and united_states_total.",
+    "ng_exploration_reserves_lower48": "Natural gas exploration/proved reserves; supports allowed state and resource_category filters.",
 }
 
 _ALLOWED_INTENTS = set(INTENTS)
@@ -119,8 +239,17 @@ def _build_route_schema() -> Dict[str, Any]:
                                     {"type": "null"},
                                 ]
                             },
+                            "resource_category": {
+                                "anyOf": [
+                                    {
+                                        "type": "string",
+                                        "enum": list(RESOURCE_CATEGORY_FILTERS),
+                                    },
+                                    {"type": "null"},
+                                ]
+                            },
                         },
-                        "required": ["iso", "region"],
+                        "required": ["iso", "region", "resource_category"],
                     },
                     {"type": "null"},
                 ]
@@ -161,6 +290,8 @@ def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
         + ", ".join(ISO_FILTERS)
         + "\nAllowed filter.region values: "
         + ", ".join(REGION_FILTERS)
+        + "\nAllowed filter.resource_category values: "
+        + ", ".join(RESOURCE_CATEGORY_FILTERS)
     )
 
     user_prompt = (
@@ -242,10 +373,16 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
     out: Dict[str, str] = {}
     iso = filters.get("iso")
     region = filters.get("region")
+    resource_category = filters.get("resource_category")
     if isinstance(iso, str) and iso in _ALLOWED_ISOS:
         out["iso"] = iso
     if isinstance(region, str) and region in _ALLOWED_REGIONS:
         out["region"] = region
+    if (
+        isinstance(resource_category, str)
+        and resource_category in RESOURCE_CATEGORY_FILTERS
+    ):
+        out["resource_category"] = resource_category
     return out or None
 
 
