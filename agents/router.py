@@ -501,6 +501,17 @@ DERIVED_PATTERNS = [
     r"\btight\b",
 ]
 EXPLAIN_PATTERNS = [r"\bwhy\b", r"\bbecause\b", r"\bdid .* rise\b", r"\bdid .* fall\b"]
+FORECAST_PATTERNS = [
+    r"\bforecast\b",
+    r"\bprojection\b",
+    r"\bproject\b",
+    r"\bprojected\b",
+    r"\bnext week\b",
+    r"\bnext 7 days\b",
+    r"\bnext 14 days\b",
+    r"\bnext two weeks\b",
+    r"\bnext 2 weeks\b",
+]
 
 
 @dataclass(frozen=True)
@@ -532,6 +543,8 @@ class HybridRouteResult:
     source: Literal["rule", "llm"] = "rule"
     reason: Optional[str] = None
     normalized_query: Optional[str] = None
+    include_forecast: bool = False
+    forecast_horizon_days: Optional[int] = None
 
 
 # ----------------------------
@@ -660,6 +673,18 @@ def detect_intent(q: str) -> str:
     if any(re.search(p, q) for p in EXPLAIN_PATTERNS):
         return "explain"
     return "single_metric"
+
+
+def detect_forecast_request(q: str) -> bool:
+    return any(re.search(pattern, q) for pattern in FORECAST_PATTERNS)
+
+
+def detect_forecast_horizon_days(q: str) -> Optional[int]:
+    if not detect_forecast_request(q):
+        return None
+    if re.search(r"\b(14|fourteen)\s*day", q) or re.search(r"\b(two|2)\s+weeks?\b", q):
+        return 14
+    return 7
 
 
 def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
@@ -899,6 +924,8 @@ def validate_llm_route(
         source="llm",
         reason=llm.reason,
         normalized_query=normalized_query,
+        include_forecast=detect_forecast_request(normalized_query),
+        forecast_horizon_days=detect_forecast_horizon_days(normalized_query),
     )
 
 
@@ -911,6 +938,8 @@ def route_query(user_query: str) -> HybridRouteResult:
     start, end = resolve_date_range(user_query)
     has_explicit_dates = has_explicit_date_reference(user_query)
     intent = detect_intent(normalized)
+    include_forecast = detect_forecast_request(normalized)
+    forecast_horizon_days = detect_forecast_horizon_days(normalized)
 
     candidates = score_routes(normalized)
     confidence = candidate_confidence(candidates)
@@ -943,6 +972,8 @@ def route_query(user_query: str) -> HybridRouteResult:
             source="rule",
             reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
             normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
         )
 
     if intent == "ranking" and top.metric == "ng_consumption_by_sector" and not ambiguous:
@@ -959,6 +990,8 @@ def route_query(user_query: str) -> HybridRouteResult:
             source="rule",
             reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
             normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
         )
 
     # Multi-metric or advanced intent -> LLM assist
@@ -989,4 +1022,6 @@ def route_query(user_query: str) -> HybridRouteResult:
         source="rule",
         reason=f"Fallback rule route to {top.metric}",
         normalized_query=normalized,
+        include_forecast=include_forecast,
+        forecast_horizon_days=forecast_horizon_days,
     )

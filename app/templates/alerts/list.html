@@ -1,46 +1,62 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Alerts</title>
-</head>
-<body>
-  <main>
-    <h1>Your alerts</h1>
-    <p><a href="{% url 'alerts:create' %}">Create a new alert</a></p>
-    <p><a href="{% url 'alerts:sandbox' %}">Test an alert in sandbox</a></p>
+{% extends "base.html" %}
 
-    {% if messages %}
-      <ul>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+{% block title %}Alerts{% endblock %}
+
+{% block page-content %}
+  <section class="panel space-y-8">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div class="space-y-2">
+        <p class="eyebrow">Alerts</p>
+        <h2 class="text-3xl font-semibold tracking-tight text-white">Your active monitoring rules</h2>
+        <p class="max-w-2xl text-sm text-slate-300">Review saved alerts, inspect their latest outcomes, and jump directly into the sandbox when you want to test a new condition.</p>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <a class="btn-primary" href="{% url 'alerts:create' %}">Create alert</a>
+        <a class="btn-secondary" href="{% url 'alerts:sandbox' %}">Open sandbox</a>
+      </div>
+    </div>
 
     {% if alert_rules %}
-      <ul>
+      <ul class="grid gap-4 lg:grid-cols-2">
         {% for rule in alert_rules %}
-          <li>
-            <h2><a href="{% url 'alerts:detail' rule.id %}">{{ rule.name }}</a></h2>
-            <p>{{ rule.question }}</p>
-            <p>Status: {{ rule.get_status_display }} | Frequency: {{ rule.get_frequency_display }}</p>
-            <p>Last result:
-              {% if rule.last_result == None %}
-                unknown
-              {% elif rule.last_result %}
-                true
-              {% else %}
-                false
-              {% endif %}
-            </p>
+          <li class="rounded-3xl border border-slate-800 bg-slate-950/60 p-6 transition hover:border-atlas-500/40 hover:bg-slate-950/80">
+            <div class="space-y-4">
+              <div class="flex items-start justify-between gap-4">
+                <div class="space-y-2">
+                  <h3 class="text-xl font-semibold text-white">
+                    <a class="hover:text-atlas-100" href="{% url 'alerts:detail' rule.id %}">{{ rule.name }}</a>
+                  </h3>
+                  <p class="text-sm leading-6 text-slate-300">{{ rule.question }}</p>
+                </div>
+                <span class="rounded-full border border-slate-700 px-3 py-1 text-xs font-medium uppercase tracking-wide text-slate-300">{{ rule.get_status_display }}</span>
+              </div>
+              <dl class="grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                  <dt class="text-xs uppercase tracking-wide text-slate-500">Frequency</dt>
+                  <dd class="mt-2 font-medium text-slate-100">{{ rule.get_frequency_display }}</dd>
+                </div>
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                  <dt class="text-xs uppercase tracking-wide text-slate-500">Last result</dt>
+                  <dd class="mt-2 font-medium text-slate-100">
+                    {% if rule.last_result == None %}
+                      unknown
+                    {% elif rule.last_result %}
+                      true
+                    {% else %}
+                      false
+                    {% endif %}
+                  </dd>
+                </div>
+              </dl>
+            </div>
           </li>
         {% endfor %}
       </ul>
     {% else %}
-      <p>No alerts yet.</p>
+      <div class="rounded-3xl border border-dashed border-slate-700 bg-slate-950/40 px-6 py-12 text-center">
+        <h3 class="text-xl font-semibold text-white">No alerts yet</h3>
+        <p class="mt-3 text-sm text-slate-400">Create your first alert rule to start tracking market events and operational signals.</p>
+      </div>
     {% endif %}
-  </main>
-</body>
-</html>
+  </section>
+{% endblock %}

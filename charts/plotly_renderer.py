@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from schemas.chart_spec import AxisSpec, ChartSpec
+from tools.forecasting import ForecastResult
 
 
 def _axis_field(
@@ -30,7 +31,11 @@ def _bar_datetime_label(series: pd.Series, aggregation: str | None) -> pd.Series
     return series.dt.strftime("%Y-%m-%d")
 
 
-def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
+def render_plotly(
+    spec: ChartSpec,
+    df: pd.DataFrame,
+    forecast_overlay: ForecastResult | dict | None = None,
+) -> go.Figure:
     if df is None or df.empty:
         fig = go.Figure()
         fig.update_layout(title="No data to chart")
@@ -204,6 +209,31 @@ def render_plotly(spec: ChartSpec, df: pd.DataFrame) -> go.Figure:
         x_fmt = "%{x|%Y-%m-%d}" if x_is_datetime and chart_type != "bar" else "%{x}"
         y_suffix = f" {y_units}" if y_units else ""
         tr.hovertemplate = f"{x_fmt}{name_line}<br>%{{y:,.2f}}{y_suffix}<extra></extra>"
+
+    overlay_dict = (
+        forecast_overlay.to_dict()
+        if isinstance(forecast_overlay, ForecastResult)
+        else forecast_overlay
+    )
+    overlay_points = (((overlay_dict or {}).get("overlay") or {}).get("forecast") or [])
+    if overlay_points and chart_type in {"line", "area", "stacked_area"}:
+        overlay_df = pd.DataFrame(overlay_points)
+        if not overlay_df.empty and {"date", "value"}.issubset(overlay_df.columns):
+            overlay_df["date"] = pd.to_datetime(overlay_df["date"], errors="coerce")
+            overlay_df["value"] = pd.to_numeric(overlay_df["value"], errors="coerce")
+            overlay_df = overlay_df.dropna(subset=["date", "value"]).sort_values("date")
+            if not overlay_df.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=overlay_df["date"],
+                        y=overlay_df["value"],
+                        mode="lines",
+                        name="Forecast",
+                        line=dict(width=3, dash="dash", color="#f97316"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Forecast<extra></extra>",
+                    )
+                )
+                fig.update_layout(showlegend=True)
 
     if x_is_datetime and chart_type in {"line", "area", "stacked_area"}:
         fig.update_xaxes(

@@ -1,36 +1,34 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Onboarding</title>
-</head>
-<body>
-  <main>
-    <h1>Welcome</h1>
-    <p>Complete your profile.</p>
+{% extends "base.html" %}
 
-    {% if messages %}
-      <ul>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+{% block title %}Onboarding{% endblock %}
 
-    <form method="post" action="{% url 'auth:onboard' %}">
+{% block page-content %}
+  <section class="mx-auto max-w-2xl panel form-stack">
+    <div class="space-y-2">
+      <p class="eyebrow">Onboarding</p>
+      <h2 class="text-3xl font-semibold tracking-tight text-white">Complete your profile</h2>
+      <p class="text-sm text-slate-300">Add your name so alert ownership and activity views stay identifiable as the workspace grows.</p>
+    </div>
+
+    <form method="post" action="{% url 'auth:onboard' %}" class="form-stack">
       {% csrf_token %}
 
-      <label for="first_name">First name</label>
-      <input id="first_name" type="text" name="first_name" value="{{ request.user.first_name|default:'' }}">
+      <div class="grid gap-5 sm:grid-cols-2">
+        <div class="field-group">
+          <label for="first_name">First name</label>
+          <input id="first_name" type="text" name="first_name" value="{{ request.user.first_name|default:'' }}">
+        </div>
 
-      <label for="last_name">Last name</label>
-      <input id="last_name" type="text" name="last_name" value="{{ request.user.last_name|default:'' }}">
+        <div class="field-group">
+          <label for="last_name">Last name</label>
+          <input id="last_name" type="text" name="last_name" value="{{ request.user.last_name|default:'' }}">
+        </div>
+      </div>
 
-      <button type="submit">Save profile</button>
+      <div class="flex flex-wrap gap-3">
+        <button class="btn-primary" type="submit">Save profile</button>
+        <a class="btn-secondary" href="{% url 'auth:logout' %}">Sign out</a>
+      </div>
     </form>
-
-    <p><a href="{% url 'auth:logout' %}">Sign out</a></p>
-  </main>
-</body>
-</html>
+  </section>
+{% endblock %}

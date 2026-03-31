@@ -1,42 +1,77 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign In</title>
-</head>
-<body>
-  <main>
-    <h1>Sign in</h1>
+{% extends "base.html" %}
+{% load static %}
 
-    {% if messages %}
-      <ul>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+{% block title %}Sign In{% endblock %}
 
-    <form method="post" action="{% url 'auth:signin' %}">
-      {% csrf_token %}
-      <input type="hidden" name="next" value="{{ next }}">
+{% block header %}{% endblock %}
 
-      <label for="email">Email</label>
-      <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required>
+{% block page-content %}
+  <div class="flex min-h-full flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div class="sm:mx-auto sm:w-full sm:max-w-md">
+      <img src="{% static 'img/logo.svg' %}" alt="Energy Atlas" class="mx-auto h-10 w-auto" />
+      <h2 class="mt-6 text-center text-2xl/9 font-bold tracking-tight text-white">Sign in to your account</h2>
+    </div>
 
-      <label for="password">Password</label>
-      <input id="password" type="password" name="password" required>
+    <div class="mt-10 sm:mx-auto sm:w-full sm:max-w-[480px]">
+      <div class="bg-white/95 px-6 py-12 shadow-sm sm:rounded-lg sm:px-12">
+        <form action="{% url 'auth:signin' %}" method="post" class="space-y-6">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ next }}">
 
-      <label for="remember-me">
-        <input id="remember-me" type="checkbox" name="remember_me">
-        Remember me
-      </label>
+          <div>
+            <label for="email" class="block text-sm/6 font-medium text-gray-900">Email address</label>
+            <div class="mt-2">
+              <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required autocomplete="email" class="block w-full rounded-md border-0 bg-white px-3 py-1.5 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6" />
+            </div>
+          </div>
 
-      <button type="submit">Sign in</button>
-    </form>
+          <div>
+            <label for="password" class="block text-sm/6 font-medium text-gray-900">Password</label>
+            <div class="mt-2">
+              <input id="password" type="password" name="password" required autocomplete="current-password" class="block w-full rounded-md border-0 bg-white px-3 py-1.5 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6" />
+            </div>
+          </div>
 
-    <p><a href="{% url 'auth:forgot' %}">Forgot password?</a></p>
-    <p>Need an account? <a href="{% url 'auth:signup' %}">Sign up</a></p>
-  </main>
-</body>
-</html>
+          <div class="flex items-center justify-between">
+            <div class="flex gap-3">
+              <div class="flex h-6 shrink-0 items-center">
+                <div class="group grid size-4 grid-cols-1">
+                  <input id="remember-me" type="checkbox" name="remember_me" class="col-start-1 row-start-1 appearance-none rounded-sm border border-gray-300 bg-white checked:border-indigo-600 checked:bg-indigo-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 forced-colors:appearance-auto" />
+                  <svg viewBox="0 0 14 14" fill="none" class="pointer-events-none col-start-1 row-start-1 size-3.5 self-center justify-self-center stroke-white">
+                    <path d="M3 8L6 11L11 3.5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-has-checked:opacity-100" />
+                  </svg>
+                </div>
+              </div>
+              <label for="remember-me" class="block text-sm/6 text-gray-900">Remember me</label>
+            </div>
+
+            <div class="text-sm/6">
+              <a href="{% url 'auth:forgot' %}" class="font-semibold text-indigo-600 hover:text-indigo-500">Forgot password?</a>
+            </div>
+          </div>
+
+          <div>
+            <button type="submit" class="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm/6 font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">Sign in</button>
+          </div>
+        </form>
+
+        <div>
+          <div class="mt-10 flex items-center gap-x-6">
+            <div class="w-full flex-1 border-t border-gray-200"></div>
+            <p class="text-sm/6 font-medium text-nowrap text-gray-900">Account access</p>
+            <div class="w-full flex-1 border-t border-gray-200"></div>
+          </div>
+
+          <div class="mt-6 rounded-md bg-gray-50 px-4 py-4 text-sm text-gray-600">
+            Use the email and password tied to your Energy Atlas workspace. If you do not have an account yet, create one below.
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-10 text-center text-sm/6 text-slate-300">
+        Not a member?
+        <a href="{% url 'auth:signup' %}" class="font-semibold text-indigo-300 hover:text-indigo-200">Create an account</a>
+      </p>
+    </div>
+  </div>
+{% endblock %}

@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from tools.forecasting import TrendForecaster
+
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -81,6 +83,23 @@ def build_signal_evaluator() -> "SignalEvaluator":
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
     executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
     return SignalEvaluator(executor=executor, eia=eia_adapter)
+
+
+def build_metric_forecaster() -> TrendForecaster:
+    cache_root = pathlib.Path(
+        os.getenv(
+            "ATLAS_CACHE_ROOT",
+            str(pathlib.Path(tempfile.gettempdir()) / "energy-atlas-ai-cache"),
+        )
+    )
+    weather_csv_path = os.getenv("ATLAS_WEATHER_CSV_PATH")
+    eia_adapter = EIAAdapter(
+        cache_dir=cache_root / "eia",
+        weather_csv_path=weather_csv_path,
+    )
+    grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
+    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
+    return TrendForecaster(executor=executor)
 
 
 def parse_signal_question(question: str) -> Optional[ParsedSignal]:

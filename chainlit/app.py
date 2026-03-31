@@ -27,6 +27,7 @@ from alerts.services import build_signal_evaluator, evaluation_as_json, parse_si
 from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import render_plotly
 from executer import ExecuteRequest, MetricExecutor
+from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
 from utils.sheets_logger import GoogleSheetsQuestionLogger
@@ -68,8 +69,13 @@ def build_container():
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
     executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
     signal_evaluator = build_signal_evaluator()
+    forecaster = TrendForecaster(executor=executor)
 
-    return {"executor": executor, "signal_evaluator": signal_evaluator}
+    return {
+        "executor": executor,
+        "signal_evaluator": signal_evaluator,
+        "forecaster": forecaster,
+    }
 
 
 @cl.set_starters
@@ -145,6 +151,7 @@ async def on_message(message: cl.Message):
     deps = cl.user_session.get("deps") or {}
     executor: MetricExecutor = deps.get("executor")  # type: ignore[assignment]
     signal_evaluator = deps.get("signal_evaluator")
+    forecaster: TrendForecaster | None = deps.get("forecaster")  # type: ignore[assignment]
 
     user_query = (message.content or "").strip()
     if not user_query:
@@ -224,6 +231,15 @@ async def on_message(message: cl.Message):
         background_refresh_scheduled = bool(
             cache_meta.get("background_refresh_scheduled", False)
         )
+        forecast = None
+        if route.include_forecast and forecaster is not None:
+            forecast = forecaster.forecast_dataframe(
+                result.df,
+                metric=route.primary_metric,
+                horizon_days=route.forecast_horizon_days or 7,
+                include_overlay=True,
+                source_reference=result.source.reference,
+            )
 
         # (C) Build AnswerPayload (OpenAI writes narrative; you keep facts/sources)
         answer_started = perf_counter() if DEBUG_ENABLED else 0.0
@@ -236,6 +252,8 @@ async def on_message(message: cl.Message):
         answer_elapsed_ms = (
             (perf_counter() - answer_started) * 1000 if DEBUG_ENABLED else 0.0
         )
+        if forecast is not None:
+            payload.answer_text = f"{payload.answer_text}\n\nForecast: {forecast.explanation}"
 
         message_started = perf_counter() if DEBUG_ENABLED else 0.0
         msg = await cl.Message(content=payload.answer_text).send()
@@ -246,7 +264,7 @@ async def on_message(message: cl.Message):
         chart_elapsed_ms = 0.0
         if payload.chart_spec is not None:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
-            fig = render_plotly(payload.chart_spec, result.df)
+            fig = render_plotly(payload.chart_spec, result.df, forecast_overlay=forecast)
 
             await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
                 for_id=msg.id

@@ -11,6 +11,7 @@ from django.views.decorators.http import require_http_methods
 
 from alerts.models import AlertDeliveryChannel, AlertEvent, AlertRule
 from alerts.services import (
+    build_metric_forecaster,
     build_signal_evaluator,
     parsed_signal_from_rule,
     parse_signal_question,
@@ -33,6 +34,12 @@ def _delivery_channels_from_request(request) -> list[str]:
         value = payload.get("delivery_channels") or []
         return value if isinstance(value, list) else []
     return [item for item in request.POST.getlist("delivery_channels") if item]
+
+
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | None, dict | None, str | None]:
@@ -265,6 +272,35 @@ def evaluate_signal_view(request):
     evaluation = evaluator.evaluate_question(question)
     status_code = 200 if evaluation.error_code is None else 422
     return JsonResponse(evaluation.to_dict(), status=status_code)
+
+
+@require_http_methods(["POST"])
+def forecast_metric_view(request):
+    payload = _request_payload(request)
+    metric = str(payload.get("metric") or "").strip()
+    if not metric:
+        return JsonResponse({"error": "metric is required"}, status=400)
+
+    try:
+        horizon_days = int(payload.get("horizon_days") or 7)
+        lookback_observations = int(payload.get("lookback_observations") or 30)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "invalid forecast parameters"}, status=400)
+
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    include_overlay = _coerce_bool(payload.get("include_overlay"))
+    forecaster = build_metric_forecaster()
+    forecast = forecaster.forecast_metric(
+        metric,
+        start=payload.get("start"),
+        end=payload.get("end"),
+        filters=filters,
+        horizon_days=horizon_days,
+        lookback_observations=lookback_observations,
+        include_overlay=include_overlay,
+    )
+    status_code = 200 if forecast.error_code is None else 422
+    return JsonResponse(forecast.to_dict(), status=status_code)
 
 
 @require_http_methods(["POST"])

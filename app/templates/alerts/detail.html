@@ -1,72 +1,106 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ alert_rule.name }}</title>
-</head>
-<body>
-  <main>
-    <h1>{{ alert_rule.name }}</h1>
-    <p><a href="{% url 'alerts:list' %}">Back to alerts</a></p>
+{% extends "base.html" %}
 
-    {% if messages %}
-      <ul>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+{% block title %}{{ alert_rule.name }}{% endblock %}
 
-    <section>
-      <h2>Rule</h2>
-      <p>{{ alert_rule.question }}</p>
-      <p>Signal: {{ alert_rule.signal_id }}</p>
-      <p>Metric: {{ alert_rule.metric }}</p>
-      <p>Region: {{ alert_rule.region|default:'-' }}</p>
-      <p>Status: {{ alert_rule.get_status_display }}</p>
-      <p>Frequency: {{ alert_rule.get_frequency_display }}</p>
-      <p>Trigger type: {{ alert_rule.get_trigger_type_display }}</p>
-      <p>Last explanation: {{ alert_rule.last_explanation|default:'-' }}</p>
-      <pre>{{ alert_rule.last_values_json }}</pre>
-    </section>
+{% block page-content %}
+  <section class="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+    <div class="space-y-6">
+      <section class="panel space-y-6">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div class="space-y-2">
+            <p class="eyebrow">Alert Detail</p>
+            <h2 class="text-3xl font-semibold tracking-tight text-white">{{ alert_rule.name }}</h2>
+            <p class="text-sm leading-6 text-slate-300">{{ alert_rule.question }}</p>
+          </div>
+          <a class="btn-secondary" href="{% url 'alerts:list' %}">Back to alerts</a>
+        </div>
 
-    <section>
-      <h2>Evaluate now</h2>
-      <form method="post" action="{% url 'alerts:detail' alert_rule.id %}">
-        {% csrf_token %}
-        <button type="submit">Run evaluation</button>
-      </form>
-    </section>
+        <dl class="grid gap-4 sm:grid-cols-2">
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Signal</dt>
+            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.signal_id }}</dd>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Metric</dt>
+            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.metric }}</dd>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Region</dt>
+            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.region|default:'-' }}</dd>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Status</dt>
+            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.get_status_display }}</dd>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Frequency</dt>
+            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.get_frequency_display }}</dd>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Trigger type</dt>
+            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.get_trigger_type_display }}</dd>
+          </div>
+        </dl>
 
-    <section>
-      <h2>Recent events</h2>
+        <div>
+          <h3 class="text-lg font-semibold text-white">Last explanation</h3>
+          <p class="mt-3 text-sm leading-6 text-slate-300">{{ alert_rule.last_explanation|default:'-' }}</p>
+        </div>
+
+        <div>
+          <h3 class="text-lg font-semibold text-white">Last values payload</h3>
+          <pre class="mt-3">{{ alert_rule.last_values_json }}</pre>
+        </div>
+      </section>
+
+      <section class="panel space-y-4">
+        <div>
+          <p class="eyebrow">Manual Run</p>
+          <h3 class="mt-2 text-2xl font-semibold text-white">Evaluate now</h3>
+          <p class="mt-2 text-sm text-slate-300">Trigger an immediate evaluation to refresh the latest outcome and explanation.</p>
+        </div>
+        <form method="post" action="{% url 'alerts:detail' alert_rule.id %}">
+          {% csrf_token %}
+          <button class="btn-primary" type="submit">Run evaluation</button>
+        </form>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="mb-6">
+        <p class="eyebrow">History</p>
+        <h2 class="mt-2 text-2xl font-semibold text-white">Recent events</h2>
+      </div>
       {% if events %}
-        <ul>
+        <ul class="space-y-4">
           {% for event in events %}
-            <li>
-              <p>{{ event.evaluated_at }}</p>
-              <p>Result:
-                {% if event.result == None %}
-                  unknown
-                {% elif event.result %}
-                  true
-                {% else %}
-                  false
-                {% endif %}
-              </p>
-              <p>{{ event.explanation }}</p>
+            <li class="rounded-3xl border border-slate-800 bg-slate-950/55 p-5">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <p class="text-sm font-medium text-white">{{ event.evaluated_at }}</p>
+                <span class="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-wide text-slate-300">
+                  {% if event.result == None %}
+                    unknown
+                  {% elif event.result %}
+                    true
+                  {% else %}
+                    false
+                  {% endif %}
+                </span>
+              </div>
+              <p class="mt-4 text-sm leading-6 text-slate-300">{{ event.explanation }}</p>
               {% if event.error_code %}
-                <p>Error: {{ event.error_code }}</p>
+                <p class="mt-3 text-sm font-medium text-rose-300">Error: {{ event.error_code }}</p>
               {% endif %}
-              <pre>{{ event.values_json }}</pre>
+              <pre class="mt-4">{{ event.values_json }}</pre>
             </li>
           {% endfor %}
         </ul>
       {% else %}
-        <p>No events yet.</p>
+        <div class="rounded-3xl border border-dashed border-slate-700 bg-slate-950/40 px-6 py-12 text-center">
+          <h3 class="text-xl font-semibold text-white">No events yet</h3>
+          <p class="mt-3 text-sm text-slate-400">Run a manual evaluation or wait for the next scheduled cycle to populate event history.</p>
+        </div>
       {% endif %}
     </section>
-  </main>
-</body>
-</html>
+  </section>
+{% endblock %}

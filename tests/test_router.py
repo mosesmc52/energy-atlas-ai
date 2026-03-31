@@ -87,6 +87,12 @@ class TestRouter(unittest.TestCase):
         self.assertEqual(result.metrics, ["ng_consumption_by_sector"])
         self.assertEqual(result.source, "rule")
 
+    def test_forecast_query_sets_forecast_flags(self) -> None:
+        result = route_query("Forecast Henry Hub for the next 14 days")
+        self.assertEqual(result.primary_metric, "henry_hub_spot")
+        self.assertTrue(result.include_forecast)
+        self.assertEqual(result.forecast_horizon_days, 14)
+
 
 if __name__ == "__main__":
     unittest.main()

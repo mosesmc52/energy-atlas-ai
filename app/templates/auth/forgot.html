@@ -1,32 +1,26 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Forgot Password</title>
-</head>
-<body>
-  <main>
-    <h1>Reset password</h1>
+{% extends "base.html" %}
 
-    {% if messages %}
-      <ul>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+{% block title %}Forgot Password{% endblock %}
 
-    <form method="post" action="{% url 'auth:forgot' %}">
+{% block page-content %}
+  <section class="mx-auto max-w-md panel form-stack">
+    <div class="space-y-2">
+      <p class="eyebrow">Recovery</p>
+      <h2 class="text-3xl font-semibold tracking-tight text-white">Reset password</h2>
+      <p class="text-sm text-slate-300">Enter your email and the app will send reset instructions if the account exists.</p>
+    </div>
+
+    <form method="post" action="{% url 'auth:forgot' %}" class="form-stack">
       {% csrf_token %}
 
-      <label for="email">Email</label>
-      <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required>
+      <div class="field-group">
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required>
+      </div>
 
-      <button type="submit">Send reset instructions</button>
+      <button class="btn-primary w-full" type="submit">Send reset instructions</button>
     </form>
 
-    <p><a href="{% url 'auth:signin' %}">Back to sign in</a></p>
-  </main>
-</body>
-</html>
+    <p class="text-sm text-slate-300"><a class="text-atlas-100 hover:text-white" href="{% url 'auth:signin' %}">Back to sign in</a></p>
+  </section>
+{% endblock %}

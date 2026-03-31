@@ -1,67 +1,78 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Create Alert</title>
-</head>
-<body>
-  <main>
-    <h1>Create alert</h1>
-    <p><a href="{% url 'alerts:list' %}">Back to alerts</a></p>
+{% extends "base.html" %}
 
-    {% if messages %}
-      <ul>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+{% block title %}Create Alert{% endblock %}
 
-    <form method="post" action="{% url 'alerts:create' %}">
+{% block page-content %}
+  <section class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+    <div class="panel space-y-4">
+      <p class="eyebrow">Create</p>
+      <h2 class="text-3xl font-semibold tracking-tight text-white">Define a new alert rule</h2>
+      <p class="text-sm leading-6 text-slate-300">Capture the question, trigger logic, cadence, and delivery channels in one place. The rule becomes available immediately in the alert list after submission.</p>
+      <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-5 text-sm text-slate-300">
+        <p class="font-medium text-white">Recommended pattern</p>
+        <p class="mt-2">Use clear natural-language questions tied to one signal and one outcome. That keeps evaluations explainable when you inspect them later.</p>
+      </div>
+      <a class="btn-secondary" href="{% url 'alerts:list' %}">Back to alerts</a>
+    </div>
+
+    <form method="post" action="{% url 'alerts:create' %}" class="panel form-stack">
       {% csrf_token %}
 
-      <label for="name">Name</label>
-      <input id="name" type="text" name="name" value="{{ request.POST.name|default:'' }}">
+      <div class="field-group">
+        <label for="name">Name</label>
+        <input id="name" type="text" name="name" value="{{ request.POST.name|default:'' }}">
+      </div>
 
-      <label for="question">Question</label>
-      <textarea id="question" name="question" rows="4" required>{{ request.POST.question|default:'' }}</textarea>
+      <div class="field-group">
+        <label for="question">Question</label>
+        <textarea id="question" name="question" rows="4" required>{{ request.POST.question|default:'' }}</textarea>
+      </div>
 
-      <label for="frequency">Frequency</label>
-      <select id="frequency" name="frequency">
-        {% for value, label in frequency_choices %}
-          <option value="{{ value }}" {% if request.POST.frequency == value %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
+      <div class="grid gap-5 sm:grid-cols-2">
+        <div class="field-group">
+          <label for="frequency">Frequency</label>
+          <select id="frequency" name="frequency">
+            {% for value, label in frequency_choices %}
+              <option value="{{ value }}" {% if request.POST.frequency == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
 
-      <label for="trigger_type">Trigger type</label>
-      <select id="trigger_type" name="trigger_type">
-        {% for value, label in trigger_type_choices %}
-          <option value="{{ value }}" {% if request.POST.trigger_type == value %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
+        <div class="field-group">
+          <label for="trigger_type">Trigger type</label>
+          <select id="trigger_type" name="trigger_type">
+            {% for value, label in trigger_type_choices %}
+              <option value="{{ value }}" {% if request.POST.trigger_type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
 
-      <label for="cooldown_hours">Cooldown hours</label>
-      <input id="cooldown_hours" type="number" min="0" name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:'24' }}">
+      <div class="field-group">
+        <label for="cooldown_hours">Cooldown hours</label>
+        <input id="cooldown_hours" type="number" min="0" name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:'24' }}">
+      </div>
 
-      <fieldset>
-        <legend>Delivery channels</legend>
-        {% for value, label in delivery_channel_choices %}
-          <label for="delivery_{{ value }}">
-            <input
-              id="delivery_{{ value }}"
-              type="checkbox"
-              name="delivery_channels"
-              value="{{ value }}"
-              {% if value in selected_delivery_channels %}checked{% endif %}
-            >
-            {{ label }}
-          </label>
-        {% endfor %}
+      <fieldset class="rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+        <legend class="px-2 text-sm font-semibold text-white">Delivery channels</legend>
+        <div class="mt-4 grid gap-3">
+          {% for value, label in delivery_channel_choices %}
+            <label for="delivery_{{ value }}" class="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm text-slate-200">
+              <input
+                id="delivery_{{ value }}"
+                class="h-4 w-4 rounded border-slate-600 bg-slate-900 text-atlas-500 focus:ring-atlas-500/30"
+                type="checkbox"
+                name="delivery_channels"
+                value="{{ value }}"
+                {% if value in selected_delivery_channels %}checked{% endif %}
+              >
+              {{ label }}
+            </label>
+          {% endfor %}
+        </div>
       </fieldset>
 
-      <button type="submit">Create alert</button>
+      <button class="btn-primary w-full" type="submit">Create alert</button>
     </form>
-  </main>
-</body>
-</html>
+  </section>
+{% endblock %}

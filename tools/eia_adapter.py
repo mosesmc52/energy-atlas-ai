@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from eia_ng import EIAClient
 from schemas.answer import SourceRef
 from tools.cache_base import CacheBackedTimeseriesAdapterBase
+from tools.forecasting import ForecastResult, forecast_linear_trend
 
 load_dotenv()
 DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
@@ -314,6 +315,24 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # ----------------------------
     # Public methods (router calls these)
     # ----------------------------
+
+    def forecast_result(
+        self,
+        result: EIAResult,
+        *,
+        metric: str,
+        horizon_days: int = 7,
+        lookback_observations: int = 30,
+        include_overlay: bool = False,
+    ) -> ForecastResult:
+        return forecast_linear_trend(
+            result.df,
+            metric=metric,
+            horizon_days=horizon_days,
+            lookback_observations=lookback_observations,
+            include_overlay=include_overlay,
+            source_reference=result.source.reference,
+        )
 
     def storage_working_gas(
         self, start: str, end: str, region: str = "lower48"
