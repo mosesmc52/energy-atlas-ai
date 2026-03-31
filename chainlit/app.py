@@ -27,6 +27,7 @@ from alerts.services import build_signal_evaluator, evaluation_as_json, parse_si
 from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import render_plotly
 from executer import ExecuteRequest, MetricExecutor
+from schemas.answer import StructuredAnswer
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
@@ -39,6 +40,97 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
+
+
+def _display_metric_name(metric: str) -> str:
+    text = (metric or "").strip()
+    if "_" in text:
+        return text.replace("_", " ").title()
+    return text or "Metric"
+
+
+def _forecast_direction_from_result(forecast) -> str:
+    slope = ((forecast.metadata or {}).get("slope_per_day") if forecast else None)
+    try:
+        slope_value = float(slope)
+    except (TypeError, ValueError):
+        return "flat"
+    if slope_value > 0:
+        return "up"
+    if slope_value < 0:
+        return "down"
+    return "flat"
+
+
+def format_response(data: StructuredAnswer | dict) -> str:
+    if hasattr(data, "model_dump"):
+        data = data.model_dump()
+
+    signal_map = {
+        "bullish": "🟢 Bullish",
+        "bearish": "🔴 Bearish",
+        "neutral": "🟡 Neutral",
+    }
+
+    signal_data = data.get("signal") or {}
+    signal = signal_map.get(str(signal_data.get("status") or "").lower(), "⚪ Unknown")
+    confidence = int(float(signal_data.get("confidence") or 0) * 100)
+    sections = [f"**{signal}**", f"Confidence: {confidence}%"]
+
+    summary = str(data.get("summary") or data.get("answer") or "").strip()
+    if summary:
+        sections.append(f"**Summary**\n{summary}")
+
+    drivers_list = [
+        str(driver).strip() for driver in (data.get("drivers") or []) if str(driver).strip()
+    ]
+    if drivers_list:
+        sections.append("**Drivers**\n" + "\n".join(f"- {driver}" for driver in drivers_list))
+
+    data_point_lines = []
+    for item in data.get("data_points") or []:
+        value = item.get("value")
+        if value is None:
+            continue
+        metric = _display_metric_name(str(item.get("metric") or "Metric"))
+        unit = str(item.get("unit") or "").strip()
+        value_text = f"{value} {unit}".strip()
+        data_point_lines.append(f"- {metric}: **{value_text}**")
+    if data_point_lines:
+        sections.append("**Data Points**\n" + "\n".join(data_point_lines))
+
+    forecast = data.get("forecast") or {}
+    forecast_direction = str(forecast.get("direction") or "").strip()
+    forecast_reasoning = str(forecast.get("reasoning") or "").strip()
+    if forecast_direction or forecast_reasoning:
+        forecast_lines = []
+        if forecast_direction:
+            forecast_lines.append(f"Direction: {forecast_direction}")
+        if forecast_reasoning:
+            forecast_lines.append(forecast_reasoning)
+        sections.append("**Forecast**\n" + "  \n".join(forecast_lines))
+
+    alert_lines = [
+        f"- {'✅' if alert.get('status') else '❌'} {str(alert.get('name') or '').strip()}"
+        for alert in (data.get("alerts") or [])
+        if str(alert.get("name") or "").strip()
+    ]
+    if alert_lines:
+        sections.append("**Alerts**\n" + "\n".join(alert_lines))
+
+    source_lines = [
+        (
+            f"- {source.get('title')} ({source.get('date')})"
+            if source.get("date")
+            else f"- {source.get('title')}"
+        )
+        for source in (data.get("sources") or [])
+        if str(source.get("title") or "").strip()
+    ]
+    if source_lines:
+        sections.append("**Sources**\n" + "\n".join(source_lines))
+
+    return "\n\n".join(sections)
 
 
 async def _append_question_async(qlog, *, question: str, session_id: str) -> None:
@@ -252,14 +344,48 @@ async def on_message(message: cl.Message):
         answer_elapsed_ms = (
             (perf_counter() - answer_started) * 1000 if DEBUG_ENABLED else 0.0
         )
-        if forecast is not None:
+        if payload.report_context_used:
+            logger.info(
+                "report_rag active=true reason=%s sources=%s query=%r",
+                payload.report_context_reason,
+                [source.title for source in payload.report_context_sources],
+                user_query,
+            )
+        else:
+            logger.info(
+                "report_rag active=false reason=%s query=%r",
+                payload.report_context_reason,
+                user_query,
+            )
+        if forecast is not None and payload.structured_response is not None:
+            payload.structured_response.forecast.direction = _forecast_direction_from_result(
+                forecast
+            )
+            payload.structured_response.forecast.reasoning = forecast.explanation
+        elif forecast is not None:
             payload.answer_text = f"{payload.answer_text}\n\nForecast: {forecast.explanation}"
 
         message_started = perf_counter() if DEBUG_ENABLED else 0.0
-        msg = await cl.Message(content=payload.answer_text).send()
+        rendered_content = (
+            format_response(payload.structured_response)
+            if payload.structured_response is not None
+            else payload.answer_text
+        )
+        msg = await cl.Message(content=rendered_content).send()
         message_elapsed_ms = (
             (perf_counter() - message_started) * 1000 if DEBUG_ENABLED else 0.0
         )
+
+        if payload.report_context_used and payload.report_context_sources:
+            rag_lines = [
+                f"- {source.title} ({source.date})"
+                if source.date
+                else f"- {source.title}"
+                for source in payload.report_context_sources
+            ]
+            await cl.Message(
+                content="**Report Context Used**\n" + "\n".join(rag_lines)
+            ).send()
 
         chart_elapsed_ms = 0.0
         if payload.chart_spec is not None:
@@ -274,7 +400,7 @@ async def on_message(message: cl.Message):
 
         # sources
         sources_elapsed_ms = 0.0
-        if payload.sources:
+        if payload.sources and payload.structured_response is None:
             sources_started = perf_counter() if DEBUG_ENABLED else 0.0
             lines = [f"• {s.label}" for s in payload.sources]
 
