@@ -297,7 +297,11 @@ async def on_message(message: cl.Message):
         return
 
     parsed_signal = parse_signal_question(user_query)
-    if parsed_signal is not None and signal_evaluator is not None:
+    if (
+        parsed_signal is not None
+        and signal_evaluator is not None
+        and parsed_signal.signal_id != "routed_metric_query"
+    ):
         evaluation = signal_evaluator.evaluate(parsed_signal)
         await cl.Message(
             content=f"```json\n{evaluation_as_json(evaluation)}\n```"

@@ -108,7 +108,7 @@ body,
 #chat-submit {
     background-color: #FAF9F5 !important;
     border: 1px solid rgba(15, 23, 42, 0.14) !important;
-    color: #375fa4 !important;
+    color: #0f172a !important;
 }
 
 #new-chat-button {
@@ -118,7 +118,7 @@ body,
 button {
     background-color: #FAF9F5 !important;
     border: 1px solid rgba(15, 23, 42, 0.14) !important;
-    color: #375fa4 !important;
+    color: #0f172a !important;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
 }
 
@@ -137,16 +137,6 @@ table {
 th,
 td {
     background-color: #ffffff !important;
-    color: #294a84 !important;
-}
-
-table strong {
-    color: #1f355c !important;
-}
-
-table p,
-table span {
-    color: #294a84 !important;
 }
 
 .js-plotly-plot,

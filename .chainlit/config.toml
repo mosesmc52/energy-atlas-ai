@@ -171,10 +171,9 @@ default_avatar_file_url = ""
 
 [[UI.header_links]]
 name = "About"
-url = "/about/"
+url = "https://github.com/mosesmc52/energy-atlas-ai"
 display_name = "About"
 icon_url = "/public/images/icons/noun-energy.svg"
-target = "_self"
 
 
 [meta]
