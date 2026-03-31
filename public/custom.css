@@ -93,11 +93,48 @@
   display: none !important;
 }
 
+html,
+body,
+#root {
+    background-color: #FAF9F5 !important;
+}
+
+.MuiBox-root,
+.MuiPaper-root {
+    background-color: #FAF9F5 !important;
+}
+
 
 #chat-submit {
-    background-color: #176bb2 !important; /* Example color */
+    background-color: #FAF9F5 !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
+    color: #0f172a !important;
 }
 
 #new-chat-button {
     display: none !important;
+}
+
+button {
+    background-color: #FAF9F5 !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
+    color: #0f172a !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+}
+
+button:hover,
+#chat-submit:hover {
+    background-color: #f3f1ea !important;
+    border-color: rgba(15, 23, 42, 0.22) !important;
+}
+
+table {
+    background-color: #FAF9F5 !important;
+    border-radius: 16px !important;
+    overflow: hidden !important;
+}
+
+th,
+td {
+    background-color: #FAF9F5 !important;
 }

@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 from schemas.chart_spec import AxisSpec, ChartSpec
 from tools.forecasting import ForecastResult
 
+CHART_BG = "#FAF9F5"
+
 
 def _axis_field(
     axis: str | AxisSpec, default_label: str
@@ -29,6 +31,361 @@ def _bar_datetime_label(series: pd.Series, aggregation: str | None) -> pd.Series
     if aggregation == "weekly":
         return series.dt.strftime("%Y-%m-%d")
     return series.dt.strftime("%Y-%m-%d")
+
+
+def compute_storage_change_summary_metrics(
+    df: pd.DataFrame,
+    *,
+    date_field: str = "date",
+    value_field: str = "value",
+) -> list[dict[str, float | str | None]]:
+    if (
+        df is None
+        or df.empty
+        or date_field not in df.columns
+        or value_field not in df.columns
+    ):
+        return []
+
+    d = df[[date_field, value_field]].copy()
+    d[date_field] = pd.to_datetime(d[date_field], errors="coerce")
+    d[value_field] = pd.to_numeric(d[value_field], errors="coerce")
+    d = d.dropna(subset=[date_field, value_field]).sort_values(date_field)
+    if d.empty:
+        return []
+
+    latest = float(d.iloc[-1][value_field])
+    previous = float(d.iloc[-2][value_field]) if len(d) >= 2 else None
+    avg_4w = float(d.tail(4)[value_field].mean())
+    deepest = float(d[value_field].min())
+
+    return [
+        {
+            "label": "Latest weekly change",
+            "value": latest,
+            "unit": "Bcf",
+            "subtitle": _flow_subtitle(latest),
+        },
+        {
+            "label": "Previous week",
+            "value": previous,
+            "unit": "Bcf",
+            "subtitle": "vs prior week" if previous is not None else None,
+        },
+        {
+            "label": "4-week average",
+            "value": avg_4w,
+            "unit": "Bcf",
+            "subtitle": "recent average",
+        },
+        {
+            "label": "Deepest withdrawal",
+            "value": deepest,
+            "unit": "Bcf",
+            "subtitle": "displayed period",
+        },
+    ]
+
+
+def compute_timeseries_summary_metrics(
+    df: pd.DataFrame,
+    *,
+    date_field: str = "date",
+    value_field: str = "value",
+    unit: str | None = None,
+) -> list[dict[str, float | str | None]]:
+    if (
+        df is None
+        or df.empty
+        or date_field not in df.columns
+        or value_field not in df.columns
+    ):
+        return []
+
+    d = df[[date_field, value_field]].copy()
+    d[date_field] = pd.to_datetime(d[date_field], errors="coerce")
+    d[value_field] = pd.to_numeric(d[value_field], errors="coerce")
+    d = d.dropna(subset=[date_field, value_field]).sort_values(date_field)
+    if d.empty:
+        return []
+
+    latest = float(d.iloc[-1][value_field])
+    previous = float(d.iloc[-2][value_field]) if len(d) >= 2 else None
+    period_low = float(d[value_field].min())
+    period_high = float(d[value_field].max())
+    latest_date = d.iloc[-1][date_field].date().isoformat()
+
+    return [
+        {
+            "label": "Latest reading",
+            "value": latest,
+            "unit": unit or "",
+            "subtitle": latest_date,
+        },
+        {
+            "label": "Previous period",
+            "value": previous,
+            "unit": unit or "",
+            "subtitle": "prior observation" if previous is not None else None,
+        },
+        {
+            "label": "Period low",
+            "value": period_low,
+            "unit": unit or "",
+            "subtitle": "displayed period",
+        },
+        {
+            "label": "Period high",
+            "value": period_high,
+            "unit": unit or "",
+            "subtitle": "displayed period",
+        },
+    ]
+
+
+def _flow_subtitle(value: float | None) -> str | None:
+    if value is None:
+        return None
+    if value < 0:
+        return "withdrawal"
+    if value > 0:
+        return "injection"
+    return "flat"
+
+
+def _is_storage_change_chart(spec: ChartSpec, y_fields: list[str]) -> bool:
+    return (
+        spec.title == "Weekly Change in Working Gas Storage"
+        and spec.chart_type in {"line", "area"}
+        and y_fields == ["value"]
+    )
+
+
+def should_render_storage_change_summary_cards(spec: ChartSpec) -> bool:
+    return (
+        spec.title == "Weekly Change in Working Gas Storage"
+        and spec.chart_type in {"line", "area"}
+    )
+
+
+def should_render_timeseries_summary_cards(spec: ChartSpec) -> bool:
+    if spec.chart_type not in {"line", "area"}:
+        return False
+    if isinstance(spec.y, AxisSpec):
+        return True
+    if isinstance(spec.y, str):
+        return True
+    return len(spec.y) == 1
+
+
+def _format_bcf(value: float) -> str:
+    rounded = round(float(value))
+    return f"{rounded:,.0f} Bcf"
+
+
+def _apply_timeseries_dashboard_style(
+    fig: go.Figure,
+    d: pd.DataFrame,
+    *,
+    x_field: str,
+    y_fields: list[str],
+    y_label: str,
+    y_units: str | None,
+) -> None:
+    fig.update_layout(
+        title=dict(
+            x=0.5,
+            xanchor="center",
+            font=dict(size=28, color="#111827"),
+            pad=dict(b=18),
+        ),
+        height=720,
+        margin=dict(l=70, r=60, t=90, b=70),
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=CHART_BG,
+        hovermode="x unified",
+    )
+    fig.update_xaxes(
+        showgrid=False,
+        rangeslider_visible=False,
+        rangeselector=None,
+        tickformat="%b %Y",
+        title_text="Date",
+    )
+    fig.update_yaxes(
+        title_text=y_label,
+        showgrid=True,
+        gridcolor="rgba(148,163,184,0.22)",
+        zeroline=False,
+    )
+
+    for index, trace in enumerate(fig.data):
+        if getattr(trace, "mode", "") == "lines":
+            trace.line.width = 4 if index == 0 else 3
+
+    if len(y_fields) != 1 or y_fields[0] not in d.columns or x_field not in d.columns:
+        return
+
+    series = d[[x_field, y_fields[0]]].copy()
+    series[x_field] = pd.to_datetime(series[x_field], errors="coerce")
+    series[y_fields[0]] = pd.to_numeric(series[y_fields[0]], errors="coerce")
+    series = series.dropna(subset=[x_field, y_fields[0]]).sort_values(x_field)
+    if series.empty:
+        return
+
+    latest = series.iloc[-1]
+    marker_color = "#ff7f0e"
+    fig.add_trace(
+        go.Scatter(
+            x=[latest[x_field]],
+            y=[latest[y_fields[0]]],
+            mode="markers",
+            name="Latest",
+            marker=dict(size=10, color=marker_color),
+            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    y_suffix = f" {y_units}" if y_units else ""
+    latest_value = f"{float(latest[y_fields[0]]):,.2f}{y_suffix}".strip()
+    fig.add_annotation(
+        x=latest[x_field],
+        y=latest[y_fields[0]],
+        xanchor="right",
+        xshift=-18,
+        yshift=-6,
+        align="left",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#111827",
+        bgcolor="rgba(255,255,255,0.96)",
+        bordercolor="rgba(15,23,42,0.25)",
+        borderwidth=1,
+        borderpad=6,
+        font=dict(size=13, color="#1f2937"),
+        text=f"Latest: {latest_value}<br>{latest[x_field].date().isoformat()}",
+    )
+
+
+def _apply_storage_change_dashboard_style(
+    fig: go.Figure, d: pd.DataFrame, *, x_field: str, y_field: str
+) -> None:
+    if d.empty:
+        return
+
+    series = d[[x_field, y_field]].dropna().sort_values(x_field).copy()
+    if series.empty:
+        return
+
+    latest = series.iloc[-1]
+    deepest = series.loc[series[y_field].idxmin()]
+
+    fig.update_traces(
+        line=dict(color="#2C7BB6", width=4),
+        fill="tozeroy",
+        fillcolor="rgba(44,123,182,0.15)",
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} Bcf<extra></extra>",
+    )
+
+    fig.update_layout(
+        title=dict(
+            x=0.5,
+            xanchor="center",
+            font=dict(size=34, color="#111827"),
+            pad=dict(b=18),
+        ),
+        height=720,
+        margin=dict(l=70, r=60, t=90, b=70),
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=CHART_BG,
+    )
+    fig.update_xaxes(
+        title_text="Report Week",
+        showgrid=False,
+        rangeslider_visible=False,
+        rangeselector=None,
+        tickformat="%b %Y",
+    )
+    fig.update_yaxes(
+        title_text="Bcf",
+        showgrid=True,
+        gridcolor="rgba(148,163,184,0.22)",
+        zeroline=False,
+    )
+
+    fig.add_hline(line_width=2, y=0, line_color="rgba(59,130,246,0.8)")
+
+    deepest_idx = series.index.get_loc(deepest.name)
+    start_idx = max(0, deepest_idx - 1)
+    end_idx = min(len(series) - 1, deepest_idx + 1)
+    fig.add_vrect(
+        x0=series.iloc[start_idx][x_field],
+        x1=series.iloc[end_idx][x_field],
+        fillcolor="rgba(148, 163, 184, 0.18)",
+        line_width=0,
+        layer="below",
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=[deepest[x_field]],
+            y=[deepest[y_field]],
+            mode="markers",
+            name="Deepest withdrawal",
+            marker=dict(size=10, color="#2ca02c"),
+            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} Bcf<extra></extra>",
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[latest[x_field]],
+            y=[latest[y_field]],
+            mode="markers",
+            name="Latest",
+            marker=dict(size=10, color="#ff7f0e"),
+            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} Bcf<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    fig.add_annotation(
+        x=latest[x_field],
+        y=latest[y_field],
+        xanchor="right",
+        xshift=-18,
+        yshift=-6,
+        align="left",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#111827",
+        bgcolor="rgba(255,255,255,0.96)",
+        bordercolor="rgba(15,23,42,0.25)",
+        borderwidth=1,
+        borderpad=6,
+        font=dict(size=13, color="#1f2937"),
+        text=f"Latest: {_format_bcf(latest[y_field])}<br>{latest[x_field].date().isoformat()}",
+    )
+    fig.add_annotation(
+        x=deepest[x_field],
+        y=deepest[y_field],
+        xanchor="left",
+        yanchor="top",
+        xshift=-10,
+        yshift=-34,
+        showarrow=False,
+        bgcolor="rgba(255,255,255,0.96)",
+        bordercolor="rgba(15,23,42,0.25)",
+        borderwidth=1,
+        borderpad=5,
+        font=dict(size=12, color="#1f2937"),
+        text=f"Deepest withdrawal: {_format_bcf(deepest[y_field])}",
+    )
 
 
 def render_plotly(
@@ -253,5 +610,18 @@ def render_plotly(
                 ],
             ),
         )
+
+    if x_is_datetime and chart_type in {"line", "area"}:
+        _apply_timeseries_dashboard_style(
+            fig,
+            d,
+            x_field=x_field,
+            y_fields=y_fields,
+            y_label=spec.y_label or (y_fields[0] if y_fields else "Value"),
+            y_units=y_units,
+        )
+
+    if _is_storage_change_chart(spec, y_fields) and x_field in d.columns:
+        _apply_storage_change_dashboard_style(fig, d, x_field=x_field, y_field="value")
 
     return fig

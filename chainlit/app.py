@@ -25,7 +25,13 @@ import chainlit as cl
 from agents.router import route_query
 from alerts.services import build_signal_evaluator, evaluation_as_json, parse_signal_question
 from answer_builder import build_answer_with_openai
-from charts.plotly_renderer import render_plotly
+from charts.plotly_renderer import (
+    compute_timeseries_summary_metrics,
+    compute_storage_change_summary_metrics,
+    render_plotly,
+    should_render_storage_change_summary_cards,
+    should_render_timeseries_summary_cards,
+)
 from executer import ExecuteRequest, MetricExecutor
 from schemas.answer import StructuredAnswer
 from tools.forecasting import TrendForecaster
@@ -60,6 +66,46 @@ def _forecast_direction_from_result(forecast) -> str:
     if slope_value < 0:
         return "down"
     return "flat"
+
+
+def _format_card_value(value: object, unit: str) -> str:
+    if value is None:
+        return ""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if numeric.is_integer():
+        number = f"{int(numeric):,}"
+    else:
+        number = f"{numeric:,.1f}"
+    return f"{number} {unit}".strip()
+
+
+def format_summary_cards(metrics: list[dict]) -> str:
+    if not metrics:
+        return ""
+
+    labels = []
+    values = []
+    subtitles = []
+    for metric in metrics:
+        raw_value = metric.get("value")
+        value_text = _format_card_value(raw_value, str(metric.get("unit") or ""))
+        if not value_text:
+            continue
+        labels.append(str(metric.get("label") or "").strip() or "Metric")
+        values.append(f"**{value_text}**")
+        subtitles.append(str(metric.get("subtitle") or "").strip() or " ")
+
+    if not labels:
+        return ""
+
+    divider = "| " + " | ".join(["---"] * len(labels)) + " |"
+    label_row = "| " + " | ".join(labels) + " |"
+    value_row = "| " + " | ".join(values) + " |"
+    subtitle_row = "| " + " | ".join(subtitles) + " |"
+    return "\n".join([label_row, divider, value_row, subtitle_row])
 
 
 def format_response(data: StructuredAnswer | dict) -> str:
@@ -391,6 +437,20 @@ async def on_message(message: cl.Message):
         if payload.chart_spec is not None:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
             fig = render_plotly(payload.chart_spec, result.df, forecast_overlay=forecast)
+
+            summary_metrics = []
+            if should_render_storage_change_summary_cards(payload.chart_spec):
+                summary_metrics = compute_storage_change_summary_metrics(result.df)
+            elif should_render_timeseries_summary_cards(payload.chart_spec):
+                summary_metrics = compute_timeseries_summary_metrics(
+                    result.df,
+                    unit=getattr(payload.chart_spec.y, "units", None),
+                )
+
+            if summary_metrics:
+                summary_cards = format_summary_cards(summary_metrics)
+                if summary_cards:
+                    await cl.Message(content=summary_cards).send()
 
             await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
                 for_id=msg.id
