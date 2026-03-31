@@ -12,13 +12,13 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from tools.forecasting import TrendForecaster
-
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from agents.router import route_query
 from executer import ExecuteRequest, MetricExecutor
+from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
 
@@ -150,6 +150,19 @@ def parse_signal_question(question: str) -> Optional[ParsedSignal]:
             metric="ng_production_lower48",
         )
 
+    route = route_query(question)
+    if route.intent not in {"unsupported", "ambiguous"} and route.primary_metric:
+        return ParsedSignal(
+            signal_id="routed_metric_query",
+            question=question,
+            metric=route.primary_metric,
+            filters=route.filters or {},
+            config={
+                "route_intent": route.intent,
+                "route_source": route.source,
+            },
+        )
+
     return None
 
 
@@ -209,6 +222,8 @@ class SignalEvaluator:
                 return self._evaluate_supply_constrained_regime(parsed)
             if parsed.signal_id == "production_below_30d_average":
                 return self._evaluate_production_below_30d_average(parsed)
+            if parsed.signal_id == "routed_metric_query":
+                return self._evaluate_routed_metric_query(parsed)
         except Exception as exc:  # noqa: BLE001
             return SignalEvaluation(
                 question=parsed.question,
@@ -229,6 +244,235 @@ class SignalEvaluator:
     def _execute_metric(self, metric: str, start: str, end: str, filters: Optional[dict[str, Any]] = None):
         return self.executor.execute(
             ExecuteRequest(metric=metric, start=start, end=end, filters=filters)
+        )
+
+    @staticmethod
+    def _pick_value_column(df: pd.DataFrame, metric: str) -> Optional[str]:
+        if "value" in df.columns:
+            return "value"
+        if metric == "iso_gas_dependency" and "gas_share" in df.columns:
+            return "gas_share"
+        numeric_cols = [
+            c for c in df.columns if c != "date" and pd.api.types.is_numeric_dtype(df[c])
+        ]
+        return numeric_cols[0] if numeric_cols else None
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        try:
+            if value is None or pd.isna(value):
+                return None
+            return float(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _format_number(value: Optional[float]) -> str:
+        if value is None:
+            return "n/a"
+        abs_value = abs(value)
+        if abs_value >= 100:
+            return f"{value:,.0f}"
+        if abs_value >= 10:
+            return f"{value:,.1f}"
+        return f"{value:,.2f}"
+
+    @staticmethod
+    def _titleize_metric(metric: str) -> str:
+        text = (metric or "").replace("_", " ").strip()
+        acronyms = {"lng": "LNG", "ng": "Natural Gas", "iso": "ISO"}
+        return " ".join(acronyms.get(part.lower(), part.capitalize()) for part in text.split()) or "Metric"
+
+    def _sector_ranking_summary(self, df: pd.DataFrame) -> Optional[str]:
+        if df.empty or "date" not in df.columns or "value" not in df.columns or "series" not in df.columns:
+            return None
+        latest_date = pd.to_datetime(df["date"], errors="coerce").max()
+        if pd.isna(latest_date):
+            return None
+        latest_rows = df.loc[pd.to_datetime(df["date"], errors="coerce") == latest_date].copy()
+        latest_rows["value"] = pd.to_numeric(latest_rows["value"], errors="coerce")
+        latest_rows = latest_rows.dropna(subset=["value"]).sort_values("value", ascending=False)
+        if latest_rows.empty:
+            return None
+        leader = latest_rows.iloc[0]
+        ranking = ", ".join(
+            f"{str(row['series']).replace('_', ' ')} ({self._format_number(float(row['value']))})"
+            for _, row in latest_rows.iterrows()
+        )
+        return (
+            f"As of {latest_date.date().isoformat()}, {str(leader['series']).replace('_', ' ')} "
+            f"led with {self._format_number(float(leader['value']))}. Ranking: {ranking}."
+        )
+
+    @staticmethod
+    def _infer_boolean_result(
+        question: str,
+        *,
+        latest_value: Optional[float],
+        prior_value: Optional[float],
+        delta: Optional[float],
+    ) -> Optional[bool]:
+        q = (question or "").strip().lower()
+        if not q:
+            return None
+
+        if not re.match(r"^(is|are|was|were|do|does|did|has|have|had|can)\b", q):
+            return None
+
+        if "higher than last year" in q or "higher than" in q or "rising" in q or "growing" in q or "increasing" in q:
+            return None if delta is None else delta > 0
+        if "lower than" in q or "falling" in q or "decreasing" in q or "declining" in q:
+            return None if delta is None else delta < 0
+        if "above" in q:
+            return None if delta is None else delta > 0
+        if "below" in q:
+            return None if delta is None else delta < 0
+        if "current" in q or q.startswith("what "):
+            return None
+
+        if latest_value is not None and prior_value is not None:
+            return latest_value > prior_value
+        return None
+
+    def _evaluate_routed_metric_query(self, parsed: ParsedSignal) -> SignalEvaluation:
+        route = route_query(parsed.question)
+        if route.intent in {"unsupported", "ambiguous"} or route.primary_metric is None:
+            reason = route.reason or "This question did not map to a supported metric route."
+            return SignalEvaluation(
+                question=parsed.question,
+                result=None,
+                explanation=reason,
+                metric=parsed.metric,
+                error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
+            )
+
+        result = self._execute_metric(
+            route.primary_metric,
+            start=route.start,
+            end=route.end,
+            filters=route.filters,
+        )
+        df = result.df.copy()
+        if df.empty:
+            return SignalEvaluation(
+                question=parsed.question,
+                result=None,
+                explanation="No data was returned for the requested period.",
+                metric=route.primary_metric,
+                error_code=SignalErrorCode.INSUFFICIENT_DATA,
+            )
+
+        if route.primary_metric == "ng_consumption_by_sector":
+            ranking_summary = self._sector_ranking_summary(df)
+            if ranking_summary is None:
+                return SignalEvaluation(
+                    question=parsed.question,
+                    result=None,
+                    explanation="No data was returned for the requested period.",
+                    metric=route.primary_metric,
+                    error_code=SignalErrorCode.INSUFFICIENT_DATA,
+                )
+            return SignalEvaluation(
+                question=parsed.question,
+                result=None,
+                explanation=ranking_summary,
+                metric=route.primary_metric,
+                metadata={
+                    "route_intent": route.intent,
+                    "route_source": route.source,
+                    "filters": route.filters or {},
+                    "metric_source": result.source.reference,
+                    "evaluated_at": self._evaluated_at(),
+                },
+            )
+
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.dropna(subset=["date"]).sort_values("date")
+        value_col = self._pick_value_column(df, route.primary_metric)
+        if value_col is None:
+            return SignalEvaluation(
+                question=parsed.question,
+                result=None,
+                explanation="The query returned data, but no numeric value column was available to summarize it.",
+                metric=route.primary_metric,
+                error_code=SignalErrorCode.INSUFFICIENT_DATA,
+            )
+
+        df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+        df = df.dropna(subset=[value_col])
+        if df.empty:
+            return SignalEvaluation(
+                question=parsed.question,
+                result=None,
+                explanation="The query returned data, but no usable numeric observations were available.",
+                metric=route.primary_metric,
+                error_code=SignalErrorCode.INSUFFICIENT_DATA,
+            )
+
+        latest = df.iloc[-1]
+        latest_value = self._safe_float(latest[value_col])
+        prior_value = self._safe_float(df.iloc[-2][value_col]) if len(df) >= 2 else None
+        delta = (
+            None
+            if latest_value is None or prior_value is None
+            else latest_value - prior_value
+        )
+        latest_date_value = latest["date"] if "date" in latest else None
+        latest_date = (
+            latest_date_value.date().isoformat()
+            if isinstance(latest_date_value, pd.Timestamp)
+            else None
+        )
+        metric_label = self._titleize_metric(route.primary_metric)
+        latest_text = self._format_number(latest_value)
+        delta_text = (
+            f", {'up' if delta > 0 else 'down' if delta < 0 else 'unchanged'} "
+            f"{self._format_number(abs(delta))} from the prior observation"
+            if delta is not None
+            else ""
+        )
+        explanation = (
+            f"As of {latest_date}, {metric_label} is {latest_text}{delta_text}."
+            if latest_date
+            else f"Latest {metric_label} reading is {latest_text}{delta_text}."
+        )
+
+        inferred_result = self._infer_boolean_result(
+            parsed.question,
+            latest_value=latest_value,
+            prior_value=prior_value,
+            delta=delta,
+        )
+        if inferred_result is None and re.match(r"^(is|are|was|were|do|does|did|has|have|had|can)\b", parsed.question.strip().lower()):
+            explanation = (
+                f"{explanation} This question was supported for data retrieval, "
+                "but it does not map to a strict boolean alert condition yet."
+            )
+
+        values: dict[str, Any] = {
+            "latest_value": latest_value,
+            "prior_value": prior_value,
+            "delta": delta,
+            "value_column": value_col,
+        }
+        if latest_date:
+            values["latest_date"] = latest_date
+
+        return SignalEvaluation(
+            question=parsed.question,
+            result=inferred_result,
+            explanation=explanation,
+            values=values,
+            as_of=latest_date,
+            metric=route.primary_metric,
+            metadata={
+                "route_intent": route.intent,
+                "route_source": route.source,
+                "filters": route.filters or {},
+                "metric_source": result.source.reference,
+                "evaluated_at": self._evaluated_at(),
+            },
         )
 
     def _historical_comparison_values(

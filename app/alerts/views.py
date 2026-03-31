@@ -42,6 +42,32 @@ def _coerce_bool(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+UNSUPPORTED_ALERT_QUESTION_MESSAGE = (
+    "This question could not be mapped to a supported Energy Atlas metric.\n"
+    "Try a question the assistant already supports, such as:\n"
+    "- What is the current Henry Hub price?\n"
+    "- Are exports higher than last year?\n"
+    "- Is production growing year over year?\n"
+    "- How much gas is currently in storage?\n"
+    "- Which sector consumes the most gas?"
+)
+
+ALERT_LIST_SORT_OPTIONS = {
+    "created": {
+        "label": "Created",
+        "order_by": "-created_at",
+    },
+    "title": {
+        "label": "Title",
+        "order_by": "name",
+    },
+    "last_sent": {
+        "label": "Last sent",
+        "order_by": "-last_notified_at",
+    },
+}
+
+
 def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | None, dict | None, str | None]:
     question = (payload.get("question") or "").strip()
     if not question:
@@ -49,7 +75,7 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
 
     parsed = parse_signal_question(question)
     if parsed is None:
-        return None, None, "unsupported alert question"
+        return None, None, UNSUPPORTED_ALERT_QUESTION_MESSAGE
 
     evaluator = build_signal_evaluator()
     evaluation = evaluator.evaluate(parsed)
@@ -111,44 +137,37 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
 @login_required
 @require_http_methods(["GET"])
 def alert_list_view(request):
+    sort = str(request.GET.get("sort") or "created").strip().lower()
+    sort_config = ALERT_LIST_SORT_OPTIONS.get(sort, ALERT_LIST_SORT_OPTIONS["created"])
     alert_rules = (
         AlertRule.objects.filter(user=request.user)
         .prefetch_related("events")
-        .order_by("-created_at")
+        .order_by(sort_config["order_by"], "-created_at")
     )
     return render(
         request,
         "alerts/list.html",
         {
             "alert_rules": alert_rules,
+            "sort": sort if sort in ALERT_LIST_SORT_OPTIONS else "created",
+            "sort_options": [
+                {"value": value, "label": config["label"]}
+                for value, config in ALERT_LIST_SORT_OPTIONS.items()
+            ],
         },
     )
 
 
 @login_required
 @require_http_methods(["GET", "POST"])
-def alert_sandbox_view(request):
+def alert_create_view(request):
     evaluation: dict | None = None
-    selected_delivery_channels: list[str] = []
-
     if request.method == "POST":
-        action = request.POST.get("action", "test")
+        action = request.POST.get("action", "create")
         payload = request.POST.dict()
-        payload["delivery_channels"] = _delivery_channels_from_request(request)
-        selected_delivery_channels = list(payload["delivery_channels"])
-        question = (payload.get("question") or "").strip()
-
-        if action == "save":
-            rule, evaluation, error = _create_rule_and_initial_event(
-                user=request.user,
-                payload=payload,
-            )
-            if error:
-                messages.error(request, error)
-            else:
-                messages.success(request, "Alert created successfully.")
-                return redirect("alerts:detail", alert_rule_id=rule.id)
-        else:
+        payload["delivery_channels"] = [AlertDeliveryChannel.EMAIL]
+        if action == "test":
+            question = (payload.get("question") or "").strip()
             if not question:
                 messages.error(request, "question is required")
             else:
@@ -159,46 +178,24 @@ def alert_sandbox_view(request):
                     messages.error(request, evaluation_obj.explanation)
                 else:
                     messages.success(request, "Alert test completed.")
-
-    return render(
-        request,
-        "alerts/sandbox.html",
-        {
-            "evaluation": evaluation,
-            "frequency_choices": AlertRule._meta.get_field("frequency").choices,
-            "trigger_type_choices": AlertRule._meta.get_field("trigger_type").choices,
-            "delivery_channel_choices": AlertDeliveryChannel.choices,
-            "selected_delivery_channels": selected_delivery_channels,
-        },
-    )
-
-
-@login_required
-@require_http_methods(["GET", "POST"])
-def alert_create_view(request):
-    selected_delivery_channels: list[str] = []
-    if request.method == "POST":
-        payload = request.POST.dict()
-        payload["delivery_channels"] = _delivery_channels_from_request(request)
-        selected_delivery_channels = list(payload["delivery_channels"])
-        rule, evaluation, error = _create_rule_and_initial_event(
-            user=request.user,
-            payload=payload,
-        )
-        if error:
-            messages.error(request, error)
         else:
-            messages.success(request, "Alert created successfully.")
-            return redirect("alerts:detail", alert_rule_id=rule.id)
+            rule, evaluation, error = _create_rule_and_initial_event(
+                user=request.user,
+                payload=payload,
+            )
+            if error:
+                messages.error(request, error)
+            else:
+                messages.success(request, "Alert created successfully.")
+                return redirect("alerts:list")
 
     return render(
         request,
         "alerts/create.html",
         {
+            "evaluation": evaluation,
             "frequency_choices": AlertRule._meta.get_field("frequency").choices,
             "trigger_type_choices": AlertRule._meta.get_field("trigger_type").choices,
-            "delivery_channel_choices": AlertDeliveryChannel.choices,
-            "selected_delivery_channels": selected_delivery_channels,
         },
     )
 

@@ -3,34 +3,34 @@
 {% block title %}Sign Up{% endblock %}
 
 {% block page-content %}
-  <section class="mx-auto max-w-md panel form-stack">
-    <div class="space-y-2">
-      <p class="eyebrow">Authentication</p>
-      <h2 class="text-3xl font-semibold tracking-tight text-white">Create account</h2>
-      <p class="text-sm text-slate-300">Set up access to the alert dashboard and sandbox tools.</p>
-    </div>
-
-    <form method="post" action="{% url 'auth:signup' %}" class="form-stack">
-      {% csrf_token %}
-
-      <div class="field-group">
-        <label for="email">Email</label>
-        <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required>
+  <div class="flex min-h-full flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <section class="mx-auto w-full max-w-md panel form-stack">
+      <div class="space-y-2 text-center">
+        <h2 class="text-3xl font-semibold tracking-tight text-white">Create account</h2>
       </div>
 
-      <div class="field-group">
-        <label for="password">Password</label>
-        <input id="password" type="password" name="password" required>
-      </div>
+      <form method="post" action="{% url 'auth:signup' %}" class="form-stack">
+        {% csrf_token %}
 
-      <div class="field-group">
-        <label for="confirm_password">Confirm password</label>
-        <input id="confirm_password" type="password" name="confirm_password" required>
-      </div>
+        <div class="field-group">
+          <label for="email" class="block text-sm/6 font-medium text-gray-900">Email</label>
+          <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required class="block w-full rounded-md border-0 bg-white px-3 py-1.5 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        </div>
 
-      <button class="btn-primary w-full" type="submit">Create account</button>
-    </form>
+        <div class="field-group">
+          <label for="password" class="block text-sm/6 font-medium text-gray-900">Password</label>
+          <input id="password" type="password" name="password" required class="block w-full rounded-md border-0 bg-white px-3 py-1.5 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        </div>
 
-    <p class="text-sm text-slate-300">Already have an account? <a class="text-atlas-100 hover:text-white" href="{% url 'auth:signin' %}">Sign in</a></p>
-  </section>
+        <div class="field-group">
+          <label for="confirm_password" class="block text-sm/6 font-medium text-gray-900">Confirm password</label>
+          <input id="confirm_password" type="password" name="confirm_password" required class="block w-full rounded-md border-0 bg-white px-3 py-1.5 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        </div>
+
+        <button class="btn-primary w-full !bg-black hover:!bg-slate-900" style="color: #ffffff;" type="submit">Create account</button>
+      </form>
+
+      <p class="text-center text-sm text-slate-300">Already have an account? <a class="text-atlas-100 hover:text-white" href="{% url 'auth:signin' %}">Sign in</a></p>
+    </section>
+  </div>
 {% endblock %}

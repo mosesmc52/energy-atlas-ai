@@ -6,7 +6,6 @@ app_name = "alerts"
 
 urlpatterns = [
     path("", views.alert_list_view, name="list"),
-    path("sandbox/", views.alert_sandbox_view, name="sandbox"),
     path("new/", views.alert_create_view, name="create"),
     path("<int:alert_rule_id>/", views.alert_detail_view, name="detail"),
     path("evaluate/", views.evaluate_signal_view, name="evaluate"),

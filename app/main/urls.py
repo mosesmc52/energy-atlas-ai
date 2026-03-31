@@ -18,6 +18,7 @@ Including another URLconf
 from django.contrib import admin
 from django.shortcuts import redirect
 from django.urls import include, path
+from django.views.generic import TemplateView
 
 
 def root_redirect(_request):
@@ -26,6 +27,11 @@ def root_redirect(_request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", root_redirect, name="root"),
+    path(
+        "about/",
+        TemplateView.as_view(template_name="common/about.html"),
+        name="about",
+    ),
     path("auth/", include("auth.urls")),
     path("alerts/", include("alerts.urls")),
 ]

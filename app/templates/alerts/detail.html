@@ -3,104 +3,135 @@
 {% block title %}{{ alert_rule.name }}{% endblock %}
 
 {% block page-content %}
-  <section class="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+  <section class="space-y-4">
+    <div>
+      <a class="inline-flex items-center gap-3 rounded-[22px] border border-stone-300 bg-white px-6 py-3 text-base font-medium text-slate-900 shadow-[0_6px_18px_rgba(50,44,35,0.04)] transition hover:border-stone-400 hover:bg-stone-50" href="{% url 'alerts:list' %}">
+        <span aria-hidden="true" class="text-xl leading-none text-slate-500">‹</span>
+        <span>Back to Alerts</span>
+      </a>
+    </div>
+
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.6fr)]">
     <div class="space-y-6">
-      <section class="panel space-y-6">
+      <section class="panel space-y-6 p-6 xl:p-7">
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div class="space-y-2">
             <p class="eyebrow">Alert Detail</p>
-            <h2 class="text-3xl font-semibold tracking-tight text-white">{{ alert_rule.name }}</h2>
-            <p class="text-sm leading-6 text-slate-300">{{ alert_rule.question }}</p>
+            <h2 class="text-3xl font-semibold tracking-tight text-slate-900">{{ alert_rule.name }}</h2>
+            <p class="max-w-2xl text-sm leading-7 text-slate-600">{{ alert_rule.question }}</p>
           </div>
-          <a class="btn-secondary" href="{% url 'alerts:list' %}">Back to alerts</a>
+          <div class="flex flex-wrap gap-3">
+            <span class="btn-secondary cursor-not-allowed opacity-70">Edit</span>
+          </div>
         </div>
 
-        <dl class="grid gap-4 sm:grid-cols-2">
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <dt class="text-xs uppercase tracking-wide text-slate-500">Signal</dt>
-            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.signal_id }}</dd>
-          </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <dt class="text-xs uppercase tracking-wide text-slate-500">Metric</dt>
-            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.metric }}</dd>
-          </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <dt class="text-xs uppercase tracking-wide text-slate-500">Region</dt>
-            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.region|default:'-' }}</dd>
-          </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <dt class="text-xs uppercase tracking-wide text-slate-500">Status</dt>
-            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.get_status_display }}</dd>
-          </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <dt class="text-xs uppercase tracking-wide text-slate-500">Frequency</dt>
-            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.get_frequency_display }}</dd>
-          </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <dt class="text-xs uppercase tracking-wide text-slate-500">Trigger type</dt>
-            <dd class="mt-2 text-sm font-medium text-slate-100">{{ alert_rule.get_trigger_type_display }}</dd>
-          </div>
-        </dl>
+        <div class="border-t border-stone-200 pt-6">
+          <dl class="grid gap-y-4 gap-x-8 sm:grid-cols-2">
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Signal</dt>
+              <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.signal_id }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Metric</dt>
+              <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.metric }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Frequency</dt>
+              <dd class="mt-2 text-base font-medium text-slate-900">{{ alert_rule.get_frequency_display }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Trigger type</dt>
+              <dd class="mt-2 text-base font-medium text-slate-900">{{ alert_rule.get_trigger_type_display }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Region</dt>
+              <dd class="mt-2 text-base font-medium text-slate-900">{{ alert_rule.region|default:'—' }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Status</dt>
+              <dd class="mt-2">
+                {% if alert_rule.is_enabled %}
+                  <span class="inline-flex items-center rounded-full bg-[#edf5df] px-3 py-1.5 text-sm font-semibold text-[#648b2f]">
+                    <span class="mr-2 text-sm leading-none">•</span>Active
+                  </span>
+                {% else %}
+                  <span class="inline-flex items-center rounded-full bg-stone-100 px-3 py-1.5 text-sm font-semibold text-stone-500">
+                    <span class="mr-2 text-sm leading-none">•</span>{{ alert_rule.get_status_display }}
+                  </span>
+                {% endif %}
+              </dd>
+            </div>
+          </dl>
+        </div>
 
-        <div>
-          <h3 class="text-lg font-semibold text-white">Last explanation</h3>
-          <p class="mt-3 text-sm leading-6 text-slate-300">{{ alert_rule.last_explanation|default:'-' }}</p>
+        <div class="border-t border-stone-200 pt-6">
+          <h3 class="text-xl font-semibold tracking-tight text-slate-900">Last explanation</h3>
+          <div class="mt-4 rounded-2xl bg-[#f7f3ea] px-5 py-4">
+            <p class="text-sm leading-7 text-slate-700">{{ alert_rule.last_explanation|default:'-' }}</p>
+            {% with latest_event=events|first %}
+              {% if latest_event and latest_event.error_code %}
+                <p class="mt-4 font-mono text-sm font-semibold uppercase tracking-wide text-[#c15d54]">Error: {{ latest_event.error_code }}</p>
+              {% endif %}
+            {% endwith %}
+          </div>
         </div>
 
         <div>
-          <h3 class="text-lg font-semibold text-white">Last values payload</h3>
+          <h3 class="text-xl font-semibold tracking-tight text-slate-900">Last values payload</h3>
           <pre class="mt-3">{{ alert_rule.last_values_json }}</pre>
         </div>
       </section>
 
-      <section class="panel space-y-4">
-        <div>
-          <p class="eyebrow">Manual Run</p>
-          <h3 class="mt-2 text-2xl font-semibold text-white">Evaluate now</h3>
-          <p class="mt-2 text-sm text-slate-300">Trigger an immediate evaluation to refresh the latest outcome and explanation.</p>
+      <section class="panel p-6 xl:p-7">
+        <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-900">Run evaluation now</h3>
+            <p class="mt-2 max-w-xl text-sm leading-7 text-slate-500">Trigger an immediate evaluation to refresh the latest outcome and explanation.</p>
+          </div>
+          <form method="post" action="{% url 'alerts:detail' alert_rule.id %}">
+            {% csrf_token %}
+            <button class="btn-secondary px-4 py-2.5 text-sm font-semibold" type="submit">▶ Run evaluation</button>
+          </form>
         </div>
-        <form method="post" action="{% url 'alerts:detail' alert_rule.id %}">
-          {% csrf_token %}
-          <button class="btn-primary" type="submit">Run evaluation</button>
-        </form>
       </section>
     </div>
 
-    <section class="panel">
+    <section class="panel p-6 xl:p-7">
       <div class="mb-6">
         <p class="eyebrow">History</p>
-        <h2 class="mt-2 text-2xl font-semibold text-white">Recent events</h2>
+        <h2 class="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Recent events</h2>
       </div>
       {% if events %}
         <ul class="space-y-4">
           {% for event in events %}
-            <li class="rounded-3xl border border-slate-800 bg-slate-950/55 p-5">
+            <li class="rounded-[24px] border border-stone-200 bg-white px-4 py-4">
               <div class="flex flex-wrap items-center justify-between gap-3">
-                <p class="text-sm font-medium text-white">{{ event.evaluated_at }}</p>
-                <span class="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-wide text-slate-300">
+                <p class="text-sm font-medium leading-6 text-slate-600">{{ event.evaluated_at|date:"F j, Y" }} · {{ event.evaluated_at|date:"g:i A" }}</p>
+                <span class="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-500">
                   {% if event.result == None %}
                     unknown
                   {% elif event.result %}
-                    true
+                    triggered
                   {% else %}
-                    false
+                    did not trigger
                   {% endif %}
                 </span>
               </div>
-              <p class="mt-4 text-sm leading-6 text-slate-300">{{ event.explanation }}</p>
+              <p class="mt-4 text-sm leading-7 text-slate-700">{{ event.explanation }}</p>
               {% if event.error_code %}
-                <p class="mt-3 text-sm font-medium text-rose-300">Error: {{ event.error_code }}</p>
+                <p class="mt-4 font-mono text-xs font-semibold uppercase tracking-wide text-[#c15d54]">Error: {{ event.error_code }}</p>
               {% endif %}
               <pre class="mt-4">{{ event.values_json }}</pre>
             </li>
           {% endfor %}
         </ul>
       {% else %}
-        <div class="rounded-3xl border border-dashed border-slate-700 bg-slate-950/40 px-6 py-12 text-center">
-          <h3 class="text-xl font-semibold text-white">No events yet</h3>
-          <p class="mt-3 text-sm text-slate-400">Run a manual evaluation or wait for the next scheduled cycle to populate event history.</p>
+        <div class="rounded-[24px] border border-dashed border-stone-300 bg-white/80 px-6 py-12 text-center">
+          <h3 class="text-lg font-semibold text-slate-900">No events yet</h3>
+          <p class="mt-3 text-sm text-slate-500">Run a manual evaluation or wait for the next scheduled cycle to populate event history.</p>
         </div>
       {% endif %}
     </section>
+    </div>
   </section>
 {% endblock %}

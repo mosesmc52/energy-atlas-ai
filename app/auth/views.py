@@ -13,13 +13,13 @@ User = get_user_model()
 
 def _redirect_target(request) -> str:
     next_url = request.GET.get("next") or request.POST.get("next")
-    return next_url or "auth:onboard"
+    return next_url or "alerts:list"
 
 
 @require_http_methods(["GET", "POST"])
 def sign_in_view(request):
     if request.user.is_authenticated:
-        return redirect("auth:onboard")
+        return redirect("alerts:list")
 
     if request.method == "POST":
         email = (request.POST.get("email") or "").strip().lower()
@@ -39,7 +39,7 @@ def sign_in_view(request):
 @require_http_methods(["GET", "POST"])
 def sign_up_view(request):
     if request.user.is_authenticated:
-        return redirect("auth:onboard")
+        return redirect("alerts:list")
 
     if request.method == "POST":
         email = (request.POST.get("email") or "").strip().lower()
@@ -66,7 +66,7 @@ def sign_up_view(request):
                 )
                 login(request, user)
                 messages.success(request, "Account created successfully.")
-                return redirect("auth:onboard")
+                return redirect("alerts:list")
 
     return render(request, "auth/signup.html")
 
@@ -93,19 +93,3 @@ def forgot_password_view(request):
         messages.error(request, "Enter the email associated with your account.")
 
     return render(request, "auth/forgot.html")
-
-
-@login_required
-@require_http_methods(["GET", "POST"])
-def onboard_view(request):
-    if request.method == "POST":
-        first_name = (request.POST.get("first_name") or "").strip()
-        last_name = (request.POST.get("last_name") or "").strip()
-
-        request.user.first_name = first_name
-        request.user.last_name = last_name
-        request.user.save(update_fields=["first_name", "last_name"])
-        messages.success(request, "Profile updated.")
-        return redirect("auth:onboard")
-
-    return render(request, "auth/onboard.html")

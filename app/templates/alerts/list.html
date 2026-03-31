@@ -3,59 +3,82 @@
 {% block title %}Alerts{% endblock %}
 
 {% block page-content %}
-  <section class="panel space-y-8">
-    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+  <section class="space-y-6">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div class="space-y-2">
         <p class="eyebrow">Alerts</p>
-        <h2 class="text-3xl font-semibold tracking-tight text-white">Your active monitoring rules</h2>
-        <p class="max-w-2xl text-sm text-slate-300">Review saved alerts, inspect their latest outcomes, and jump directly into the sandbox when you want to test a new condition.</p>
+        <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Your active monitoring rules</h2>
+        <p class="max-w-3xl text-base leading-8 text-slate-600">Review saved alerts, inspect their latest outcomes, and create new conditions to monitor.</p>
       </div>
-      <div class="flex flex-wrap gap-3">
-        <a class="btn-primary" href="{% url 'alerts:create' %}">Create alert</a>
-        <a class="btn-secondary" href="{% url 'alerts:sandbox' %}">Open sandbox</a>
+      <div class="flex flex-wrap items-center gap-3">
+        <a class="btn-secondary px-4 py-2.5 text-sm font-semibold" href="{% url 'alerts:create' %}">
+          <span class="mr-2 text-base leading-none">+</span>Create alert
+        </a>
       </div>
     </div>
 
     {% if alert_rules %}
-      <ul class="grid gap-4 lg:grid-cols-2">
+      <div class="flex justify-end">
+        <form method="get" action="{% url 'alerts:list' %}">
+          <label class="sr-only" for="sort">Sort alerts</label>
+          <select id="sort" name="sort" class="min-w-[170px] rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700" onchange="this.form.submit()">
+            {% for option in sort_options %}
+              <option value="{{ option.value }}" {% if sort == option.value %}selected{% endif %}>Sort by {{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+      <ul class="space-y-4">
         {% for rule in alert_rules %}
-          <li class="rounded-3xl border border-slate-800 bg-slate-950/60 p-6 transition hover:border-atlas-500/40 hover:bg-slate-950/80">
-            <div class="space-y-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="space-y-2">
-                  <h3 class="text-xl font-semibold text-white">
-                    <a class="hover:text-atlas-100" href="{% url 'alerts:detail' rule.id %}">{{ rule.name }}</a>
-                  </h3>
-                  <p class="text-sm leading-6 text-slate-300">{{ rule.question }}</p>
+          <li>
+            <a class="block rounded-[28px] border border-stone-200 bg-white px-6 py-6 shadow-[0_8px_26px_rgba(50,44,35,0.04)] transition hover:border-stone-300 hover:shadow-[0_12px_30px_rgba(50,44,35,0.06)]" href="{% url 'alerts:detail' rule.id %}">
+              <div class="space-y-5">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="space-y-2">
+                    <h3 class="text-2xl font-semibold tracking-tight text-slate-900">{{ rule.name }}</h3>
+                    <p class="text-sm text-slate-400">Created {{ rule.created_at|date:"F j, Y" }}</p>
+                    <p class="max-w-3xl text-base leading-8 text-slate-600">{{ rule.question }}</p>
+                  </div>
+                  {% if rule.is_enabled %}
+                    <span class="inline-flex items-center rounded-full bg-[#edf5df] px-4 py-2 text-sm font-semibold text-[#648b2f]">
+                      <span class="mr-2 text-base leading-none">•</span>Active
+                    </span>
+                  {% else %}
+                    <span class="inline-flex items-center rounded-full bg-stone-100 px-4 py-2 text-sm font-semibold text-stone-500">
+                      <span class="mr-2 text-base leading-none">•</span>{{ rule.get_status_display }}
+                    </span>
+                  {% endif %}
                 </div>
-                <span class="rounded-full border border-slate-700 px-3 py-1 text-xs font-medium uppercase tracking-wide text-slate-300">{{ rule.get_status_display }}</span>
+                <dl class="grid gap-3 sm:grid-cols-3 lg:max-w-[480px]">
+                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-3">
+                    <dt class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Frequency</dt>
+                    <dd class="mt-2 text-sm font-semibold text-slate-900">{{ rule.get_frequency_display }}</dd>
+                  </div>
+                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-3">
+                    <dt class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Cooldown</dt>
+                    <dd class="mt-2 text-sm font-semibold text-slate-900">{{ rule.cooldown_hours }}h</dd>
+                  </div>
+                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-3">
+                    <dt class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Last sent</dt>
+                    <dd class="mt-2 text-sm font-semibold text-slate-900">
+                      {% if rule.last_notified_at %}
+                        {{ rule.last_notified_at|date:"M j, Y" }}<br>
+                        <span class="font-medium text-slate-500">{{ rule.last_notified_at|date:"g:i A" }}</span>
+                      {% else %}
+                        <span class="italic text-slate-500">not sent</span>
+                      {% endif %}
+                    </dd>
+                  </div>
+                </dl>
               </div>
-              <dl class="grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                  <dt class="text-xs uppercase tracking-wide text-slate-500">Frequency</dt>
-                  <dd class="mt-2 font-medium text-slate-100">{{ rule.get_frequency_display }}</dd>
-                </div>
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                  <dt class="text-xs uppercase tracking-wide text-slate-500">Last result</dt>
-                  <dd class="mt-2 font-medium text-slate-100">
-                    {% if rule.last_result == None %}
-                      unknown
-                    {% elif rule.last_result %}
-                      true
-                    {% else %}
-                      false
-                    {% endif %}
-                  </dd>
-                </div>
-              </dl>
-            </div>
+            </a>
           </li>
         {% endfor %}
       </ul>
     {% else %}
-      <div class="rounded-3xl border border-dashed border-slate-700 bg-slate-950/40 px-6 py-12 text-center">
-        <h3 class="text-xl font-semibold text-white">No alerts yet</h3>
-        <p class="mt-3 text-sm text-slate-400">Create your first alert rule to start tracking market events and operational signals.</p>
+      <div class="rounded-[28px] border border-dashed border-stone-300 bg-white/80 px-6 py-14 text-center">
+        <h3 class="text-2xl font-semibold text-slate-900">No alerts yet</h3>
+        <p class="mt-3 text-base text-slate-500">Create your first alert rule to start tracking market events and operational signals.</p>
       </div>
     {% endif %}
   </section>

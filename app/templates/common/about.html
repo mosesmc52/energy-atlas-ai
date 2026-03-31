@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}About Energy Atlas{% endblock %}
+
+{% block page-content %}
+  <section class="mx-auto max-w-4xl panel space-y-10">
+    <div class="space-y-4">
+      <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-5xl">About Energy Atlas</h1>
+      <p class="max-w-3xl text-lg leading-8 text-slate-300">
+        Energy Atlas is an energy intelligence platform that transforms complex energy data into clear signals, alerts, and forward-looking insights.
+      </p>
+      <p class="max-w-3xl text-base leading-7 text-slate-400">
+        It is designed for analysts, traders, and researchers who want to understand energy markets without manually stitching together data from multiple sources.
+      </p>
+    </div>
+
+    <div class="grid gap-8">
+      <section class="space-y-4">
+        <h2 class="text-2xl font-semibold text-white">The Problem</h2>
+        <p class="leading-7 text-slate-300">
+          Energy data is widely available, but difficult to use.
+        </p>
+        <p class="leading-7 text-slate-300">
+          Answering basic questions like:
+        </p>
+        <ul class="list-disc space-y-2 pl-6 text-slate-300 marker:text-atlas-100">
+          <li>Is the natural gas market tightening?</li>
+          <li>Is demand increasing due to weather?</li>
+          <li>What changed this week?</li>
+        </ul>
+        <p class="leading-7 text-slate-300">
+          often requires:
+        </p>
+        <ul class="list-disc space-y-2 pl-6 text-slate-300 marker:text-atlas-100">
+          <li>pulling data from multiple sources</li>
+          <li>building custom calculations</li>
+          <li>interpreting reports manually</li>
+        </ul>
+        <p class="leading-7 text-slate-300">
+          This process is slow, repetitive, and difficult to scale.
+        </p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-semibold text-white">What Energy Atlas Does</h2>
+        <p class="leading-7 text-slate-300">
+          Energy Atlas simplifies this workflow by turning raw data into structured insight.
+        </p>
+        <p class="leading-7 text-slate-300">
+          Instead of exploring datasets, users can:
+        </p>
+        <ul class="list-disc space-y-2 pl-6 text-slate-300 marker:text-atlas-100">
+          <li>view signals that describe current market conditions</li>
+          <li>receive alerts when important thresholds are reached</li>
+          <li>understand what is likely to happen next through simple forecasts</li>
+          <li>get context explaining why changes are occurring</li>
+        </ul>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-semibold text-white">How It Works</h2>
+        <p class="leading-7 text-slate-300">
+          Energy Atlas organizes information into four layers:
+        </p>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <article class="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-5">
+            <h3 class="text-lg font-semibold text-white">Signals</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-400">
+              Structured indicators that describe what is happening in the market.
+            </p>
+          </article>
+          <article class="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-5">
+            <h3 class="text-lg font-semibold text-white">Alerts</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-400">
+              Automated checks that notify users when specific conditions are met.
+            </p>
+          </article>
+          <article class="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-5">
+            <h3 class="text-lg font-semibold text-white">Forecasts</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-400">
+              Short-term projections based on recent trends and seasonal patterns.
+            </p>
+          </article>
+          <article class="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-5">
+            <h3 class="text-lg font-semibold text-white">Context</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-400">
+              Summaries from energy reports that explain the drivers behind changes.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-semibold text-white">Focus</h2>
+        <p class="leading-7 text-slate-300">
+          Energy Atlas currently focuses on natural gas markets, integrating:
+        </p>
+        <ul class="list-disc space-y-2 pl-6 text-slate-300 marker:text-atlas-100">
+          <li>storage</li>
+          <li>production</li>
+          <li>LNG exports</li>
+          <li>electricity demand</li>
+          <li>weather</li>
+        </ul>
+        <p class="leading-7 text-slate-300">
+          This focus allows the platform to deliver deeper, more reliable insights instead of broad but shallow coverage.
+        </p>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-semibold text-white">Design Philosophy</h2>
+        <p class="leading-7 text-slate-300">
+          Energy Atlas is built around a few key principles:
+        </p>
+        <ul class="list-disc space-y-2 pl-6 text-slate-300 marker:text-atlas-100">
+          <li>prioritize clarity over complexity</li>
+          <li>focus on signals instead of raw data</li>
+          <li>provide explainable outputs</li>
+          <li>deliver timely and actionable insight</li>
+        </ul>
+      </section>
+
+      <section class="space-y-4">
+        <h2 class="text-2xl font-semibold text-white">Vision</h2>
+        <p class="leading-7 text-slate-300">
+          The goal of Energy Atlas is to become the fastest way to understand what is happening in energy markets and what is likely to happen next.
+        </p>
+      </section>
+    </div>
+  </section>
+{% endblock %}
