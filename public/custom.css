@@ -129,12 +129,21 @@ button:hover,
 }
 
 table {
-    background-color: #FAF9F5 !important;
+    background-color: #ffffff !important;
     border-radius: 16px !important;
     overflow: hidden !important;
 }
 
 th,
 td {
-    background-color: #FAF9F5 !important;
+    background-color: #ffffff !important;
+}
+
+.js-plotly-plot,
+.plotly,
+.plot-container,
+.svg-container {
+    border-radius: 20px !important;
+    overflow: hidden !important;
+    background-color: #ffffff !important;
 }

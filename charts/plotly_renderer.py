@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from schemas.chart_spec import AxisSpec, ChartSpec
 from tools.forecasting import ForecastResult
 
-CHART_BG = "#FAF9F5"
+CHART_BG = "#FFFFFF"
 
 
 def _axis_field(
