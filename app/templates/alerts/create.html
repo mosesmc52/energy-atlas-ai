@@ -23,12 +23,12 @@
 
       <div class="field-group">
         <label for="name" class="block text-sm/6 font-medium text-gray-900">Name</label>
-        <input id="name" type="text" name="name" placeholder="e.g. High error rate alert" value="{{ request.POST.name|default:'' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        <input id="name" type="text" name="name" placeholder="e.g. High error rate alert" value="{{ request.POST.name|default:initial_name|default:'' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
       </div>
 
       <div class="field-group">
         <label for="question" class="block text-sm/6 font-medium text-gray-900">Question</label>
-        <textarea id="question" name="question" rows="4" required placeholder="Ask a yes/no question about your data..." class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:'' }}</textarea>
+        <textarea id="question" name="question" rows="4" required placeholder="Ask a yes/no question about your data..." class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:initial_question|default:'' }}</textarea>
         <p class="text-xs leading-5 text-slate-500">
           You can use the same metric questions supported in the assistant, such as "What is the current Henry Hub price?", "Are exports higher than last year?", or "How much gas is currently in storage?" Alerts work best with yes/no condition-style questions.
         </p>

@@ -7,8 +7,8 @@ import os
 import pathlib
 import sys
 import tempfile
+import urllib.parse
 from time import perf_counter
-from typing import Any
 
 cwd = pathlib.Path.cwd()
 if cwd.name == "notebooks":
@@ -26,7 +26,6 @@ import chainlit as cl
 from agents.router import route_query
 from alerts.services import (
     build_signal_evaluator,
-    get_builtin_signal_registry,
     is_builtin_signal_id,
     parse_signal_question,
 )
@@ -52,7 +51,6 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
-DJANGO_READY = False
 
 
 def _display_metric_name(metric: str) -> str:
@@ -60,6 +58,11 @@ def _display_metric_name(metric: str) -> str:
     if "_" in text:
         return text.replace("_", " ").title()
     return text or "Metric"
+
+
+def _alert_create_url(signal_id: str, title: str) -> str:
+    query = urllib.parse.urlencode({"signal_id": signal_id, "title": title})
+    return f"/alerts/new/?{query}"
 
 
 def _forecast_direction_from_result(forecast) -> str:
@@ -151,7 +154,17 @@ def format_response(data: StructuredAnswer | dict) -> str:
             forecast_lines.append(forecast_reasoning)
         sections.append("**Forecast**\n" + "  \n".join(forecast_lines))
 
-    sections.append("**Suggested Alerts**")
+    suggestions = _validated_suggested_alerts(data)
+    if suggestions:
+        sections.append(
+            "**Suggested Alerts**\n"
+            + "\n".join(
+                f"- **[{item['title']}]({_alert_create_url(item['signal_id'], item['title'])})**  \n  {item['reason']}"
+                for item in suggestions
+            )
+        )
+    else:
+        sections.append("**Suggested Alerts**\nNone.")
 
     source_lines = [
         (
@@ -225,61 +238,6 @@ def _format_signal_evaluation(evaluation) -> str:
             source_line = f"{source_line} ({evaluation.as_of})"
         sections.append("**Sources**\n- " + source_line)
     return "\n\n".join(sections)
-
-
-def _ensure_django() -> None:
-    global DJANGO_READY
-    if DJANGO_READY:
-        return
-    project_root = pathlib.Path(__file__).resolve().parents[1]
-    django_app_root = project_root / "app"
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-    if django_app_root.exists() and str(django_app_root) not in sys.path:
-        sys.path.insert(0, str(django_app_root))
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
-    os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
-    from configurations import importer
-    importer.install()
-    import django
-    django.setup()
-    DJANGO_READY = True
-
-
-def _resolve_alert_user():
-    _ensure_django()
-    from django.contrib.auth import get_user_model
-
-    User = get_user_model()
-    preferred_email = os.getenv("ALERT_DEFAULT_USER_EMAIL", "").strip()
-    if preferred_email:
-        return User.objects.filter(email__iexact=preferred_email).first()
-
-    users = User.objects.order_by("id")
-    if users.count() == 1:
-        return users.first()
-    return None
-
-
-def _create_builtin_alert(signal_id: str, title: str) -> tuple[bool, str]:
-    if not is_builtin_signal_id(signal_id):
-        return False, "Unknown signal ID."
-
-    user = _resolve_alert_user()
-    if user is None:
-        return False, "No backend user is available for alert creation."
-
-    from alerts.views import create_builtin_alert_rule
-
-    rule, _, error = create_builtin_alert_rule(
-        user=user,
-        signal_id=signal_id,
-        title=title,
-    )
-    if error or rule is None:
-        return False, error or "Alert creation failed."
-    return True, f"✅ Alert created: {rule.name}"
-
 
 async def _append_question_async(qlog, *, question: str, session_id: str) -> None:
     try:
@@ -522,26 +480,6 @@ async def on_message(message: cl.Message):
             else payload.answer_text
         )
         msg = await cl.Message(content=rendered_content).send()
-        suggestions = _validated_suggested_alerts(payload.structured_response)
-        if not suggestions:
-            none_msg = cl.Message(content="- None.")
-            none_msg.parent_id = msg.id
-            await none_msg.send()
-        for suggestion in suggestions:
-            suggestion_msg = cl.Message(
-                content=f"- **{suggestion['title']}**  \n  {suggestion['reason']}"
-            )
-            suggestion_msg.parent_id = msg.id
-            suggestion_msg = await suggestion_msg.send()
-            await cl.Action(
-                name="create_alert",
-                label=f"Create Alert: {suggestion['title']}",
-                tooltip=suggestion["reason"],
-                payload={
-                    "signal_id": suggestion["signal_id"],
-                    "title": suggestion["title"],
-                },
-            ).send(for_id=suggestion_msg.id)
         message_elapsed_ms = (
             (perf_counter() - message_started) * 1000 if DEBUG_ENABLED else 0.0
         )
@@ -630,17 +568,3 @@ async def on_message(message: cl.Message):
 
         # Keep errors visible during development
         await cl.Message(content=f"Error: {e}").send()
-
-
-@cl.action_callback("create_alert")
-async def create_alert(action: cl.Action):
-    payload = action.payload or {}
-    signal_id = str(payload.get("signal_id") or "").strip()
-    title = str(payload.get("title") or "").strip() or "Suggested alert"
-
-    if not is_builtin_signal_id(signal_id):
-        await cl.Message(content="Warning: unknown signal ID.").send()
-        return
-
-    success, message = await asyncio.to_thread(_create_builtin_alert, signal_id, title)
-    await cl.Message(content=message if success else f"Warning: {message}").send()

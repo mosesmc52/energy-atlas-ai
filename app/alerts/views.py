@@ -189,6 +189,21 @@ def alert_list_view(request):
 @require_http_methods(["GET", "POST"])
 def alert_create_view(request):
     evaluation: dict | None = None
+    initial_name = ""
+    initial_question = ""
+
+    if request.method == "GET":
+        signal_id = str(request.GET.get("signal_id") or "").strip()
+        title = str(request.GET.get("title") or "").strip()
+        if signal_id and is_builtin_signal_id(signal_id):
+            parsed = parsed_signal_from_signal_id(signal_id)
+            if parsed is not None:
+                initial_question = parsed.question
+                initial_name = title or parsed.question[:120]
+        else:
+            initial_name = str(request.GET.get("name") or "").strip()
+            initial_question = str(request.GET.get("question") or "").strip()
+
     if request.method == "POST":
         action = request.POST.get("action", "create")
         payload = request.POST.dict()
@@ -221,6 +236,8 @@ def alert_create_view(request):
         "alerts/create.html",
         {
             "evaluation": evaluation,
+            "initial_name": initial_name,
+            "initial_question": initial_question,
             "frequency_choices": AlertRule._meta.get_field("frequency").choices,
             "trigger_type_choices": AlertRule._meta.get_field("trigger_type").choices,
         },

@@ -148,6 +148,20 @@ td {
     background-color: #ffffff !important;
 }
 
+.prose a,
+.markdown a,
+[data-step-type="assistant_message"] a,
+[class*="message"] a {
+    color: #1B81C4 !important;
+}
+
+.prose a:hover,
+.markdown a:hover,
+[data-step-type="assistant_message"] a:hover,
+[class*="message"] a:hover {
+    color: #166da6 !important;
+}
+
 #energy-atlas-signin-link.energy-atlas-signin-link {
     position: absolute;
     left: 1rem;

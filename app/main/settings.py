@@ -105,6 +105,8 @@ class Base(Configuration):
     STATIC_URL = "static/"
     STATIC_ROOT = os.getenv("DJANGO_STATIC_ROOT", str(BASE_DIR / "staticfiles"))
     STATICFILES_DIRS = [BASE_DIR / "static"]
+    LOGIN_URL = "/auth/signin/"
+    LOGIN_REDIRECT_URL = "/alerts/"
 
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
