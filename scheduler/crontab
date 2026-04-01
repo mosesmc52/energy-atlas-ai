@@ -3,3 +3,4 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m h dom mon dow user command
 0 1 * * * root /app/run.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
+*/15 * * * * root cd /workspace && poetry run python app/manage.py evaluate_due_alert_rules >> /proc/1/fd/1 2>> /proc/1/fd/2
