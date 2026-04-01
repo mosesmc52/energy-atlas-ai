@@ -5,11 +5,16 @@
       <img src="{% static 'img/logo-w-title.png' %}" alt="Energy Atlas" class="h-12 w-auto">
     </a>
 
-    {% if request.user.is_authenticated %}
-      <form method="post" action="{% url 'auth:logout' %}">
-        {% csrf_token %}
-        <button class="btn-secondary px-4 py-2 text-sm font-semibold" type="submit">Log out</button>
-      </form>
-    {% endif %}
+    <div class="flex items-center gap-3">
+      <a href="{% url 'pricing' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">Pricing</a>
+      {% if request.user.is_authenticated %}
+        <form method="post" action="{% url 'auth:logout' %}">
+          {% csrf_token %}
+          <button class="btn-secondary px-4 py-2 text-sm font-semibold" type="submit">Log out</button>
+        </form>
+      {% else %}
+        <a href="{% url 'auth:signin' %}" class="btn-black px-4 py-2 text-sm font-semibold">Sign in</a>
+      {% endif %}
+    </div>
   </div>
 </header>

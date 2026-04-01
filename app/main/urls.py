@@ -32,6 +32,11 @@ urlpatterns = [
         TemplateView.as_view(template_name="common/about.html"),
         name="about",
     ),
+    path(
+        "pricing/",
+        TemplateView.as_view(template_name="common/pricing.html"),
+        name="pricing",
+    ),
     path("auth/", include("auth.urls")),
     path("alerts/", include("alerts.urls")),
 ]
