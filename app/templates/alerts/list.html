@@ -10,15 +10,13 @@
         <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Your active monitoring rules</h2>
         <p class="max-w-3xl text-base leading-8 text-slate-600">Review saved alerts, inspect their latest outcomes, and create new conditions to monitor.</p>
       </div>
-      <div class="flex flex-wrap items-center gap-3">
-        <a class="btn-secondary px-4 py-2.5 text-sm font-semibold" href="{% url 'alerts:create' %}">
-          <span class="mr-2 text-base leading-none">+</span>Create alert
-        </a>
-      </div>
     </div>
 
     {% if alert_rules %}
-      <div class="flex justify-end">
+      <div class="flex w-full max-w-4xl items-center justify-between gap-3">
+        <a class="btn-secondary px-4 py-2.5 text-sm font-semibold" href="{% url 'alerts:create' %}">
+          <span class="mr-2 text-base leading-none">+</span>Create alert
+        </a>
         <form method="get" action="{% url 'alerts:list' %}">
           <label class="sr-only" for="sort">Sort alerts</label>
           <select id="sort" name="sort" class="min-w-[170px] rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700" onchange="this.form.submit()">
@@ -30,7 +28,7 @@
       </div>
       <ul class="space-y-4">
         {% for rule in alert_rules %}
-          <li>
+          <li class="max-w-4xl">
             <a class="block rounded-[28px] border border-stone-200 bg-white px-6 py-6 shadow-[0_8px_26px_rgba(50,44,35,0.04)] transition hover:border-stone-300 hover:shadow-[0_12px_30px_rgba(50,44,35,0.06)]" href="{% url 'alerts:detail' rule.id %}">
               <div class="space-y-5">
                 <div class="flex items-start justify-between gap-4">
@@ -76,6 +74,11 @@
         {% endfor %}
       </ul>
     {% else %}
+      <div class="flex w-full max-w-4xl justify-start">
+        <a class="btn-secondary px-4 py-2.5 text-sm font-semibold" href="{% url 'alerts:create' %}">
+          <span class="mr-2 text-base leading-none">+</span>Create alert
+        </a>
+      </div>
       <div class="rounded-[28px] border border-dashed border-stone-300 bg-white/80 px-6 py-14 text-center">
         <h3 class="text-2xl font-semibold text-slate-900">No alerts yet</h3>
         <p class="mt-3 text-base text-slate-500">Create your first alert rule to start tracking market events and operational signals.</p>
