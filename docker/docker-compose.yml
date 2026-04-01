@@ -41,7 +41,7 @@ services:
       DJANGO_SETTINGS_MODULE: main.settings
       DJANGO_CONFIGURATION: Development
       DJANGO_DEBUG: "true"
-      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,django"
+      DJANGO_ALLOWED_HOSTS: "*"
       DATABASE_URL: "postgres://energy_atlas:energy_atlas@postgres:5432/energy_atlas"
       PYTHONUNBUFFERED: "1"
     ports:

@@ -212,3 +212,6 @@ service-account.json
 docker_volumes/
 **/.terraform
 **/*.sqlite3
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/tfplan
