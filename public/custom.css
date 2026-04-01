@@ -147,3 +147,27 @@ td {
     overflow: hidden !important;
     background-color: #ffffff !important;
 }
+
+#energy-atlas-signin-link.energy-atlas-signin-link {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 20;
+    color: #0f172a;
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+#energy-atlas-signin-link.energy-atlas-signin-link:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+    #energy-atlas-signin-link.energy-atlas-signin-link {
+        left: 0.75rem;
+        font-size: 0.9rem;
+    }
+}
