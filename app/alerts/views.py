@@ -13,7 +13,9 @@ from alerts.models import AlertDeliveryChannel, AlertEvent, AlertRule
 from alerts.services import (
     build_metric_forecaster,
     build_signal_evaluator,
+    is_builtin_signal_id,
     parsed_signal_from_rule,
+    parsed_signal_from_signal_id,
     parse_signal_question,
     should_trigger_alert,
 )
@@ -132,6 +134,31 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
     )
 
     return rule, evaluation.to_dict(), None
+
+
+def create_builtin_alert_rule(
+    *,
+    user,
+    signal_id: str,
+    title: str,
+    delivery_channels: list[str] | None = None,
+) -> tuple[AlertRule | None, dict | None, str | None]:
+    if not is_builtin_signal_id(signal_id):
+        return None, None, "unknown signal_id"
+
+    parsed = parsed_signal_from_signal_id(signal_id)
+    if parsed is None:
+        return None, None, "unknown signal_id"
+
+    payload = {
+        "name": (title or parsed.question[:120]).strip() or parsed.question[:120],
+        "question": parsed.question,
+        "frequency": AlertRule._meta.get_field("frequency").default,
+        "trigger_type": AlertRule._meta.get_field("trigger_type").default,
+        "cooldown_hours": AlertRule._meta.get_field("cooldown_hours").default,
+        "delivery_channels": delivery_channels or [AlertDeliveryChannel.EMAIL],
+    }
+    return _create_rule_and_initial_event(user=user, payload=payload)
 
 
 @login_required

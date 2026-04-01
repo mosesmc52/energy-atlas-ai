@@ -68,6 +68,66 @@ class SignalEvaluation:
         return payload
 
 
+BUILT_IN_SIGNAL_REGISTRY: dict[str, dict[str, Any]] = {
+    "storage_below_five_year_average_pct": {
+        "title": "Storage drops below the 5-year average",
+        "question": "Is storage more than 10% below the 5-year average?",
+        "metric": "working_gas_storage_lower48",
+        "filters": {},
+        "config": {"threshold": -10.0},
+    },
+    "storage_deficit_widening_wow": {
+        "title": "Storage deficit keeps widening",
+        "question": "Is the storage deficit widening week-over-week?",
+        "metric": "working_gas_storage_lower48",
+        "filters": {},
+        "config": {},
+    },
+    "hdd_above_normal_this_week": {
+        "title": "Weather turns colder than normal",
+        "question": "Are HDD above normal this week?",
+        "metric": "weather_hdd_lower_48",
+        "filters": {"region_id": "lower_48"},
+        "config": {},
+    },
+    "supply_constrained_regime": {
+        "title": "Market enters a supply-constrained regime",
+        "question": "Is the market in a supply-constrained regime?",
+        "metric": "market_supply_regime",
+        "filters": {"region_id": "lower_48"},
+        "config": {},
+    },
+    "production_below_30d_average": {
+        "title": "Production slips below trend",
+        "question": "Is production below its 30-day average?",
+        "metric": "ng_production_lower48",
+        "filters": {},
+        "config": {},
+    },
+}
+
+
+def get_builtin_signal_registry() -> dict[str, dict[str, Any]]:
+    return BUILT_IN_SIGNAL_REGISTRY
+
+
+def is_builtin_signal_id(signal_id: str) -> bool:
+    return signal_id in BUILT_IN_SIGNAL_REGISTRY
+
+
+def parsed_signal_from_signal_id(signal_id: str) -> Optional[ParsedSignal]:
+    config = BUILT_IN_SIGNAL_REGISTRY.get(signal_id)
+    if config is None:
+        return None
+    return ParsedSignal(
+        signal_id=signal_id,
+        question=str(config["question"]),
+        metric=str(config["metric"]),
+        filters=dict(config.get("filters") or {}),
+        config=dict(config.get("config") or {}),
+    )
+
+
 def build_signal_evaluator() -> "SignalEvaluator":
     cache_root = pathlib.Path(
         os.getenv(
@@ -112,43 +172,61 @@ def parse_signal_question(question: str) -> Optional[ParsedSignal]:
         normalized,
     )
     if match:
+        parsed = parsed_signal_from_signal_id("storage_below_five_year_average_pct")
+        if parsed is None:
+            return None
         threshold = float(match.group("threshold"))
         return ParsedSignal(
-            signal_id="storage_below_five_year_average_pct",
+            signal_id=parsed.signal_id,
             question=question,
-            metric="working_gas_storage_lower48",
-            config={"threshold": -threshold},
+            metric=parsed.metric,
+            filters=dict(parsed.filters),
+            config={**parsed.config, "threshold": -threshold},
         )
 
     if "storage deficit widening week-over-week" in normalized:
-        return ParsedSignal(
-            signal_id="storage_deficit_widening_wow",
-            question=question,
-            metric="working_gas_storage_lower48",
-        )
+        parsed = parsed_signal_from_signal_id("storage_deficit_widening_wow")
+        if parsed is not None:
+            return ParsedSignal(
+                signal_id=parsed.signal_id,
+                question=question,
+                metric=parsed.metric,
+                filters=dict(parsed.filters),
+                config=dict(parsed.config),
+            )
 
     if "hdd above normal this week" in normalized:
-        return ParsedSignal(
-            signal_id="hdd_above_normal_this_week",
-            question=question,
-            metric="weather_hdd_lower_48",
-            filters={"region_id": "lower_48"},
-        )
+        parsed = parsed_signal_from_signal_id("hdd_above_normal_this_week")
+        if parsed is not None:
+            return ParsedSignal(
+                signal_id=parsed.signal_id,
+                question=question,
+                metric=parsed.metric,
+                filters=dict(parsed.filters),
+                config=dict(parsed.config),
+            )
 
     if "supply-constrained regime" in normalized:
-        return ParsedSignal(
-            signal_id="supply_constrained_regime",
-            question=question,
-            metric="market_supply_regime",
-            filters={"region_id": "lower_48"},
-        )
+        parsed = parsed_signal_from_signal_id("supply_constrained_regime")
+        if parsed is not None:
+            return ParsedSignal(
+                signal_id=parsed.signal_id,
+                question=question,
+                metric=parsed.metric,
+                filters=dict(parsed.filters),
+                config=dict(parsed.config),
+            )
 
     if re.search(r"production .*below .*30[- ]day average", normalized):
-        return ParsedSignal(
-            signal_id="production_below_30d_average",
-            question=question,
-            metric="ng_production_lower48",
-        )
+        parsed = parsed_signal_from_signal_id("production_below_30d_average")
+        if parsed is not None:
+            return ParsedSignal(
+                signal_id=parsed.signal_id,
+                question=question,
+                metric=parsed.metric,
+                filters=dict(parsed.filters),
+                config=dict(parsed.config),
+            )
 
     route = route_query(question)
     if route.intent not in {"unsupported", "ambiguous"} and route.primary_metric:

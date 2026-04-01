@@ -8,6 +8,7 @@ import pathlib
 import sys
 import tempfile
 from time import perf_counter
+from typing import Any
 
 cwd = pathlib.Path.cwd()
 if cwd.name == "notebooks":
@@ -23,7 +24,12 @@ if app_root.exists() and str(app_root) not in sys.path:
 
 import chainlit as cl
 from agents.router import route_query
-from alerts.services import build_signal_evaluator, evaluation_as_json, parse_signal_question
+from alerts.services import (
+    build_signal_evaluator,
+    get_builtin_signal_registry,
+    is_builtin_signal_id,
+    parse_signal_question,
+)
 from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import (
     compute_timeseries_summary_metrics,
@@ -46,6 +52,7 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
+DJANGO_READY = False
 
 
 def _display_metric_name(metric: str) -> str:
@@ -133,18 +140,6 @@ def format_response(data: StructuredAnswer | dict) -> str:
     if drivers_list:
         sections.append("**Drivers**\n" + "\n".join(f"- {driver}" for driver in drivers_list))
 
-    data_point_lines = []
-    for item in data.get("data_points") or []:
-        value = item.get("value")
-        if value is None:
-            continue
-        metric = _display_metric_name(str(item.get("metric") or "Metric"))
-        unit = str(item.get("unit") or "").strip()
-        value_text = f"{value} {unit}".strip()
-        data_point_lines.append(f"- {metric}: **{value_text}**")
-    if data_point_lines:
-        sections.append("**Data Points**\n" + "\n".join(data_point_lines))
-
     forecast = data.get("forecast") or {}
     forecast_direction = str(forecast.get("direction") or "").strip()
     forecast_reasoning = str(forecast.get("reasoning") or "").strip()
@@ -156,13 +151,7 @@ def format_response(data: StructuredAnswer | dict) -> str:
             forecast_lines.append(forecast_reasoning)
         sections.append("**Forecast**\n" + "  \n".join(forecast_lines))
 
-    alert_lines = [
-        f"- {'✅' if alert.get('status') else '❌'} {str(alert.get('name') or '').strip()}"
-        for alert in (data.get("alerts") or [])
-        if str(alert.get("name") or "").strip()
-    ]
-    if alert_lines:
-        sections.append("**Alerts**\n" + "\n".join(alert_lines))
+    sections.append("**Suggested Alerts**")
 
     source_lines = [
         (
@@ -177,6 +166,119 @@ def format_response(data: StructuredAnswer | dict) -> str:
         sections.append("**Sources**\n" + "\n".join(source_lines))
 
     return "\n\n".join(sections)
+
+
+def _validated_suggested_alerts(data: StructuredAnswer | dict | None) -> list[dict[str, str]]:
+    if data is None:
+        return []
+    if hasattr(data, "model_dump"):
+        data = data.model_dump()
+
+    suggestions = []
+    for item in (data.get("suggested_alerts") or []):
+        if not isinstance(item, dict):
+            continue
+        signal_id = str(item.get("signal_id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        priority = str(item.get("priority") or "").strip() or "medium"
+        if not title or not reason or not is_builtin_signal_id(signal_id):
+            continue
+        suggestions.append(
+            {
+                "signal_id": signal_id,
+                "title": title,
+                "reason": reason,
+                "priority": priority,
+            }
+        )
+    return suggestions
+
+
+def _format_signal_evaluation(evaluation) -> str:
+    signal = "⚪ Unknown"
+    if evaluation.result is True:
+        signal = "🟢 Bullish"
+    elif evaluation.result is False:
+        signal = "🔴 Bearish"
+
+    sections = [f"**{signal}**"]
+    if evaluation.explanation:
+        sections.append(f"**Summary**\n{evaluation.explanation}")
+
+    value_lines = []
+    for key, value in (evaluation.values or {}).items():
+        if value in (None, "", {}, []):
+            continue
+        label = key.replace("_", " ").title()
+        value_lines.append(f"- {label}: **{value}**")
+    if value_lines:
+        sections.append("**Drivers**\n" + "\n".join(value_lines))
+
+    sections.append(
+        "**Forecast**\nDirection: flat  \nAlert signal evaluations do not include a forward forecast."
+    )
+    sections.append("**Suggested Alerts**\nNone.")
+    if evaluation.metric or evaluation.as_of:
+        source_line = evaluation.metric or "Built-in signal engine"
+        if evaluation.as_of:
+            source_line = f"{source_line} ({evaluation.as_of})"
+        sections.append("**Sources**\n- " + source_line)
+    return "\n\n".join(sections)
+
+
+def _ensure_django() -> None:
+    global DJANGO_READY
+    if DJANGO_READY:
+        return
+    project_root = pathlib.Path(__file__).resolve().parents[1]
+    django_app_root = project_root / "app"
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    if django_app_root.exists() and str(django_app_root) not in sys.path:
+        sys.path.insert(0, str(django_app_root))
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
+    os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
+    from configurations import importer
+    importer.install()
+    import django
+    django.setup()
+    DJANGO_READY = True
+
+
+def _resolve_alert_user():
+    _ensure_django()
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    preferred_email = os.getenv("ALERT_DEFAULT_USER_EMAIL", "").strip()
+    if preferred_email:
+        return User.objects.filter(email__iexact=preferred_email).first()
+
+    users = User.objects.order_by("id")
+    if users.count() == 1:
+        return users.first()
+    return None
+
+
+def _create_builtin_alert(signal_id: str, title: str) -> tuple[bool, str]:
+    if not is_builtin_signal_id(signal_id):
+        return False, "Unknown signal ID."
+
+    user = _resolve_alert_user()
+    if user is None:
+        return False, "No backend user is available for alert creation."
+
+    from alerts.views import create_builtin_alert_rule
+
+    rule, _, error = create_builtin_alert_rule(
+        user=user,
+        signal_id=signal_id,
+        title=title,
+    )
+    if error or rule is None:
+        return False, error or "Alert creation failed."
+    return True, f"✅ Alert created: {rule.name}"
 
 
 async def _append_question_async(qlog, *, question: str, session_id: str) -> None:
@@ -303,9 +405,7 @@ async def on_message(message: cl.Message):
         and parsed_signal.signal_id != "routed_metric_query"
     ):
         evaluation = signal_evaluator.evaluate(parsed_signal)
-        await cl.Message(
-            content=f"```json\n{evaluation_as_json(evaluation)}\n```"
-        ).send()
+        await cl.Message(content=_format_signal_evaluation(evaluation)).send()
         return
 
     # Best-effort question logging
@@ -422,6 +522,26 @@ async def on_message(message: cl.Message):
             else payload.answer_text
         )
         msg = await cl.Message(content=rendered_content).send()
+        suggestions = _validated_suggested_alerts(payload.structured_response)
+        if not suggestions:
+            none_msg = cl.Message(content="- None.")
+            none_msg.parent_id = msg.id
+            await none_msg.send()
+        for suggestion in suggestions:
+            suggestion_msg = cl.Message(
+                content=f"- **{suggestion['title']}**  \n  {suggestion['reason']}"
+            )
+            suggestion_msg.parent_id = msg.id
+            suggestion_msg = await suggestion_msg.send()
+            await cl.Action(
+                name="create_alert",
+                label=f"Create Alert: {suggestion['title']}",
+                tooltip=suggestion["reason"],
+                payload={
+                    "signal_id": suggestion["signal_id"],
+                    "title": suggestion["title"],
+                },
+            ).send(for_id=suggestion_msg.id)
         message_elapsed_ms = (
             (perf_counter() - message_started) * 1000 if DEBUG_ENABLED else 0.0
         )
@@ -510,3 +630,17 @@ async def on_message(message: cl.Message):
 
         # Keep errors visible during development
         await cl.Message(content=f"Error: {e}").send()
+
+
+@cl.action_callback("create_alert")
+async def create_alert(action: cl.Action):
+    payload = action.payload or {}
+    signal_id = str(payload.get("signal_id") or "").strip()
+    title = str(payload.get("title") or "").strip() or "Suggested alert"
+
+    if not is_builtin_signal_id(signal_id):
+        await cl.Message(content="Warning: unknown signal ID.").send()
+        return
+
+    success, message = await asyncio.to_thread(_create_builtin_alert, signal_id, title)
+    await cl.Message(content=message if success else f"Warning: {message}").send()

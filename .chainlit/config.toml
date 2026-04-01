@@ -173,11 +173,13 @@ default_avatar_file_url = ""
 name = "Sign In"
 url = "/auth/signin/"
 display_name = "Sign In"
+icon_url = "/public/images/icons/noun-energy.svg"
 
 [[UI.header_links]]
 name = "Pricing"
 url = "/pricing/"
 display_name = "Pricing"
+icon_url = "/public/images/icons/noun-energy.svg"
 
 [[UI.header_links]]
 name = "About"

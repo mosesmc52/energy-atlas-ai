@@ -58,6 +58,13 @@ class AnswerSourceSummary(BaseModel):
     date: Optional[str] = None
 
 
+class SuggestedAlert(BaseModel):
+    title: str
+    reason: str
+    signal_id: str
+    priority: str
+
+
 class StructuredAnswer(BaseModel):
     answer: str
     signal: SignalSummary
@@ -65,6 +72,7 @@ class StructuredAnswer(BaseModel):
     drivers: List[str] = Field(default_factory=list)
     data_points: List[AnswerDataPoint] = Field(default_factory=list)
     forecast: AnswerForecast
+    suggested_alerts: List[SuggestedAlert] = Field(default_factory=list)
     alerts: List[AnswerAlert] = Field(default_factory=list)
     sources: List[AnswerSourceSummary] = Field(default_factory=list)
 

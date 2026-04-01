@@ -13,6 +13,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 from answers.chart_policy import chart_policy
+from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
 from openai import OpenAI
 from schemas.answer import (
     AnswerAlert,
@@ -22,6 +23,7 @@ from schemas.answer import (
     AnswerSourceSummary,
     DataPreview,
     SignalSummary,
+    SuggestedAlert,
     StructuredAnswer,
 )
 from scripts.eia.rag.prompt_context import format_report_context
@@ -39,10 +41,13 @@ SYSTEM_INSTRUCTIONS = (
     "If Report Context conflicts with Structured Facts, prefer Structured Facts.\n"
     "Do not invent report content that is not present in the retrieved chunks.\n"
     "Cite report titles and dates in the prose when useful.\n"
-    "Required keys: answer, signal, summary, drivers, data_points, forecast, alerts, sources.\n"
+    "Required keys: answer, signal, summary, drivers, data_points, forecast, suggested_alerts, alerts, sources.\n"
     "signal.status must be bullish, bearish, or neutral.\n"
     "signal.confidence must be a float between 0 and 1.\n"
-    "drivers, data_points, alerts, and sources must be arrays.\n"
+    "drivers, data_points, suggested_alerts, alerts, and sources must be arrays.\n"
+    "Suggested alerts must only be included when monitoring would help a future decision.\n"
+    "Suggested alerts must contain title, reason, signal_id, and priority.\n"
+    "Return 1 to 3 suggested alerts at most, or an empty array if no alert is useful.\n"
     "Keep summary concise and scannable."
 )
 
@@ -283,20 +288,66 @@ def _coerce_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+    elif isinstance(value, list):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        text = " ".join(parts)
+    else:
+        text = str(value).strip()
+
+    lowered = text.lower()
+    if lowered.startswith("summary:"):
+        text = text[len("summary:") :].strip()
+    return text
+
+
+def _suggested_alert_catalog_text() -> str:
+    registry = get_builtin_signal_registry()
+    lines = []
+    for signal_id, config in registry.items():
+        lines.append(
+            f"- {signal_id}: {config['title']} | question: {config['question']}"
+        )
+    return "\n".join(lines)
+
+
 def _normalize_structured_response(payload: dict[str, Any]) -> StructuredAnswer:
     signal = payload.get("signal") or {}
     forecast = payload.get("forecast") or {}
+    suggested_alerts = []
+    for item in (payload.get("suggested_alerts") or []):
+        if not isinstance(item, dict):
+            continue
+        signal_id = str(item.get("signal_id") or "").strip()
+        if not is_builtin_signal_id(signal_id):
+            continue
+        title = _coerce_text(item.get("title"))
+        reason = _coerce_text(item.get("reason"))
+        if not title or not reason:
+            continue
+        suggested_alerts.append(
+            SuggestedAlert(
+                title=title,
+                reason=reason,
+                signal_id=signal_id,
+                priority=str(item.get("priority") or "medium").strip() or "medium",
+            )
+        )
     return StructuredAnswer(
-        answer=str(payload.get("answer") or "").strip(),
+        answer=_coerce_text(payload.get("answer")),
         signal=SignalSummary(
             status=str(signal.get("status") or "neutral").lower(),
             confidence=max(0.0, min(1.0, float(signal.get("confidence") or 0.5))),
         ),
-        summary=str(payload.get("summary") or "").strip(),
+        summary=_coerce_text(payload.get("summary")),
         drivers=[
-            str(driver).strip()
+            _coerce_text(driver)
             for driver in (payload.get("drivers") or [])
-            if str(driver).strip()
+            if _coerce_text(driver)
         ],
         data_points=[
             AnswerDataPoint(
@@ -311,6 +362,7 @@ def _normalize_structured_response(payload: dict[str, Any]) -> StructuredAnswer:
             direction=str(forecast.get("direction") or "flat").strip(),
             reasoning=str(forecast.get("reasoning") or "").strip(),
         ),
+        suggested_alerts=suggested_alerts,
         alerts=[
             AnswerAlert(
                 name=str(item.get("name") or "").strip(),
@@ -358,6 +410,7 @@ def _build_structured_answer(
                 direction="flat",
                 reasoning="Forecast unavailable because no observations were returned.",
             ),
+            suggested_alerts=[],
             alerts=[AnswerAlert(name="No Data Returned", status=True)],
             sources=[AnswerSourceSummary(title=source_label, date=source_date)],
         )
@@ -400,6 +453,7 @@ def _build_structured_answer(
                 else "Near-term direction is flat because only one observation was available."
             ),
         ),
+        suggested_alerts=[],
         alerts=alerts,
         sources=[AnswerSourceSummary(title=source_label, date=source_date)],
     )
@@ -494,6 +548,7 @@ def _deterministic_sector_structured_answer(
                 direction="flat",
                 reasoning="Forecast unavailable because no observations were returned.",
             ),
+            suggested_alerts=[],
             alerts=[AnswerAlert(name="No Data Returned", status=True)],
             sources=[AnswerSourceSummary(title=source_label, date=source_date)],
         )
@@ -525,6 +580,7 @@ def _deterministic_sector_structured_answer(
             direction="flat",
             reasoning="This response ranks sectors using the latest observation and does not infer a directional forecast.",
         ),
+        suggested_alerts=[],
         alerts=[AnswerAlert(name=f"{leader_label.capitalize()} Sector Leads Consumption", status=True)],
         sources=[AnswerSourceSummary(title=source_label, date=source_date)],
     )
@@ -667,10 +723,15 @@ def build_answer_with_openai(
             f"Metric: {metric}\n\n"
             f"Structured Facts:\n{json.dumps(facts, ensure_ascii=False)}\n\n"
             f"{report_context_block}\n\n"
+            f"Valid built-in alert signal IDs:\n{_suggested_alert_catalog_text()}\n\n"
             "Instructions:\n"
             "- Use Structured Facts as the source of truth for current numbers.\n"
             "- Use Report Context only for narrative explanation and background.\n"
             "- If report context is missing, answer from Structured Facts only.\n"
+            "- Suggest 1 to 3 alerts only if future monitoring would help with a decision.\n"
+            "- Good alert themes include storage, production, HDD/weather, and supply-demand tightening.\n"
+            "- Use only the listed built-in signal IDs for suggested_alerts.\n"
+            "- If no useful built-in alert applies, return suggested_alerts as an empty array.\n"
         )
 
         resp = client.responses.create(
