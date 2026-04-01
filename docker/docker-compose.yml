@@ -52,6 +52,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # scheduler:
+  #   build:
+  #     context: ..
+  #     dockerfile: docker/Dockerfile.scheduler
+  #   env_file:
+  #     - ../.env
+  #   working_dir: /workspace
+  #   environment:
+  #     DJANGO_SETTINGS_MODULE: main.settings
+  #     DJANGO_CONFIGURATION: Development
+  #     DJANGO_DEBUG: "true"
+  #     DJANGO_ALLOWED_HOSTS: "*"
+  #     DATABASE_URL: "postgres://energy_atlas:energy_atlas@postgres:5432/energy_atlas"
+  #     PYTHONUNBUFFERED: "1"
+  #   volumes:
+  #     - ..:/workspace
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
   chainlit:
     build:
       context: ..
