@@ -220,33 +220,51 @@ def read_table(
 
     start_col = min(start_col, data_col)
 
-    end_col = detect_last_col_from_header(
-        ws,
-        header_row=header_row,
-        start_col=start_col,
-        max_consecutive_blanks=header_blank_run,
-    )
-    last_row = detect_last_row_from_data(
-        ws,
-        start_row=data_row,
-        start_col=start_col,
-        end_col=end_col,
-        max_consecutive_blank_rows=row_blank_run,
+    max_col = min(max(ws.max_column, start_col), 5000)
+    row_iter = ws.iter_rows(
+        min_row=header_row,
+        max_row=ws.max_row,
+        min_col=start_col,
+        max_col=max_col,
+        values_only=True,
     )
 
-    headers = [
-        ws.cell(row=header_row, column=c).value for c in range(start_col, end_col + 1)
-    ]
+    try:
+        header_values = next(row_iter)
+    except StopIteration:
+        return pd.DataFrame()
+
+    last_nonblank_idx = 0
+    blanks = 0
+    for idx, value in enumerate(header_values):
+        if _is_blank(value):
+            blanks += 1
+            if blanks >= header_blank_run:
+                break
+        else:
+            last_nonblank_idx = idx
+            blanks = 0
+
+    headers = [header_values[idx] for idx in range(last_nonblank_idx + 1)]
     headers = [("" if h is None else str(h).strip()) for h in headers]
     headers = _dedupe_headers(headers)
 
-    if last_row < data_row:
-        return pd.DataFrame(columns=headers)
+    rows = []
+    blank_rows = 0
+    first_data_offset = data_row - header_row - 1
+    for offset, row in enumerate(row_iter):
+        if offset < first_data_offset:
+            continue
 
-    rows = [
-        [ws.cell(row=r, column=c).value for c in range(start_col, end_col + 1)]
-        for r in range(data_row, last_row + 1)
-    ]
+        row_values = list(row[: last_nonblank_idx + 1])
+        if any(not _is_blank(value) for value in row_values):
+            rows.append(row_values)
+            blank_rows = 0
+        else:
+            rows.append(row_values)
+            blank_rows += 1
+            if blank_rows >= row_blank_run:
+                break
 
     df = pd.DataFrame(rows, columns=headers).dropna(how="all")
     df.columns = [re.sub(r"\s+", " ", str(c)).strip() for c in df.columns]
