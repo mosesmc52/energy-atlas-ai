@@ -36,6 +36,7 @@ METRICS: Final[tuple[str, ...]] = (
     "ng_electricity",
     "ng_production_lower48",
     "ng_exploration_reserves_lower48",
+    "ng_pipeline",
 )
 
 ISO_FILTERS: Final[tuple[str, ...]] = (
@@ -178,6 +179,18 @@ RESOURCE_CATEGORY_FILTERS: Final[tuple[str, ...]] = (
     "expected_future_gas_production",
 )
 
+DATASET_FILTERS: Final[tuple[str, ...]] = (
+    "historical_projects",
+    "inflow_by_region",
+    "inflow_by_state",
+    "inflow_single_year",
+    "major_pipeline_summary",
+    "natural_gas_pipeline_projects",
+    "outflow_by_region",
+    "outflow_by_state",
+    "pipeline_state2_state_capacity",
+)
+
 METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
     "iso_gas_dependency": "ISO electricity generation share from natural gas.",
     "iso_renewables": "ISO renewable electricity generation or renewable share.",
@@ -193,6 +206,7 @@ METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
     "ng_electricity": "Natural gas consumed by electric power sector.",
     "ng_production_lower48": "Dry natural gas production/supply; supports allowed state filters and united_states_total.",
     "ng_exploration_reserves_lower48": "Natural gas exploration/proved reserves; supports allowed state and resource_category filters.",
+    "ng_pipeline": "Parquet-backed natural gas pipeline datasets such as projects, inflow/outflow by region or state, major pipeline summary, and state-to-state capacity; supports dataset filter.",
 }
 
 _ALLOWED_INTENTS = set(INTENTS)
@@ -248,8 +262,14 @@ def _build_route_schema() -> Dict[str, Any]:
                                     {"type": "null"},
                                 ]
                             },
+                            "dataset": {
+                                "anyOf": [
+                                    {"type": "string", "enum": list(DATASET_FILTERS)},
+                                    {"type": "null"},
+                                ]
+                            },
                         },
-                        "required": ["iso", "region", "resource_category"],
+                        "required": ["iso", "region", "resource_category", "dataset"],
                     },
                     {"type": "null"},
                 ]
@@ -292,6 +312,8 @@ def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
         + ", ".join(REGION_FILTERS)
         + "\nAllowed filter.resource_category values: "
         + ", ".join(RESOURCE_CATEGORY_FILTERS)
+        + "\nAllowed filter.dataset values: "
+        + ", ".join(DATASET_FILTERS)
     )
 
     user_prompt = (
@@ -374,6 +396,7 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
     iso = filters.get("iso")
     region = filters.get("region")
     resource_category = filters.get("resource_category")
+    dataset = filters.get("dataset")
     if isinstance(iso, str) and iso in _ALLOWED_ISOS:
         out["iso"] = iso
     if isinstance(region, str) and region in _ALLOWED_REGIONS:
@@ -383,6 +406,8 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
         and resource_category in RESOURCE_CATEGORY_FILTERS
     ):
         out["resource_category"] = resource_category
+    if isinstance(dataset, str) and dataset in DATASET_FILTERS:
+        out["dataset"] = dataset
     return out or None
 
 

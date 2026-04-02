@@ -318,6 +318,58 @@ RESERVES_RESOURCE_CATEGORY_KEYWORDS = {
     ],
 }
 
+PIPELINE_DATASET_KEYWORDS = {
+    "historical_projects": [
+        "historical projects",
+        "historical pipeline projects",
+        "pipeline project history",
+    ],
+    "inflow_by_region": [
+        "inflow by region",
+        "regional inflow",
+        "inflows by region",
+        "region inflow",
+    ],
+    "inflow_by_state": [
+        "inflow by state",
+        "state inflow",
+        "inflows by state",
+    ],
+    "inflow_single_year": [
+        "inflow single year",
+        "single year inflow",
+    ],
+    "major_pipeline_summary": [
+        "major pipeline summary",
+        "major pipelines",
+        "pipeline summary",
+    ],
+    "natural_gas_pipeline_projects": [
+        "pipeline projects",
+        "natural gas pipeline projects",
+        "project list",
+        "pipeline project",
+    ],
+    "outflow_by_region": [
+        "outflow by region",
+        "regional outflow",
+        "outflows by region",
+        "region outflow",
+    ],
+    "outflow_by_state": [
+        "outflow by state",
+        "state outflow",
+        "outflows by state",
+    ],
+    "pipeline_state2_state_capacity": [
+        "state to state capacity",
+        "state2state capacity",
+        "pipeline capacity",
+        "capacity by state pair",
+        "interstate capacity",
+    ],
+}
+
 ROUTE_MAP = {
     "iso_gas_dependency": [
         "gas share",
@@ -426,6 +478,19 @@ ROUTE_MAP = {
         "reserves",
         "proved reserves",
     ],
+    "ng_pipeline": [
+        "pipeline projects",
+        "pipeline project",
+        "pipeline capacity",
+        "state to state capacity",
+        "major pipeline",
+        "pipeline summary",
+        "inflow by region",
+        "inflow by state",
+        "outflow by region",
+        "outflow by state",
+        "historical projects",
+    ],
 }
 
 ALLOWED_METRICS = set(ROUTE_MAP.keys())
@@ -440,6 +505,7 @@ ALLOWED_RESERVES_STATES = set(RESERVES_STATE_KEYWORDS.keys())
 ALLOWED_RESERVES_RESOURCE_CATEGORIES = set(
     RESERVES_RESOURCE_CATEGORY_KEYWORDS.keys()
 )
+ALLOWED_PIPELINE_DATASETS = set(PIPELINE_DATASET_KEYWORDS.keys())
 
 # ----------------------------
 # Normalization
@@ -480,6 +546,7 @@ BONUS_TERMS: Dict[str, List[str]] = {
     "ng_electricity": ["power plants", "electricity", "power generation"],
     "ng_production_lower48": ["production", "output", "supply"],
     "ng_exploration_reserves_lower48": ["reserves", "exploration"],
+    "ng_pipeline": ["pipeline", "capacity", "projects", "inflow", "outflow"],
     "iso_load": ["load", "demand", "system demand"],
     "iso_gas_dependency": ["gas share", "gas-fired", "gas-fired generation"],
     "iso_renewables": ["renewables", "wind", "solar"],
@@ -663,6 +730,14 @@ def route_reserves_resource_category(q: str) -> str | None:
     return None
 
 
+def route_pipeline_dataset(q: str) -> str | None:
+    q = q.lower()
+    for dataset, keys in PIPELINE_DATASET_KEYWORDS.items():
+        if contains_any(keys, q):
+            return dataset
+    return None
+
+
 def detect_intent(q: str) -> str:
     if any(re.search(p, q) for p in COMPARE_PATTERNS):
         return "compare"
@@ -711,6 +786,23 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
     if metric == "ng_electricity" and "share" in q:
         score -= 0.75
     if metric == "iso_fuel_mix" and "consumption" in q:
+        score -= 1.0
+    if metric == "lng_exports" and any(
+        term in q
+        for term in (
+            "pipeline projects",
+            "pipeline capacity",
+            "state to state capacity",
+            "inflow",
+            "outflow",
+            "major pipeline",
+        )
+    ):
+        score -= 1.25
+    if metric == "lng_imports" and any(
+        term in q
+        for term in ("pipeline capacity", "inflow", "outflow", "major pipeline")
+    ):
         score -= 1.0
 
     return RouteCandidate(
@@ -780,6 +872,12 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
         category = route_reserves_resource_category(q)
         if category:
             filters["resource_category"] = category
+    elif metric == "ng_pipeline":
+        dataset = route_pipeline_dataset(q)
+        if dataset:
+            filters["dataset"] = dataset
+        elif confidence >= 0.85:
+            filters["dataset"] = "natural_gas_pipeline_projects"
 
     return filters or None
 
@@ -894,6 +992,12 @@ def validate_llm_route(
             filters.pop("resource_category", None)
         elif resource_category not in ALLOWED_RESERVES_RESOURCE_CATEGORIES:
             filters.pop("resource_category", None)
+    if "dataset" in filters:
+        dataset = filters["dataset"]
+        if primary_metric != "ng_pipeline":
+            filters.pop("dataset", None)
+        elif dataset not in ALLOWED_PIPELINE_DATASETS:
+            filters.pop("dataset", None)
 
     if llm.intent not in {
         "single_metric",

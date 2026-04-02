@@ -117,6 +117,27 @@ class TestMetricExecutor(unittest.TestCase):
             resource_category="proved_ngl",
         )
 
+    def test_pipeline_passes_dataset_filter_to_eia_adapter(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        eia.ng_pipeline.return_value = Mock(df=None, source=None, meta={})
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        executor.execute(
+            ExecuteRequest(
+                metric="ng_pipeline",
+                start="2024-01-01",
+                end="2024-12-31",
+                filters={"dataset": "pipeline_state2_state_capacity"},
+            )
+        )
+
+        eia.ng_pipeline.assert_called_once_with(
+            start="2024-01-01",
+            end="2024-12-31",
+            dataset="pipeline_state2_state_capacity",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

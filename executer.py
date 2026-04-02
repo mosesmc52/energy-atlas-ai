@@ -46,6 +46,7 @@ class MetricExecutor:
             "ng_consumption_by_sector": self._eia_ng_consumption_by_sector,
             "ng_production_lower48": self._eia_ng_production_lower48,
             "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
+            "ng_pipeline": self._eia_ng_pipeline,
             # --- GridStatus (v1) ---
             "iso_fuel_mix": self._grid_iso_fuel_mix,
             "iso_load": self._grid_iso_load,
@@ -168,6 +169,12 @@ class MetricExecutor:
             state=state,
             resource_category=resource_category,
         )
+
+    def _eia_ng_pipeline(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        dataset = str(filters.get("dataset") or "natural_gas_pipeline_projects")
+        return self.eia.ng_pipeline(start=start, end=end, dataset=dataset)
 
     # -----------------------
     # Metric handlers (GridStatus v1)

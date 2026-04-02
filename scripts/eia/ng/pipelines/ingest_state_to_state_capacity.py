@@ -340,7 +340,7 @@ def main():
     parser.add_argument(
         "--output-format",
         choices=["csv", "parquet"],
-        default="csv",
+        default="parquet",
         help="Output file format.",
     )
     args = parser.parse_args()

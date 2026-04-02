@@ -93,6 +93,22 @@ class TestRouter(unittest.TestCase):
         self.assertTrue(result.include_forecast)
         self.assertEqual(result.forecast_horizon_days, 14)
 
+    def test_pipeline_capacity_query_routes_pipeline_dataset(self) -> None:
+        result = route_query("Show pipeline state to state capacity in the Northeast")
+        self.assertEqual(result.primary_metric, "ng_pipeline")
+        self.assertEqual(
+            result.filters,
+            {"dataset": "pipeline_state2_state_capacity"},
+        )
+
+    def test_pipeline_projects_query_routes_project_dataset(self) -> None:
+        result = route_query("What natural gas pipeline projects are in the data?")
+        self.assertEqual(result.primary_metric, "ng_pipeline")
+        self.assertEqual(
+            result.filters,
+            {"dataset": "natural_gas_pipeline_projects"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

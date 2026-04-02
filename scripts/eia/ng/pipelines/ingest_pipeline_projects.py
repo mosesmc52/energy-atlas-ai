@@ -330,7 +330,7 @@ def main():
     p.add_argument(
         "--output-format",
         choices=["csv", "parquet"],
-        default="csv",
+        default="parquet",
         help="Output file format",
     )
     p.add_argument("--raw-dir", default="data/raw/eia/ng/pipeline")
