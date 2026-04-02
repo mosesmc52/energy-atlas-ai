@@ -1,6 +1,8 @@
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+BASH_ENV=/etc/environment
 
 # m h dom mon dow user command
+*/5 * * * * root cd /workspace && python app/manage.py cron_healthcheck >> /proc/1/fd/1 2>> /proc/1/fd/2
 0 1 * * * root cd /workspace && /workspace/scheduler/run.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
-*/15 * * * * root cd /workspace && poetry run python app/manage.py evaluate_due_alert_rules >> /proc/1/fd/1 2>> /proc/1/fd/2
+*/15 * * * * root cd /workspace && python app/manage.py evaluate_due_alert_rules >> /proc/1/fd/1 2>> /proc/1/fd/2

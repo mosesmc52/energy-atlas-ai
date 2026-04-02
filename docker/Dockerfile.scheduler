@@ -21,4 +21,4 @@ RUN poetry lock --no-update --no-interaction --no-ansi \
 
 COPY . .
 
-CMD ["sh", "-c", "chmod +x /workspace/scheduler/run.sh && cp /workspace/scheduler/crontab /etc/cron.d/energy-atlas && chmod 0644 /etc/cron.d/energy-atlas && cron -f"]
+CMD ["sh", "-c", "chmod +x /workspace/scheduler/run.sh && printenv > /etc/environment && cp /workspace/scheduler/crontab /etc/cron.d/energy-atlas && chmod 0644 /etc/cron.d/energy-atlas && cron -f"]
