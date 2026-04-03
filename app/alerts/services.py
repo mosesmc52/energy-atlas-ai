@@ -18,6 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agents.router import route_query
 from executer import ExecuteRequest, MetricExecutor
+from tools.cftc_adapter import CFTCAdapter
+from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
@@ -141,7 +143,17 @@ def build_signal_evaluator() -> "SignalEvaluator":
         weather_csv_path=weather_csv_path,
     )
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
+    des_adapter = DallasEnergySurveyAdapter(
+        raw_dir=cache_root / "des" / "raw",
+        processed_dir=cache_root / "des" / "processed",
+    )
+    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
+    executor = MetricExecutor(
+        eia=eia_adapter,
+        grid=grid_adapter,
+        des=des_adapter,
+        cftc=cftc_adapter,
+    )
     return SignalEvaluator(executor=executor, eia=eia_adapter)
 
 
@@ -158,7 +170,17 @@ def build_metric_forecaster() -> TrendForecaster:
         weather_csv_path=weather_csv_path,
     )
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
+    des_adapter = DallasEnergySurveyAdapter(
+        raw_dir=cache_root / "des" / "raw",
+        processed_dir=cache_root / "des" / "processed",
+    )
+    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
+    executor = MetricExecutor(
+        eia=eia_adapter,
+        grid=grid_adapter,
+        des=des_adapter,
+        cftc=cftc_adapter,
+    )
     return TrendForecaster(executor=executor)
 
 

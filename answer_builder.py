@@ -65,6 +65,36 @@ METRIC_UNITS = {
     "ng_consumption_lower48": "MMcf",
     "ng_consumption_by_sector": "MMcf",
     "ng_production_lower48": "MMcf",
+    "des_business_activity_index": "index",
+    "des_company_outlook_index": "index",
+    "des_outlook_uncertainty_index": "index",
+    "des_oil_production_index": "index",
+    "des_gas_production_index": "index",
+    "des_capex_index": "index",
+    "des_employment_index": "index",
+    "des_input_cost_index": "index",
+    "des_finding_development_costs_index": "index",
+    "des_lease_operating_expense_index": "index",
+    "des_prices_received_services_index": "index",
+    "des_equipment_utilization_index": "index",
+    "des_operating_margin_index": "index",
+    "des_wti_price_expectation_6m": "$/bbl",
+    "des_wti_price_expectation_1y": "$/bbl",
+    "des_wti_price_expectation_2y": "$/bbl",
+    "des_wti_price_expectation_5y": "$/bbl",
+    "des_hh_price_expectation_6m": "$/MMBtu",
+    "des_hh_price_expectation_1y": "$/MMBtu",
+    "des_hh_price_expectation_2y": "$/MMBtu",
+    "des_hh_price_expectation_5y": "$/MMBtu",
+    "des_breakeven_oil_us": "$/bbl",
+    "des_breakeven_gas_us": "$/MMBtu",
+    "des_breakeven_oil_permian": "$/bbl",
+    "des_breakeven_oil_eagle_ford": "$/bbl",
+    "managed_money_long": "contracts",
+    "managed_money_short": "contracts",
+    "managed_money_net": "contracts",
+    "managed_money_net_percentile_156w": "percentile",
+    "open_interest": "contracts",
 }
 
 SECTOR_LABELS = {
@@ -243,6 +273,14 @@ def _format_number(value: Optional[float]) -> str:
     if abs_value >= 10:
         return f"{value:,.1f}"
     return f"{value:,.2f}"
+
+
+def _is_text_metric(metric: str, df: pd.DataFrame) -> bool:
+    if metric.endswith("_text"):
+        return True
+    if "value" not in df.columns:
+        return False
+    return not pd.api.types.is_numeric_dtype(df["value"])
 
 
 def _format_delta(delta: Optional[float], unit: Optional[str]) -> Optional[str]:
@@ -459,6 +497,54 @@ def _build_structured_answer(
     )
 
 
+def _build_text_structured_answer(
+    *,
+    metric: str,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    if df is None or df.empty:
+        return StructuredAnswer(
+            answer="No report text was returned for the requested period.",
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No report text was returned for the requested period.",
+            drivers=["The DES qualitative dataset returned no records."],
+            data_points=[],
+            forecast=AnswerForecast(direction="flat", reasoning="Text metrics do not provide a numeric forecast."),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No DES Text Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    ordered = df.copy()
+    if "date" in ordered.columns:
+        ordered = ordered.sort_values("date")
+    latest = ordered.iloc[-1]
+    latest_date = pd.to_datetime(latest.get("date"), errors="coerce")
+    latest_text = _coerce_text(latest.get("value"))
+    snippet = latest_text[:280].strip()
+    if len(latest_text) > 280:
+        snippet = snippet + "..."
+    metric_label = _titleize_metric(metric)
+    date_label = latest_date.date().isoformat() if not pd.isna(latest_date) else source_date
+    answer = f"{metric_label} for {date_label}: {snippet}" if snippet else f"No text content was available for {metric_label.lower()}."
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status="neutral", confidence=0.74),
+        summary=answer,
+        drivers=[
+            f"Latest DES text record was captured for {date_label}." if date_label else "Latest DES text record was captured.",
+            "Raw source text is preserved for downstream summarization.",
+        ],
+        data_points=[AnswerDataPoint(metric=metric_label, value=snippet, unit="text")] if snippet else [],
+        forecast=AnswerForecast(direction="flat", reasoning="Text metrics are descriptive and do not imply a numeric forecast."),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
 def _extract_json_object(text: str) -> Optional[dict[str, Any]]:
     candidate = (text or "").strip()
     if not candidate:
@@ -655,6 +741,33 @@ def build_answer_with_openai(
             report_context_sources=[],
             data_preview=_make_preview(df),
             chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
+    if df is not None and not df.empty and _is_text_metric(metric, df):
+        if "date" in df.columns:
+            df = df.sort_values("date").reset_index(drop=True)
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=_build_text_structured_answer(
+                metric=metric,
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ).answer,
+            structured_response=_build_text_structured_answer(
+                metric=metric,
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="des_text_metric",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=None,
             sources=[src],
         )
         return payload

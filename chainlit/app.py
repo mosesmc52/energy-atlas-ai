@@ -39,6 +39,8 @@ from charts.plotly_renderer import (
 )
 from executer import ExecuteRequest, MetricExecutor
 from schemas.answer import StructuredAnswer
+from tools.cftc_adapter import CFTCAdapter
+from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
@@ -163,8 +165,6 @@ def format_response(data: StructuredAnswer | dict) -> str:
                 for item in suggestions
             )
         )
-    else:
-        sections.append("**Suggested Alerts**\nNone.")
 
     source_lines = [
         (
@@ -231,7 +231,6 @@ def _format_signal_evaluation(evaluation) -> str:
     sections.append(
         "**Forecast**\nDirection: flat  \nAlert signal evaluations do not include a forward forecast."
     )
-    sections.append("**Suggested Alerts**\nNone.")
     if evaluation.metric or evaluation.as_of:
         source_line = evaluation.metric or "Built-in signal engine"
         if evaluation.as_of:
@@ -265,7 +264,17 @@ def build_container():
     )
     eia_adapter = EIAAdapter(cache_dir=cache_root / "eia")
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
+    des_adapter = DallasEnergySurveyAdapter(
+        raw_dir=cache_root / "des" / "raw",
+        processed_dir=cache_root / "des" / "processed",
+    )
+    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
+    executor = MetricExecutor(
+        eia=eia_adapter,
+        grid=grid_adapter,
+        des=des_adapter,
+        cftc=cftc_adapter,
+    )
     signal_evaluator = build_signal_evaluator()
     forecaster = TrendForecaster(executor=executor)
 

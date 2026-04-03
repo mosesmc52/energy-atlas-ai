@@ -89,10 +89,34 @@ METRIC_TITLES = {
     "iso_gas_dependency": "ISO Gas Dependency",
     "iso_renewables": "ISO Renewables (Wind + Solar)",
     "iso_fuel_mix": "ISO Fuel Mix",
+    "des_business_activity_index": "Dallas Fed Business Activity Index",
+    "des_company_outlook_index": "Dallas Fed Company Outlook Index",
+    "des_outlook_uncertainty_index": "Dallas Fed Outlook Uncertainty Index",
+    "des_oil_production_index": "Dallas Fed Oil Production Index",
+    "des_gas_production_index": "Dallas Fed Gas Production Index",
+    "des_capex_index": "Dallas Fed Capital Expenditures Index",
+    "des_wti_price_expectation_1y": "Dallas Fed WTI Price Expectations",
+    "des_hh_price_expectation_1y": "Dallas Fed Henry Hub Price Expectations",
+    "des_breakeven_oil_us": "Dallas Fed Break-even Oil Price",
+    "des_breakeven_gas_us": "Dallas Fed Break-even Gas Price",
+    "managed_money_long": "CFTC Managed Money Long",
+    "managed_money_short": "CFTC Managed Money Short",
+    "managed_money_net": "CFTC Managed Money Net",
+    "managed_money_net_percentile_156w": "CFTC Managed Money Net Percentile",
+    "open_interest": "CFTC Open Interest",
 }
 
 METRIC_Y_LABELS = {
     "henry_hub_spot": "$/MMBtu",
+    "des_wti_price_expectation_1y": "$/bbl",
+    "des_hh_price_expectation_1y": "$/MMBtu",
+    "des_breakeven_oil_us": "$/bbl",
+    "des_breakeven_gas_us": "$/MMBtu",
+    "managed_money_long": "Contracts",
+    "managed_money_short": "Contracts",
+    "managed_money_net": "Contracts",
+    "managed_money_net_percentile_156w": "Percentile",
+    "open_interest": "Contracts",
 }
 
 
@@ -173,6 +197,21 @@ def _default_y(metric: str, df) -> list[str]:
         "iso_load": ["value"],
         "iso_gas_dependency": ["gas_share", "gas_generation"],
         "iso_renewables": ["renewable_generation"],
+        "des_business_activity_index": ["value"],
+        "des_company_outlook_index": ["value"],
+        "des_outlook_uncertainty_index": ["value"],
+        "des_oil_production_index": ["value"],
+        "des_gas_production_index": ["value"],
+        "des_capex_index": ["value"],
+        "des_wti_price_expectation_1y": ["value"],
+        "des_hh_price_expectation_1y": ["value"],
+        "des_breakeven_oil_us": ["value"],
+        "des_breakeven_gas_us": ["value"],
+        "managed_money_long": ["value"],
+        "managed_money_short": ["value"],
+        "managed_money_net": ["value"],
+        "managed_money_net_percentile_156w": ["value"],
+        "open_interest": ["value"],
     }
     preferred = defaults.get(metric, ["value"])
     y = [c for c in preferred if c in df.columns]

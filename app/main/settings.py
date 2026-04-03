@@ -41,9 +41,14 @@ class Base(Configuration):
         "django.contrib.sessions",
         "django.contrib.messages",
         "django.contrib.staticfiles",
+        "djstripe",
+        "admincolors",
         "auth.apps.AuthConfig",
+        "billing.apps.BillingConfig",
         "alerts",
     ]
+
+    ADMIN_COLORS = [("Eenrgy Atlas AI", "css/admin.css")]
 
     MIDDLEWARE = [
         "django.middleware.security.SecurityMiddleware",
@@ -67,6 +72,7 @@ class Base(Configuration):
                     "django.template.context_processors.request",
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
+                    "admincolors.context_processors.admin_theme",
                 ],
             },
         },
@@ -104,6 +110,7 @@ class Base(Configuration):
 
     STATIC_URL = "static/"
     STATIC_ROOT = os.getenv("DJANGO_STATIC_ROOT", str(BASE_DIR / "staticfiles"))
+
     STATICFILES_DIRS = [BASE_DIR / "static"]
     LOGIN_URL = "/auth/signin/"
     LOGIN_REDIRECT_URL = "/alerts/"
@@ -127,6 +134,10 @@ class Base(Configuration):
 
 class Development(Base):
     DEBUG = _get_bool("DJANGO_DEBUG", True)
+    STRIPE_LIVE_SECRET_KEY = os.environ.get("STRIPE_LIVE_SECRET_KEY", "")
+    STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
+    STRIPE_LIVE_MODE = False  # Change to True in production
+    DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
 
 
 class Production(Base):

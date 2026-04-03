@@ -19,6 +19,7 @@ from alerts.services import (
     parse_signal_question,
     should_trigger_alert,
 )
+from billing.services import can_create_alert
 
 
 def _request_payload(request) -> dict:
@@ -74,6 +75,17 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
     question = (payload.get("question") or "").strip()
     if not question:
         return None, None, "question is required"
+
+    current_active_alert_count = AlertRule.objects.filter(
+        user=user,
+        is_active=True,
+    ).count()
+    is_allowed, limit_error = can_create_alert(
+        user=user,
+        current_active_alert_count=current_active_alert_count,
+    )
+    if not is_allowed:
+        return None, None, limit_error
 
     parsed = parse_signal_question(question)
     if parsed is None:

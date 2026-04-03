@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -49,8 +49,8 @@ class ChartSpec(BaseModel):
     title: str
 
     # Preferred v2 fields
-    x: str | AxisSpec = "date"
-    y: List[str] | str | AxisSpec = "value"
+    x: Union[str, AxisSpec] = "date"
+    y: Union[List[str], str, AxisSpec] = "value"
     x_label: Optional[str] = None
     y_label: Optional[str] = None
     aggregation: Optional[Literal["none", "daily", "weekly", "monthly"]] = None

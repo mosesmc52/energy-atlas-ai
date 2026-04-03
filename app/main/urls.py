@@ -15,17 +15,22 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.shortcuts import redirect
 from django.urls import include, path
+from django.utils.translation import gettext_lazy as _
 from django.views.generic import TemplateView
 
 
 def root_redirect(_request):
     return redirect("auth:signin")
 
+
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    path("stripe/", include("djstripe.urls", namespace="djstripe")),
+    path("secret-room/", admin.site.urls),
     path("", root_redirect, name="root"),
     path(
         "about/",
@@ -39,4 +44,7 @@ urlpatterns = [
     ),
     path("auth/", include("auth.urls")),
     path("alerts/", include("alerts.urls")),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+admin.site.site_header = _("Energy Atlas AI")
