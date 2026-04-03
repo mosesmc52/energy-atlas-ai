@@ -42,6 +42,7 @@ urlpatterns = [
         TemplateView.as_view(template_name="common/pricing.html"),
         name="pricing",
     ),
+    path("billing/", include("billing.urls")),
     path("auth/", include("auth.urls")),
     path("alerts/", include("alerts.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

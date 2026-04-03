@@ -5,8 +5,14 @@ from pathlib import Path
 
 import dj_database_url
 from configurations import Configuration
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BASE_DIR.parent
+
+# Load environment variables for Django from the repo root first, then app/.
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BASE_DIR / ".env")
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -136,9 +142,14 @@ class Development(Base):
     DEBUG = _get_bool("DJANGO_DEBUG", True)
     STRIPE_LIVE_SECRET_KEY = os.environ.get("STRIPE_LIVE_SECRET_KEY", "")
     STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
+    STRIPE_PRO_PRICE_ID = os.environ.get("STRIPE_PRO_PRICE_ID", "")
     STRIPE_LIVE_MODE = False  # Change to True in production
     DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
 
 
 class Production(Base):
     DEBUG = _get_bool("DJANGO_DEBUG", False)
+    STRIPE_LIVE_SECRET_KEY = os.environ.get("STRIPE_LIVE_SECRET_KEY", "")
+    STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
+    STRIPE_PRO_PRICE_ID = os.environ.get("STRIPE_PRO_PRICE_ID", "")
+    STRIPE_LIVE_MODE = _get_bool("STRIPE_LIVE_MODE", True)
