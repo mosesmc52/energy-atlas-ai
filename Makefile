@@ -4,6 +4,7 @@ COMPOSE_FILE := docker/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
 SERVICES := postgres django chainlit
 ENV_FILE ?= .env
+DEPLOY_ENV_FILE ?=
 TF_DIR ?= infra/terraform
 TF ?= terraform
 TF_PLAN_FILE ?= tfplan
@@ -18,7 +19,7 @@ define tf_ip_shell
 endef
 
 .PHONY: help build up upd up-detached down clean start stop restart ps logs pull \
-	tf-init tf-fmt tf-validate tf-plan tf-apply tf-destroy tf-output bootstrap \
+	tf-init tf-fmt tf-validate tf-plan tf-apply tf-destroy tf-output bootstrap update bootstrap-prod update-prod \
 	up-postgres up-django up-chainlit \
 	logs-postgres logs-django logs-chainlit \
 	restart-postgres restart-django restart-chainlit \
@@ -46,6 +47,9 @@ help:
 	@printf "  make tf-destroy         Run terraform destroy in $(TF_DIR)\n"
 	@printf "  make tf-output          Show terraform outputs\n"
 	@printf "  make bootstrap          Bootstrap the server from terraform output $(TF_IP_OUTPUT)\n"
+	@printf "  make update             Update the server from terraform output $(TF_IP_OUTPUT)\n"
+	@printf "  make bootstrap-prod     Bootstrap using DEPLOY_ENV_FILE=.env.production\n"
+	@printf "  make update-prod        Update using DEPLOY_ENV_FILE=.env.production\n"
 	@printf "  make up-<service>       Start one service in detached mode\n"
 	@printf "  make logs-<service>     Tail logs for one service\n"
 	@printf "  make restart-<service>  Restart one service\n"
@@ -111,6 +115,8 @@ tf-output:
 bootstrap:
 	@set -e; \
 	IP="$$( $(call tf_ip_shell) || true )"; \
+	ENV_ARGS=""; \
+	if [ -n "$(DEPLOY_ENV_FILE)" ]; then ENV_ARGS="--env-file $(DEPLOY_ENV_FILE)"; fi; \
 	if [ -z "$$IP" ]; then \
 		echo "ERROR: terraform output '$(TF_IP_OUTPUT)' is empty (or missing)."; \
 		echo "Available outputs:"; \
@@ -118,7 +124,27 @@ bootstrap:
 		exit 1; \
 	fi; \
 	echo "==> Bootstrapping server at $$IP"; \
-	./scripts/bootstrap.sh "$$IP"
+	./scripts/bootstrap.sh "$$IP" $$ENV_ARGS
+
+update:
+	@set -e; \
+	IP="$$( $(call tf_ip_shell) || true )"; \
+	ENV_ARGS=""; \
+	if [ -n "$(DEPLOY_ENV_FILE)" ]; then ENV_ARGS="--env-file $(DEPLOY_ENV_FILE)"; fi; \
+	if [ -z "$$IP" ]; then \
+		echo "ERROR: terraform output '$(TF_IP_OUTPUT)' is empty (or missing)."; \
+		echo "Available outputs:"; \
+		(set -a; . "$(ENV_FILE)"; set +a; cd "$(TF_DIR)" && $(TF) output || true); \
+		exit 1; \
+	fi; \
+	echo "==> Updating server at $$IP"; \
+	./scripts/update.sh "$$IP" $$ENV_ARGS
+
+bootstrap-prod:
+	@$(MAKE) bootstrap DEPLOY_ENV_FILE=.env.production
+
+update-prod:
+	@$(MAKE) update DEPLOY_ENV_FILE=.env.production
 
 up-postgres:
 	$(DOCKER_COMPOSE) up -d postgres

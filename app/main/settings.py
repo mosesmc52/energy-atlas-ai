@@ -47,6 +47,7 @@ class Base(Configuration):
         "django.contrib.sessions",
         "django.contrib.messages",
         "django.contrib.staticfiles",
+        "django_ses",
         "djstripe",
         "admincolors",
         "auth.apps.AuthConfig",
@@ -122,6 +123,26 @@ class Base(Configuration):
     LOGIN_URL = "/auth/signin/"
     LOGIN_REDIRECT_URL = "/alerts/"
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    EMAIL_BACKEND = "django_ses.SESBackend"
+    APP_URL = os.getenv("APP_URL", "").strip()
+    DEFAULT_FROM_EMAIL = os.getenv("FROM_ADDRESS", "no-reply@localhost").strip()
+    SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL).strip()
+    EMAIL_SUBJECT_PREFIX = os.getenv("EMAIL_SUBJECT_PREFIX", "[Energy Atlas] ").strip()
+    EMAIL_USE_SES = _get_bool("EMAIL_USE_SES", True)
+    EMAIL_POSITIONS = _get_bool("EMAIL_POSITIONS", False)
+    DEFAULT_NOTIFICATION_RECIPIENTS = _get_list("TO_ADDRESSES")
+    AWS_SES_REGION_NAME = os.getenv("AWS_SES_REGION_NAME", "us-east-1").strip()
+    AWS_SES_REGION_ENDPOINT = os.getenv(
+        "AWS_SES_REGION_ENDPOINT",
+        f"email.{AWS_SES_REGION_NAME}.amazonaws.com",
+    ).strip()
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_SES_ACCESS_KEY_ID", "").strip()
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SES_SECRET_ACCESS_KEY", "").strip()
+    AWS_SESSION_TOKEN = os.getenv("AWS_SES_SESSION_TOKEN", "").strip()
+    AWS_SES_CONFIGURATION_SET = os.getenv("AWS_SES_CONFIGURATION_SET", "").strip()
+    AWS_SES_SOURCE_ARN = os.getenv("AWS_SES_SOURCE_ARN", "").strip()
+    AWS_SES_RETURN_PATH_ARN = os.getenv("AWS_SES_RETURN_PATH_ARN", "").strip()
+    AWS_SES_FROM_ARN = os.getenv("AWS_SES_FROM_ARN", "").strip()
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
     GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
     GOOGLE_OAUTH_SCOPES = [

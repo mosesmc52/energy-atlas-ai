@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f6f7fb;font-family:Arial,sans-serif;color:#1f2937;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f7fb;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+            <tr>
+              <td style="padding:20px 28px;background:#ffffff;border-bottom:1px solid #e5e7eb;">
+                <img
+                  src="cid:energy-atlas-logo"
+                  alt="Energy Atlas"
+                  style="display:block;height:48px;width:auto;border:0;outline:none;text-decoration:none;"
+                >
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px;">
+                <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">
+                  Hello{% if recipient_name %} {{ recipient_name }}{% endif %},
+                </p>
+                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;">
+                  {{ intro|default:"Here is your latest update from Energy Atlas." }}
+                </p>
+                <p style="margin:0 0 24px;font-size:16px;line-height:1.6;white-space:pre-line;">
+                  {{ body|default:"This is a sample HTML email body." }}
+                </p>
+                {% if cta_url %}
+                  <p style="margin:0 0 24px;">
+                    <a href="{{ cta_url }}" style="display:inline-block;padding:12px 18px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">
+                      {{ cta_label|default:"Open Energy Atlas" }}
+                    </a>
+                  </p>
+                {% endif %}
+                <p style="margin:0;font-size:14px;line-height:1.6;color:#6b7280;">
+                  Thanks,<br>
+                  Energy Atlas
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
