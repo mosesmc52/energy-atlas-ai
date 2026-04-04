@@ -168,9 +168,9 @@ remote "set -euo pipefail;
   cd '${REMOTE_DIR}';
 
   if sudo docker compose version >/dev/null 2>&1; then
-    DC='sudo docker compose'
+    DC='sudo docker compose --env-file .env'
   elif command -v docker-compose >/dev/null 2>&1; then
-    DC='sudo docker-compose'
+    DC='sudo docker-compose --env-file .env'
   else
     echo 'ERROR: neither docker compose nor docker-compose is installed on the server' >&2
     exit 127

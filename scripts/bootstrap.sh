@@ -177,17 +177,17 @@ remote "set -euo pipefail;
   fi
 
   if sudo docker compose version >/dev/null 2>&1; then
-    DC='sudo docker compose'
+    DC='sudo docker compose --env-file .env'
   elif command -v docker-compose >/dev/null 2>&1; then
-    DC='sudo docker-compose'
+    DC='sudo docker-compose --env-file .env'
   else
     export DEBIAN_FRONTEND=noninteractive
     sudo apt-get update
     sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose
     if sudo docker compose version >/dev/null 2>&1; then
-      DC='sudo docker compose'
+      DC='sudo docker compose --env-file .env'
     elif command -v docker-compose >/dev/null 2>&1; then
-      DC='sudo docker-compose'
+      DC='sudo docker-compose --env-file .env'
     else
       echo 'ERROR: neither docker compose nor docker-compose is installed on the server' >&2
       exit 127
