@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from io import StringIO
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +15,7 @@ from dotenv import load_dotenv
 from eia_ng import EIAClient
 from schemas.answer import SourceRef
 from tools.cache_base import CacheBackedTimeseriesAdapterBase
+from tools.forecasting import ForecastResult, forecast_linear_trend
 
 load_dotenv()
 DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
@@ -293,6 +295,40 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "industrial": "https://www.eia.gov/dnav/ng/hist/n3035us2m.htm",
         "electric_power": "https://www.eia.gov/dnav/ng/hist/n3045us2m.htm",
     }
+    PIPELINE_DATASET_FILES = {
+        "historical_projects": "Historical_Projects_1996-2024.parquet",
+        "inflow_by_region": "Inflow_By_Region.parquet",
+        "inflow_by_state": "Inflow_By_State.parquet",
+        "inflow_single_year": "InFlow_Single_Year.parquet",
+        "major_pipeline_summary": "Major_Pipeline_Summary.parquet",
+        "major_pipeline_sumamry": "Major_Pipeline_Summary.parquet",
+        "natural_gas_pipeline_projects": "Natural_Gas_Pipeline_Projects.parquet",
+        "outflow_by_region": "Outflow_By_Region.parquet",
+        "outflow_by_state": "Outflow_By_State.parquet",
+        "pipeline_state2_state_capacity": "Pipeline_State2State_Capacity.parquet",
+    }
+    PIPELINE_LABELS = {
+        "historical_projects": "Historical Projects (1996-2024)",
+        "inflow_by_region": "Inflow By Region",
+        "inflow_by_state": "Inflow By State",
+        "inflow_single_year": "Inflow Single Year",
+        "major_pipeline_summary": "Major Pipeline Summary",
+        "natural_gas_pipeline_projects": "Natural Gas Pipeline Projects",
+        "outflow_by_region": "Outflow By Region",
+        "outflow_by_state": "Outflow By State",
+        "pipeline_state2_state_capacity": "Pipeline State-To-State Capacity",
+    }
+    PIPELINE_WIDE_DATASETS = {
+        "inflow_by_region": ["Region To", "Region From"],
+        "inflow_by_state": ["State To", "State From"],
+        "major_pipeline_summary": ["Pipeline", "Segment", "State From", "State To"],
+        "outflow_by_region": ["Region From", "Region To"],
+        "outflow_by_state": ["State From", "State To"],
+    }
+    PIPELINE_PROJECT_DATASETS = {
+        "historical_projects",
+        "natural_gas_pipeline_projects",
+    }
 
     def __init__(
         self,
@@ -314,6 +350,24 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     # ----------------------------
     # Public methods (router calls these)
     # ----------------------------
+
+    def forecast_result(
+        self,
+        result: EIAResult,
+        *,
+        metric: str,
+        horizon_days: int = 7,
+        lookback_observations: int = 30,
+        include_overlay: bool = False,
+    ) -> ForecastResult:
+        return forecast_linear_trend(
+            result.df,
+            metric=metric,
+            horizon_days=horizon_days,
+            lookback_observations=lookback_observations,
+            include_overlay=include_overlay,
+            source_reference=result.source.reference,
+        )
 
     def storage_working_gas(
         self, start: str, end: str, region: str = "lower48"
@@ -749,6 +803,61 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
 
+    def ng_pipeline(
+        self,
+        start: str,
+        end: str,
+        dataset: str = "natural_gas_pipeline_projects",
+    ) -> EIAResult:
+        dataset_key = self._canonical_pipeline_dataset(dataset)
+        dataset_file = self.PIPELINE_DATASET_FILES[dataset]
+        dataset_path = (
+            Path(__file__).resolve().parent.parent
+            / "data"
+            / "processed"
+            / "eia"
+            / "ng"
+            / "pipeline"
+            / dataset_file
+        )
+        if not dataset_path.exists():
+            raise FileNotFoundError(
+                f"Pipeline parquet dataset not found at: {dataset_path}"
+            )
+
+        try:
+            raw = pd.read_parquet(dataset_path)
+        except ImportError as exc:
+            raise ImportError(
+                "Reading pipeline parquet data requires 'pyarrow' or 'fastparquet'. "
+                "This project declares pyarrow in pyproject.toml; install dependencies "
+                "for the runtime environment before using ng_pipeline."
+            ) from exc
+
+        df = self._normalize_pipeline_df(
+            raw,
+            dataset=dataset_key,
+            start=start,
+            end=end,
+        )
+
+        src = self._make_source(
+            label=f"EIA Natural Gas Pipeline: {self.PIPELINE_LABELS[dataset_key]}",
+            reference=f"local-parquet:eia.ng.pipeline.{dataset_key}",
+            parameters={
+                "dataset": dataset_key,
+                "start": start,
+                "end": end,
+                "path": str(dataset_path),
+            },
+        )
+        meta = {
+            "dataset": dataset_key,
+            "dataset_path": str(dataset_path),
+            "row_count": int(len(df)),
+        }
+        return EIAResult(df=df, source=src, meta=meta)
+
     # ----------------------------
     # Library calling + normalization helpers
     # ----------------------------
@@ -1006,6 +1115,141 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         out = out.rename(columns={date_col: "date", value_col: "value"})
         out = out.reset_index(drop=True)
         return out
+
+    def _canonical_pipeline_dataset(self, dataset: str) -> str:
+        if dataset not in self.PIPELINE_DATASET_FILES:
+            raise ValueError(
+                f"Invalid pipeline dataset '{dataset}'. Expected one of: "
+                f"{sorted(set(self.PIPELINE_DATASET_FILES.keys()))}"
+            )
+        if dataset == "major_pipeline_sumamry":
+            return "major_pipeline_summary"
+        return dataset
+
+    def _normalize_pipeline_df(
+        self,
+        df: pd.DataFrame,
+        *,
+        dataset: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame:
+        if dataset in self.PIPELINE_WIDE_DATASETS:
+            out = self._normalize_pipeline_wide_year_df(
+                df,
+                id_columns=self.PIPELINE_WIDE_DATASETS[dataset],
+            )
+        elif dataset == "pipeline_state2_state_capacity":
+            out = self._normalize_pipeline_capacity_df(df)
+        elif dataset == "inflow_single_year":
+            out = self._normalize_pipeline_single_year_df(df)
+        elif dataset in self.PIPELINE_PROJECT_DATASETS:
+            out = self._normalize_pipeline_project_df(df, dataset=dataset)
+        else:
+            out = df.copy()
+
+        if "date" in out.columns:
+            start_ts = pd.to_datetime(start, errors="coerce")
+            end_ts = pd.to_datetime(end, errors="coerce")
+            if pd.isna(start_ts) or pd.isna(end_ts):
+                raise ValueError(
+                    f"Invalid pipeline date window start='{start}' end='{end}'."
+                )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out = out.dropna(subset=["date"])
+            out = out.loc[(out["date"] >= start_ts) & (out["date"] <= end_ts)]
+            out = out.sort_values("date").reset_index(drop=True)
+        else:
+            out = out.reset_index(drop=True)
+
+        out["dataset"] = dataset
+        return out
+
+    def _normalize_pipeline_wide_year_df(
+        self,
+        df: pd.DataFrame,
+        *,
+        id_columns: list[str],
+    ) -> pd.DataFrame:
+        out = df.copy()
+        year_columns = [c for c in out.columns if re.fullmatch(r"\d{4}", str(c))]
+        for col in id_columns:
+            if col in out.columns:
+                cleaned = out[col].replace("", pd.NA)
+                out[col] = cleaned.ffill()
+        melted = out.melt(
+            id_vars=[c for c in id_columns if c in out.columns],
+            value_vars=year_columns,
+            var_name="year",
+            value_name="value",
+        )
+        melted["value"] = pd.to_numeric(melted["value"], errors="coerce")
+        melted = melted.dropna(subset=["value"])
+        melted["date"] = pd.to_datetime(melted["year"] + "-01-01", errors="coerce")
+        return melted.reset_index(drop=True)
+
+    def _normalize_pipeline_capacity_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        out["year"] = pd.to_numeric(out.get("year"), errors="coerce").astype("Int64")
+        out["value"] = pd.to_numeric(out.get("Capacity (mmcfd)"), errors="coerce")
+        out["date"] = pd.to_datetime(
+            out["year"].astype("string") + "-01-01",
+            errors="coerce",
+        )
+        out = out.dropna(subset=["date", "value"])
+        return out.reset_index(drop=True)
+
+    def _normalize_pipeline_single_year_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        if len(out.columns) >= 3:
+            out = out.rename(
+                columns={
+                    out.columns[0]: "pipeline",
+                    out.columns[1]: "location",
+                    out.columns[2]: "value",
+                }
+            )
+        out["value"] = pd.to_numeric(out.get("value"), errors="coerce")
+        out = out.dropna(subset=["value"])
+        out["date"] = pd.Timestamp(
+            year=datetime.utcnow().year,
+            month=1,
+            day=1,
+        )
+        return out.reset_index(drop=True)
+
+    def _normalize_pipeline_project_df(
+        self,
+        df: pd.DataFrame,
+        *,
+        dataset: str,
+    ) -> pd.DataFrame:
+        out = df.copy()
+        if "Additional Capacity (MMcf/d)" in out.columns:
+            out["value"] = pd.to_numeric(
+                out["Additional Capacity (MMcf/d)"], errors="coerce"
+            )
+        elif "Cost (millions)" in out.columns:
+            out["value"] = pd.to_numeric(out["Cost (millions)"], errors="coerce")
+
+        date_series = pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns]")
+        if "Year In Service Date" in out.columns:
+            year_values = out["Year In Service Date"].astype(str).str.extract(
+                r"(?P<year>\d{4})"
+            )["year"]
+            year_dates = pd.to_datetime(year_values + "-01-01", errors="coerce")
+            date_series = date_series.fillna(year_dates)
+        if "Completed Date" in out.columns:
+            date_series = date_series.fillna(
+                pd.to_datetime(out["Completed Date"], errors="coerce")
+            )
+        if dataset == "natural_gas_pipeline_projects" and "Last Updated Date" in out.columns:
+            date_series = date_series.fillna(
+                pd.to_datetime(out["Last Updated Date"], errors="coerce")
+            )
+        out["date"] = date_series
+        out = out.dropna(subset=["date"]).sort_values("date")
+        return out.reset_index(drop=True)
 
     def _make_source(
         self, *, label: str, reference: str, parameters: dict

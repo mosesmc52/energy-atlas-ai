@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Pricing | Energy Atlas{% endblock %}
+
+{% block page-content %}
+  <section class="mx-auto max-w-5xl space-y-10">
+    <div class="space-y-4 text-center">
+      <div class="inline-flex rounded-full border border-atlas-100 bg-atlas-50 px-4 py-1 text-sm font-semibold text-atlas-500">
+        Simple, transparent pricing
+      </div>
+      <div class="space-y-3">
+        <h1 class="text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">Start tracking the gas market today</h1>
+        <p class="mx-auto max-w-3xl text-lg leading-8 text-slate-600">
+          Energy Atlas helps you understand what’s moving natural gas markets, why it’s happening, and when to watch for what’s next.
+        </p>
+      </div>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      {% for plan in plan_cards %}
+        {% if plan.key == "free" or plan.key == "pro" %}
+          <article class="panel {% if plan.key == 'pro' %}relative border-atlas-100 bg-white/95 ring-1 ring-atlas-500/20{% else %}border-slate-200 bg-white/90{% endif %} space-y-6 rounded-[2rem] border p-8">
+            {% if plan.key == "pro" %}
+              <div class="absolute right-8 top-8 rounded-full bg-atlas-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-atlas-500">
+                Popular
+              </div>
+            {% endif %}
+            <div class="flex items-start justify-between gap-6">
+              <div class="space-y-2">
+                <h2 class="text-3xl font-semibold {% if plan.key == 'pro' %}text-atlas-500{% else %}text-slate-900{% endif %}">{{ plan.name }}</h2>
+                <p class="max-w-sm text-sm leading-6 text-slate-600">
+                  {{ plan.description }}
+                </p>
+              </div>
+              <div class="text-right">
+                <div class="text-5xl font-semibold tracking-tight text-slate-900">{{ plan.price_text }}</div>
+                <div class="text-sm font-medium text-slate-600">{{ plan.interval_text }}</div>
+              </div>
+            </div>
+
+            <ul class="space-y-3 text-sm leading-6 text-slate-600">
+              {% for feature in plan.features %}
+                <li class="flex items-start gap-3"><span class="text-atlas-500">✓</span><span>{{ feature }}</span></li>
+              {% endfor %}
+            </ul>
+
+            <div class="space-y-3">
+              {% if plan.key == "free" %}
+                <a href="{% url 'auth:signup' %}" class="btn-secondary w-full justify-center rounded-2xl py-3 text-base">{{ plan.cta_label }}</a>
+              {% elif request.user.is_authenticated %}
+                <a href="{% url 'billing:checkout' %}" class="btn-black w-full justify-center rounded-2xl py-3 text-base" style="color: #ffffff;">{{ plan.cta_label }}</a>
+              {% else %}
+                <a href="{% url 'auth:signup' %}" class="btn-black w-full justify-center rounded-2xl py-3 text-base" style="color: #ffffff;">{{ plan.cta_label }}</a>
+              {% endif %}
+              {% if plan.key != "free" %}
+                <p class="text-center text-xs text-slate-600">Secure checkout powered by Stripe</p>
+              {% endif %}
+            </div>
+          </article>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {% if free_plan_card and pro_plan_card %}
+      <section class="panel overflow-hidden rounded-[2rem] p-0">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-stone-200 text-sm">
+            <thead class="bg-white/90">
+              <tr class="text-left text-slate-600">
+                <th class="px-6 py-4 font-semibold">Feature</th>
+                <th class="px-6 py-4 font-semibold">{{ free_plan_card.name }}</th>
+                <th class="px-6 py-4 font-semibold text-atlas-500">{{ pro_plan_card.name }}</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-stone-200 bg-white/80">
+              <tr>
+                <td class="px-6 py-4 font-medium text-slate-700">Active alerts</td>
+                <td class="px-6 py-4 text-slate-600">{{ free_plan_card.active_alert_limit }}</td>
+                <td class="px-6 py-4 font-semibold text-atlas-500">{{ pro_plan_card.active_alert_limit }}</td>
+              </tr>
+              <tr>
+                <td class="px-6 py-4 font-medium text-slate-700">Pricing</td>
+                <td class="px-6 py-4 text-slate-600">{{ free_plan_card.price_text }} {{ free_plan_card.interval_text }}</td>
+                <td class="px-6 py-4 font-semibold text-atlas-500">{{ pro_plan_card.price_text }} {{ pro_plan_card.interval_text }}</td>
+              </tr>
+              <tr>
+                <td class="px-6 py-4 font-medium text-slate-700">Plan description</td>
+                <td class="px-6 py-4 text-slate-600">{{ free_plan_card.description }}</td>
+                <td class="px-6 py-4 text-slate-600">{{ pro_plan_card.description }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="space-y-6">
+      <div class="text-center">
+        <h2 class="text-3xl font-semibold tracking-tight text-slate-900">Frequently asked questions</h2>
+      </div>
+      <div class="grid gap-5 md:grid-cols-2">
+        <article class="panel space-y-2 rounded-[1.75rem] bg-white/85">
+          <h3 class="text-lg font-semibold text-slate-900">Can I change plans later?</h3>
+          <p class="text-sm leading-6 text-slate-600">Yes. Plan pricing is driven from the configured billing plans in the app.</p>
+        </article>
+        <article class="panel space-y-2 rounded-[1.75rem] bg-white/85">
+          <h3 class="text-lg font-semibold text-slate-900">How many alerts can I have?</h3>
+          <p class="text-sm leading-6 text-slate-600">Your alert limit comes from the active subscription plan configured in billing.</p>
+        </article>
+        <article class="panel space-y-2 rounded-[1.75rem] bg-white/85">
+          <h3 class="text-lg font-semibold text-slate-900">What happens on the free plan?</h3>
+          <p class="text-sm leading-6 text-slate-600">Free access is controlled by the local <code>free</code> plan in billing, including its active alert limit.</p>
+        </article>
+        <article class="panel space-y-2 rounded-[1.75rem] bg-white/85">
+          <h3 class="text-lg font-semibold text-slate-900">Can I cancel anytime?</h3>
+          <p class="text-sm leading-6 text-slate-600">Yes. Subscription status remains tied to Stripe and your local billing records.</p>
+        </article>
+      </div>
+    </section>
+  </section>
+{% endblock %}

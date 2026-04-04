@@ -170,8 +170,20 @@ default_avatar_file_url = ""
 #     target = "_blank" (default)  # Optional: "_self", "_parent", "_top".
 
 [[UI.header_links]]
+name = "Sign In"
+url = "/auth/signin/"
+display_name = "Sign In"
+icon_url = "/public/images/icons/noun-energy.svg"
+
+[[UI.header_links]]
+name = "Pricing"
+url = "/pricing/"
+display_name = "Pricing"
+icon_url = "/public/images/icons/noun-energy.svg"
+
+[[UI.header_links]]
 name = "About"
-url = "https://github.com/mosesmc52/energy-atlas-ai"
+url = "/about/"
 display_name = "About"
 icon_url = "/public/images/icons/noun-energy.svg"
 

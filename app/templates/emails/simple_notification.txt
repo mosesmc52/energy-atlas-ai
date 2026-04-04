@@ -1,0 +1,12 @@
+Hello{% if recipient_name %} {{ recipient_name }}{% endif %},
+
+{{ intro|default:"Here is your latest update from Energy Atlas." }}
+
+{{ body|default:"This is a sample plain-text email body." }}
+
+{% if cta_url %}
+Open Energy Atlas: {{ cta_url }}
+{% endif %}
+
+Thanks,
+Energy Atlas

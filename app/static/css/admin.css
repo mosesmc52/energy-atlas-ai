@@ -1,0 +1,168 @@
+/* ================================
+   Portfolio Operations Admin Theme
+   ================================ */
+
+/* ---------- Global ---------- */
+
+body {
+    background: #F4F4F4;
+    color: #0C2B4E;
+}
+
+/* ---------- Header ---------- */
+
+#header {
+    background: #0C2B4E;
+    color: #F4F4F4;
+}
+
+#branding h1,
+#branding h1 a:link,
+#branding h1 a:visited {
+    color: #F4F4F4;
+}
+
+#header a:link,
+#header a:visited {
+    color: #F4F4F4;
+}
+
+/* ---------- Breadcrumbs ---------- */
+
+div.breadcrumbs {
+    background: #1A3D64;
+    color: #F4F4F4;
+}
+
+div.breadcrumbs a {
+    color: #F4F4F4;
+}
+
+div.breadcrumbs a:hover {
+    color: white;
+}
+
+/* ---------- Sidebar ---------- */
+
+#nav-sidebar {
+
+}
+
+#nav-sidebar .current-app .section:link,
+#nav-sidebar .current-app .section:visited {
+    color: #F4F4F4;
+    font-weight: 600;
+}
+
+.toggle-nav-sidebar {
+    background-color: #0C2B4E;
+    color: #F4F4F4;
+    border-right: 1px solid #1A3D64;
+}
+
+.toggle-nav-sidebar:hover,
+.toggle-nav-sidebar:focus {
+    background-color: #1A3D64;
+    color: #F4F4F4;
+}
+
+/* ---------- Modules / Panels ---------- */
+
+.module h2,
+.module caption,
+.inline-group h2 {
+    background: #1A3D64;
+    color: #F4F4F4;
+}
+
+/* ---------- Headings ---------- */
+
+h1 {
+    color: #0C2B4E;
+}
+
+/* ---------- Links ---------- */
+
+a,
+a:link,
+a:visited {
+    color: #1D546C;
+    text-decoration: none;
+}
+
+a:hover {
+    color: #0C2B4E;
+    text-decoration: underline;
+}
+
+/* ---------- Object tools ---------- */
+
+.object-tools a:link,
+.object-tools a:visited {
+    background: #1D546C;
+    color: #F4F4F4;
+}
+
+/* ---------- Buttons ---------- */
+
+.button,
+input[type='submit'],
+input[type='button'],
+.submit-row input,
+a.button {
+    background: #1D546C;
+    color: #F4F4F4;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.button.default,
+input[type='submit'].default,
+.submit-row input.default {
+    background: #1A3D64;
+    color: #F4F4F4;
+}
+
+/* ---------- Tables ---------- */
+
+table {
+    width: 100%;
+    background: white;
+}
+
+/* ---------- Forms ---------- */
+
+form div.help {
+    font-size: 14px;
+    color: #1D546C;
+}
+
+/* ---------- Utility ---------- */
+
+.mb-10 {
+    margin-bottom: 10px;
+}
+
+/* ---------- Dark Mode Compatibility ---------- */
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background: #0C2B4E;
+        color: #F4F4F4;
+    }
+
+    h1 {
+        color: #F4F4F4;
+    }
+
+    a,
+    a:link,
+    a:visited {
+        color: #F4F4F4;
+    }
+
+    table {
+        background: #1A3D64;
+        color: #F4F4F4;
+    }
+}

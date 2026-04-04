@@ -1,0 +1,41 @@
+#cloud-config
+package_update: true
+timezone: ${timezone}
+
+users:
+  - default
+  - name: zilla
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${ZILLA_SSH_PUBKEY}
+
+packages:
+  - tmux
+  - git
+  - build-essential
+  - python3-venv
+  - python3-dev
+  - pkg-config
+  - ca-certificates
+  - curl
+  - gnupg
+
+runcmd:
+  - mkdir -p /mnt/artifacts
+  - mkdir -p /mnt/pytensor
+  - echo 'export ARTIFACT_BASE=/mnt/artifacts' >> /etc/profile.d/equi.sh
+  - echo 'export PYTENSOR_FLAGS="compiledir=/mnt/pytensor"' >> /etc/profile.d/equi.sh
+  - echo 'export PIP_DISABLE_PIP_VERSION_CHECK=1' >> /etc/profile.d/equi.sh
+  - chmod +x /etc/profile.d/equi.sh
+
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - chmod a+r /etc/apt/keyrings/docker.gpg
+  - bash -lc 'source /etc/os-release && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list'
+  - apt-get update -y
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker zilla

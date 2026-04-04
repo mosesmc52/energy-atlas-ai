@@ -1,0 +1,54 @@
+"""
+URL configuration for app project.
+
+The `urlpatterns` list routes URLs to views. For more information please see:
+    https://docs.djangoproject.com/en/6.0/topics/http/urls/
+Examples:
+Function views
+    1. Add an import:  from my_app import views
+    2. Add a URL to urlpatterns:  path('', views.home, name='home')
+Class-based views
+    1. Add an import:  from other_app.views import Home
+    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
+Including another URLconf
+    1. Import the include() function: from django.urls import include, path
+    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+"""
+
+from django.conf import settings
+from django.conf.urls.static import static
+from django.contrib import admin
+from django.shortcuts import redirect
+from django.urls import include, path
+from django.utils.translation import gettext_lazy as _
+from django.views.generic import TemplateView
+
+from billing import views as billing_views
+
+
+def root_redirect(_request):
+    return redirect("auth:signin")
+
+
+urlpatterns = [
+    path("stripe/webhook/", billing_views.stripe_webhook, name="stripe-webhook"),
+    path("stripe/", include("djstripe.urls", namespace="djstripe")),
+    path("secret-room/", admin.site.urls),
+    path("", root_redirect, name="root"),
+    path(
+        "about/",
+        TemplateView.as_view(template_name="common/about.html"),
+        name="about",
+    ),
+    path(
+        "pricing/",
+        billing_views.pricing_page,
+        name="pricing",
+    ),
+    path("billing/", include("billing.urls")),
+    path("auth/", include("auth.urls")),
+    path("alerts/", include("alerts.urls")),
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+admin.site.site_header = _("Energy Atlas AI")

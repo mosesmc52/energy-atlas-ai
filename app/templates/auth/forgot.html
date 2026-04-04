@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Forgot Password{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block page-content %}
+  <div class="flex min-h-full flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div class="sm:mx-auto sm:w-full sm:max-w-md">
+      <img src="{% static 'img/logo-w-title.png' %}" alt="Energy Atlas" class="mx-auto h-14 w-auto" />
+      <h2 class="mt-6 text-center text-2xl/9 font-bold tracking-tight text-slate-800">Reset your password</h2>
+      <p class="mt-2 text-center text-sm/6 text-slate-500">Enter your email and the app will send reset instructions if the account exists.</p>
+    </div>
+
+    <div class="mt-10 sm:mx-auto sm:w-full sm:max-w-[480px]">
+      <div class="bg-white/95 px-6 py-12 shadow-sm sm:rounded-lg sm:px-12">
+        <form method="post" action="{% url 'auth:forgot' %}" class="space-y-6">
+          {% csrf_token %}
+
+          <div>
+            <label for="email" class="block text-sm/6 font-medium text-gray-900">Email address</label>
+            <div class="mt-2">
+              <input id="email" type="email" name="email" value="{{ request.POST.email|default:'' }}" required autocomplete="email" class="block w-full rounded-md border-0 bg-white px-3 py-1.5 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6" />
+            </div>
+          </div>
+
+          <div>
+            <button type="submit" class="flex w-full justify-center rounded-md bg-black px-3 py-1.5 text-sm/6 font-semibold shadow-sm hover:bg-atlas-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-atlas-600" style="color: #ffffff;">Send reset instructions</button>
+          </div>
+        </form>
+
+        <p class="mt-6 text-center text-sm/6 text-slate-500">
+          <a href="{% url 'auth:signin' %}" class="font-semibold text-atlas-600 hover:text-atlas-500">Back to sign in</a>
+        </p>
+      </div>
+    </div>
+  </div>
+{% endblock %}

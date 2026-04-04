@@ -2,8 +2,13 @@ import unittest
 
 import pandas as pd
 
-from charts.plotly_renderer import render_plotly
+from charts.plotly_renderer import (
+    compute_timeseries_summary_metrics,
+    compute_storage_change_summary_metrics,
+    render_plotly,
+)
 from schemas.chart_spec import ChartSpec
+from tools.forecasting import forecast_linear_trend
 
 
 class TestPlotlyRenderer(unittest.TestCase):
@@ -29,6 +34,88 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertEqual(fig.layout.xaxis.type, "category")
         self.assertEqual(list(fig.data[0].x), ["2025-09", "2025-10", "2025-11", "2025-12"])
         self.assertFalse(bool(fig.layout.xaxis.rangeslider.visible))
+
+    def test_line_chart_can_overlay_forecast_trace(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2025-01-01", periods=30, freq="D"),
+                "value": list(range(30)),
+            }
+        )
+        spec = ChartSpec(chart_type="line", title="Test", x="date", y=["value"])
+        forecast = forecast_linear_trend(
+            df,
+            metric="henry_hub_spot",
+            horizon_days=7,
+            include_overlay=True,
+        )
+
+        fig = render_plotly(spec, df, forecast_overlay=forecast)
+
+        self.assertEqual(len(fig.data), 3)
+        self.assertEqual(fig.data[-1].name, "Forecast")
+        self.assertFalse(bool(fig.layout.xaxis.rangeslider.visible))
+        self.assertGreaterEqual(len(fig.layout.annotations), 1)
+
+    def test_compute_storage_change_summary_metrics(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    ["2026-02-28", "2026-03-07", "2026-03-14", "2026-03-21", "2026-03-28"]
+                ),
+                "value": [-120, -70, -40, 35, -48],
+            }
+        )
+
+        metrics = compute_storage_change_summary_metrics(df)
+
+        self.assertEqual(len(metrics), 4)
+        self.assertEqual(metrics[0]["label"], "Latest weekly change")
+        self.assertEqual(metrics[0]["value"], -48.0)
+        self.assertEqual(metrics[1]["value"], 35.0)
+        self.assertEqual(metrics[2]["value"], -30.75)
+        self.assertEqual(metrics[3]["value"], -120.0)
+
+    def test_compute_timeseries_summary_metrics(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    ["2026-01-03", "2026-01-10", "2026-01-17", "2026-01-24"]
+                ),
+                "value": [2.1, 2.4, 2.2, 2.8],
+            }
+        )
+
+        metrics = compute_timeseries_summary_metrics(df, unit="$/MMBtu")
+
+        self.assertEqual(len(metrics), 4)
+        self.assertEqual(metrics[0]["label"], "Latest reading")
+        self.assertEqual(metrics[0]["value"], 2.8)
+        self.assertEqual(metrics[1]["value"], 2.2)
+        self.assertEqual(metrics[2]["value"], 2.1)
+        self.assertEqual(metrics[3]["value"], 2.8)
+
+    def test_storage_change_chart_gets_dashboard_styling(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    ["2026-02-28", "2026-03-07", "2026-03-14", "2026-03-21", "2026-03-28"]
+                ),
+                "value": [-120, -70, -360, 35, -48],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="line",
+            title="Weekly Change in Working Gas Storage",
+            x="date",
+            y=["value"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertFalse(bool(fig.layout.xaxis.rangeslider.visible))
+        self.assertGreaterEqual(len(fig.layout.annotations), 2)
+        self.assertGreaterEqual(len(fig.layout.shapes), 2)
 
 
 if __name__ == "__main__":

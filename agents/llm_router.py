@@ -22,6 +22,39 @@ INTENTS: Final[tuple[str, ...]] = (
 )
 
 METRICS: Final[tuple[str, ...]] = (
+    "managed_money_long",
+    "managed_money_short",
+    "managed_money_net",
+    "managed_money_net_percentile_156w",
+    "open_interest",
+    "des_special_questions_text",
+    "des_comments_text",
+    "des_report_summary_text",
+    "des_business_activity_index",
+    "des_company_outlook_index",
+    "des_outlook_uncertainty_index",
+    "des_oil_production_index",
+    "des_gas_production_index",
+    "des_capex_index",
+    "des_employment_index",
+    "des_input_cost_index",
+    "des_finding_development_costs_index",
+    "des_lease_operating_expense_index",
+    "des_prices_received_services_index",
+    "des_equipment_utilization_index",
+    "des_operating_margin_index",
+    "des_wti_price_expectation_6m",
+    "des_wti_price_expectation_1y",
+    "des_wti_price_expectation_2y",
+    "des_wti_price_expectation_5y",
+    "des_hh_price_expectation_6m",
+    "des_hh_price_expectation_1y",
+    "des_hh_price_expectation_2y",
+    "des_hh_price_expectation_5y",
+    "des_breakeven_oil_us",
+    "des_breakeven_gas_us",
+    "des_breakeven_oil_permian",
+    "des_breakeven_oil_eagle_ford",
     "iso_gas_dependency",
     "iso_renewables",
     "iso_fuel_mix",
@@ -36,6 +69,7 @@ METRICS: Final[tuple[str, ...]] = (
     "ng_electricity",
     "ng_production_lower48",
     "ng_exploration_reserves_lower48",
+    "ng_pipeline",
 )
 
 ISO_FILTERS: Final[tuple[str, ...]] = (
@@ -178,7 +212,52 @@ RESOURCE_CATEGORY_FILTERS: Final[tuple[str, ...]] = (
     "expected_future_gas_production",
 )
 
+DATASET_FILTERS: Final[tuple[str, ...]] = (
+    "historical_projects",
+    "inflow_by_region",
+    "inflow_by_state",
+    "inflow_single_year",
+    "major_pipeline_summary",
+    "natural_gas_pipeline_projects",
+    "outflow_by_region",
+    "outflow_by_state",
+    "pipeline_state2_state_capacity",
+)
+
 METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
+    "managed_money_long": "CFTC disaggregated futures-only managed money long positions for Henry Hub natural gas.",
+    "managed_money_short": "CFTC disaggregated futures-only managed money short positions for Henry Hub natural gas.",
+    "managed_money_net": "CFTC managed money net positioning for Henry Hub natural gas.",
+    "managed_money_net_percentile_156w": "CFTC managed money net percentile over a 156-week window for Henry Hub natural gas.",
+    "open_interest": "CFTC disaggregated futures-only total open interest for Henry Hub natural gas.",
+    "des_special_questions_text": "Dallas Fed Energy Survey special questions text from quarterly reports.",
+    "des_comments_text": "Dallas Fed Energy Survey respondent comments text from quarterly reports.",
+    "des_report_summary_text": "Dallas Fed Energy Survey quarterly report summary text.",
+    "des_business_activity_index": "Dallas Fed Energy Survey business activity diffusion index.",
+    "des_company_outlook_index": "Dallas Fed Energy Survey company outlook diffusion index.",
+    "des_outlook_uncertainty_index": "Dallas Fed Energy Survey outlook uncertainty diffusion index.",
+    "des_oil_production_index": "Dallas Fed Energy Survey oil production diffusion index.",
+    "des_gas_production_index": "Dallas Fed Energy Survey gas production diffusion index.",
+    "des_capex_index": "Dallas Fed Energy Survey capital expenditures diffusion index.",
+    "des_employment_index": "Dallas Fed Energy Survey employment diffusion index.",
+    "des_input_cost_index": "Dallas Fed Energy Survey input cost diffusion index.",
+    "des_finding_development_costs_index": "Dallas Fed Energy Survey finding and development cost diffusion index.",
+    "des_lease_operating_expense_index": "Dallas Fed Energy Survey lease operating expense diffusion index.",
+    "des_prices_received_services_index": "Dallas Fed Energy Survey prices received for services diffusion index.",
+    "des_equipment_utilization_index": "Dallas Fed Energy Survey equipment utilization diffusion index.",
+    "des_operating_margin_index": "Dallas Fed Energy Survey operating margin diffusion index.",
+    "des_wti_price_expectation_6m": "Dallas Fed Energy Survey WTI price expectations over 6 months.",
+    "des_wti_price_expectation_1y": "Dallas Fed Energy Survey WTI price expectations over 1 year.",
+    "des_wti_price_expectation_2y": "Dallas Fed Energy Survey WTI price expectations over 2 years.",
+    "des_wti_price_expectation_5y": "Dallas Fed Energy Survey WTI price expectations over 5 years.",
+    "des_hh_price_expectation_6m": "Dallas Fed Energy Survey Henry Hub price expectations over 6 months.",
+    "des_hh_price_expectation_1y": "Dallas Fed Energy Survey Henry Hub price expectations over 1 year.",
+    "des_hh_price_expectation_2y": "Dallas Fed Energy Survey Henry Hub price expectations over 2 years.",
+    "des_hh_price_expectation_5y": "Dallas Fed Energy Survey Henry Hub price expectations over 5 years.",
+    "des_breakeven_oil_us": "Dallas Fed Energy Survey U.S. breakeven oil price.",
+    "des_breakeven_gas_us": "Dallas Fed Energy Survey U.S. breakeven gas price.",
+    "des_breakeven_oil_permian": "Dallas Fed Energy Survey Permian breakeven oil price.",
+    "des_breakeven_oil_eagle_ford": "Dallas Fed Energy Survey Eagle Ford breakeven oil price.",
     "iso_gas_dependency": "ISO electricity generation share from natural gas.",
     "iso_renewables": "ISO renewable electricity generation or renewable share.",
     "iso_fuel_mix": "ISO generation mix by fuel categories.",
@@ -193,6 +272,7 @@ METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
     "ng_electricity": "Natural gas consumed by electric power sector.",
     "ng_production_lower48": "Dry natural gas production/supply; supports allowed state filters and united_states_total.",
     "ng_exploration_reserves_lower48": "Natural gas exploration/proved reserves; supports allowed state and resource_category filters.",
+    "ng_pipeline": "Parquet-backed natural gas pipeline datasets such as projects, inflow/outflow by region or state, major pipeline summary, and state-to-state capacity; supports dataset filter.",
 }
 
 _ALLOWED_INTENTS = set(INTENTS)
@@ -248,8 +328,14 @@ def _build_route_schema() -> Dict[str, Any]:
                                     {"type": "null"},
                                 ]
                             },
+                            "dataset": {
+                                "anyOf": [
+                                    {"type": "string", "enum": list(DATASET_FILTERS)},
+                                    {"type": "null"},
+                                ]
+                            },
                         },
-                        "required": ["iso", "region", "resource_category"],
+                        "required": ["iso", "region", "resource_category", "dataset"],
                     },
                     {"type": "null"},
                 ]
@@ -292,6 +378,8 @@ def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
         + ", ".join(REGION_FILTERS)
         + "\nAllowed filter.resource_category values: "
         + ", ".join(RESOURCE_CATEGORY_FILTERS)
+        + "\nAllowed filter.dataset values: "
+        + ", ".join(DATASET_FILTERS)
     )
 
     user_prompt = (
@@ -374,6 +462,7 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
     iso = filters.get("iso")
     region = filters.get("region")
     resource_category = filters.get("resource_category")
+    dataset = filters.get("dataset")
     if isinstance(iso, str) and iso in _ALLOWED_ISOS:
         out["iso"] = iso
     if isinstance(region, str) and region in _ALLOWED_REGIONS:
@@ -383,6 +472,8 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
         and resource_category in RESOURCE_CATEGORY_FILTERS
     ):
         out["resource_category"] = resource_category
+    if isinstance(dataset, str) and dataset in DATASET_FILTERS:
+        out["dataset"] = dataset
     return out or None
 
 

@@ -7,6 +7,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import urllib.parse
 from time import perf_counter
 
 cwd = pathlib.Path.cwd()
@@ -16,13 +17,31 @@ else:
     proj_root = cwd  # if you launched from project root
 if str(proj_root) not in sys.path:
     sys.path.insert(0, str(proj_root))
+app_root = proj_root / "app"
+if app_root.exists() and str(app_root) not in sys.path:
+    sys.path.insert(0, str(app_root))
 
 
 import chainlit as cl
 from agents.router import route_query
+from alerts.services import (
+    build_signal_evaluator,
+    is_builtin_signal_id,
+    parse_signal_question,
+)
 from answer_builder import build_answer_with_openai
-from charts.plotly_renderer import render_plotly
+from charts.plotly_renderer import (
+    compute_timeseries_summary_metrics,
+    compute_storage_change_summary_metrics,
+    render_plotly,
+    should_render_storage_change_summary_cards,
+    should_render_timeseries_summary_cards,
+)
 from executer import ExecuteRequest, MetricExecutor
+from schemas.answer import StructuredAnswer
+from tools.cftc_adapter import CFTCAdapter
+from tools.des_adapter import DallasEnergySurveyAdapter
+from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
 from utils.sheets_logger import GoogleSheetsQuestionLogger
@@ -35,6 +54,189 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "on",
 }
 
+
+def _display_metric_name(metric: str) -> str:
+    text = (metric or "").strip()
+    if "_" in text:
+        return text.replace("_", " ").title()
+    return text or "Metric"
+
+
+def _alert_create_url(signal_id: str, title: str) -> str:
+    query = urllib.parse.urlencode({"signal_id": signal_id, "title": title})
+    return f"/alerts/new/?{query}"
+
+
+def _forecast_direction_from_result(forecast) -> str:
+    slope = ((forecast.metadata or {}).get("slope_per_day") if forecast else None)
+    try:
+        slope_value = float(slope)
+    except (TypeError, ValueError):
+        return "flat"
+    if slope_value > 0:
+        return "up"
+    if slope_value < 0:
+        return "down"
+    return "flat"
+
+
+def _format_card_value(value: object, unit: str) -> str:
+    if value is None:
+        return ""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if numeric.is_integer():
+        number = f"{int(numeric):,}"
+    else:
+        number = f"{numeric:,.1f}"
+    return f"{number} {unit}".strip()
+
+
+def format_summary_cards(metrics: list[dict]) -> str:
+    if not metrics:
+        return ""
+
+    labels = []
+    values = []
+    subtitles = []
+    for metric in metrics:
+        raw_value = metric.get("value")
+        value_text = _format_card_value(raw_value, str(metric.get("unit") or ""))
+        if not value_text:
+            continue
+        labels.append(str(metric.get("label") or "").strip() or "Metric")
+        values.append(f"**{value_text}**")
+        subtitles.append(str(metric.get("subtitle") or "").strip() or " ")
+
+    if not labels:
+        return ""
+
+    divider = "| " + " | ".join(["---"] * len(labels)) + " |"
+    label_row = "| " + " | ".join(labels) + " |"
+    value_row = "| " + " | ".join(values) + " |"
+    subtitle_row = "| " + " | ".join(subtitles) + " |"
+    return "\n".join([label_row, divider, value_row, subtitle_row])
+
+
+def format_response(data: StructuredAnswer | dict) -> str:
+    if hasattr(data, "model_dump"):
+        data = data.model_dump()
+
+    signal_map = {
+        "bullish": "🟢 Bullish",
+        "bearish": "🔴 Bearish",
+        "neutral": "🟡 Neutral",
+    }
+
+    signal_data = data.get("signal") or {}
+    signal = signal_map.get(str(signal_data.get("status") or "").lower(), "⚪ Unknown")
+    confidence = int(float(signal_data.get("confidence") or 0) * 100)
+    sections = [f"**{signal}**", f"Confidence: {confidence}%"]
+
+    summary = str(data.get("summary") or data.get("answer") or "").strip()
+    if summary:
+        sections.append(f"**Summary**\n{summary}")
+
+    drivers_list = [
+        str(driver).strip() for driver in (data.get("drivers") or []) if str(driver).strip()
+    ]
+    if drivers_list:
+        sections.append("**Drivers**\n" + "\n".join(f"- {driver}" for driver in drivers_list))
+
+    forecast = data.get("forecast") or {}
+    forecast_direction = str(forecast.get("direction") or "").strip()
+    forecast_reasoning = str(forecast.get("reasoning") or "").strip()
+    if forecast_direction or forecast_reasoning:
+        forecast_lines = []
+        if forecast_direction:
+            forecast_lines.append(f"Direction: {forecast_direction}")
+        if forecast_reasoning:
+            forecast_lines.append(forecast_reasoning)
+        sections.append("**Forecast**\n" + "  \n".join(forecast_lines))
+
+    suggestions = _validated_suggested_alerts(data)
+    if suggestions:
+        sections.append(
+            "**Suggested Alerts**\n"
+            + "\n".join(
+                f"- **[{item['title']}]({_alert_create_url(item['signal_id'], item['title'])})**  \n  {item['reason']}"
+                for item in suggestions
+            )
+        )
+
+    source_lines = [
+        (
+            f"- {source.get('title')} ({source.get('date')})"
+            if source.get("date")
+            else f"- {source.get('title')}"
+        )
+        for source in (data.get("sources") or [])
+        if str(source.get("title") or "").strip()
+    ]
+    if source_lines:
+        sections.append("**Sources**\n" + "\n".join(source_lines))
+
+    return "\n\n".join(sections)
+
+
+def _validated_suggested_alerts(data: StructuredAnswer | dict | None) -> list[dict[str, str]]:
+    if data is None:
+        return []
+    if hasattr(data, "model_dump"):
+        data = data.model_dump()
+
+    suggestions = []
+    for item in (data.get("suggested_alerts") or []):
+        if not isinstance(item, dict):
+            continue
+        signal_id = str(item.get("signal_id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        priority = str(item.get("priority") or "").strip() or "medium"
+        if not title or not reason or not is_builtin_signal_id(signal_id):
+            continue
+        suggestions.append(
+            {
+                "signal_id": signal_id,
+                "title": title,
+                "reason": reason,
+                "priority": priority,
+            }
+        )
+    return suggestions
+
+
+def _format_signal_evaluation(evaluation) -> str:
+    signal = "⚪ Unknown"
+    if evaluation.result is True:
+        signal = "🟢 Bullish"
+    elif evaluation.result is False:
+        signal = "🔴 Bearish"
+
+    sections = [f"**{signal}**"]
+    if evaluation.explanation:
+        sections.append(f"**Summary**\n{evaluation.explanation}")
+
+    value_lines = []
+    for key, value in (evaluation.values or {}).items():
+        if value in (None, "", {}, []):
+            continue
+        label = key.replace("_", " ").title()
+        value_lines.append(f"- {label}: **{value}**")
+    if value_lines:
+        sections.append("**Drivers**\n" + "\n".join(value_lines))
+
+    sections.append(
+        "**Forecast**\nDirection: flat  \nAlert signal evaluations do not include a forward forecast."
+    )
+    if evaluation.metric or evaluation.as_of:
+        source_line = evaluation.metric or "Built-in signal engine"
+        if evaluation.as_of:
+            source_line = f"{source_line} ({evaluation.as_of})"
+        sections.append("**Sources**\n- " + source_line)
+    return "\n\n".join(sections)
 
 async def _append_question_async(qlog, *, question: str, session_id: str) -> None:
     try:
@@ -62,9 +264,25 @@ def build_container():
     )
     eia_adapter = EIAAdapter(cache_dir=cache_root / "eia")
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    executor = MetricExecutor(eia=eia_adapter, grid=grid_adapter)
+    des_adapter = DallasEnergySurveyAdapter(
+        raw_dir=cache_root / "des" / "raw",
+        processed_dir=cache_root / "des" / "processed",
+    )
+    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
+    executor = MetricExecutor(
+        eia=eia_adapter,
+        grid=grid_adapter,
+        des=des_adapter,
+        cftc=cftc_adapter,
+    )
+    signal_evaluator = build_signal_evaluator()
+    forecaster = TrendForecaster(executor=executor)
 
-    return {"executor": executor}
+    return {
+        "executor": executor,
+        "signal_evaluator": signal_evaluator,
+        "forecaster": forecaster,
+    }
 
 
 @cl.set_starters
@@ -139,10 +357,22 @@ async def on_message(message: cl.Message):
     request_started = perf_counter() if DEBUG_ENABLED else 0.0
     deps = cl.user_session.get("deps") or {}
     executor: MetricExecutor = deps.get("executor")  # type: ignore[assignment]
+    signal_evaluator = deps.get("signal_evaluator")
+    forecaster: TrendForecaster | None = deps.get("forecaster")  # type: ignore[assignment]
 
     user_query = (message.content or "").strip()
     if not user_query:
         await cl.Message(content="Please enter a question.").send()
+        return
+
+    parsed_signal = parse_signal_question(user_query)
+    if (
+        parsed_signal is not None
+        and signal_evaluator is not None
+        and parsed_signal.signal_id != "routed_metric_query"
+    ):
+        evaluation = signal_evaluator.evaluate(parsed_signal)
+        await cl.Message(content=_format_signal_evaluation(evaluation)).send()
         return
 
     # Best-effort question logging
@@ -210,6 +440,15 @@ async def on_message(message: cl.Message):
         background_refresh_scheduled = bool(
             cache_meta.get("background_refresh_scheduled", False)
         )
+        forecast = None
+        if route.include_forecast and forecaster is not None:
+            forecast = forecaster.forecast_dataframe(
+                result.df,
+                metric=route.primary_metric,
+                horizon_days=route.forecast_horizon_days or 7,
+                include_overlay=True,
+                source_reference=result.source.reference,
+            )
 
         # (C) Build AnswerPayload (OpenAI writes narrative; you keep facts/sources)
         answer_started = perf_counter() if DEBUG_ENABLED else 0.0
@@ -222,17 +461,67 @@ async def on_message(message: cl.Message):
         answer_elapsed_ms = (
             (perf_counter() - answer_started) * 1000 if DEBUG_ENABLED else 0.0
         )
+        if payload.report_context_used:
+            logger.info(
+                "report_rag active=true reason=%s sources=%s query=%r",
+                payload.report_context_reason,
+                [source.title for source in payload.report_context_sources],
+                user_query,
+            )
+        else:
+            logger.info(
+                "report_rag active=false reason=%s query=%r",
+                payload.report_context_reason,
+                user_query,
+            )
+        if forecast is not None and payload.structured_response is not None:
+            payload.structured_response.forecast.direction = _forecast_direction_from_result(
+                forecast
+            )
+            payload.structured_response.forecast.reasoning = forecast.explanation
+        elif forecast is not None:
+            payload.answer_text = f"{payload.answer_text}\n\nForecast: {forecast.explanation}"
 
         message_started = perf_counter() if DEBUG_ENABLED else 0.0
-        msg = await cl.Message(content=payload.answer_text).send()
+        rendered_content = (
+            format_response(payload.structured_response)
+            if payload.structured_response is not None
+            else payload.answer_text
+        )
+        msg = await cl.Message(content=rendered_content).send()
         message_elapsed_ms = (
             (perf_counter() - message_started) * 1000 if DEBUG_ENABLED else 0.0
         )
 
+        if payload.report_context_used and payload.report_context_sources:
+            rag_lines = [
+                f"- {source.title} ({source.date})"
+                if source.date
+                else f"- {source.title}"
+                for source in payload.report_context_sources
+            ]
+            await cl.Message(
+                content="**Report Context Used**\n" + "\n".join(rag_lines)
+            ).send()
+
         chart_elapsed_ms = 0.0
         if payload.chart_spec is not None:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
-            fig = render_plotly(payload.chart_spec, result.df)
+            fig = render_plotly(payload.chart_spec, result.df, forecast_overlay=forecast)
+
+            summary_metrics = []
+            if should_render_storage_change_summary_cards(payload.chart_spec):
+                summary_metrics = compute_storage_change_summary_metrics(result.df)
+            elif should_render_timeseries_summary_cards(payload.chart_spec):
+                summary_metrics = compute_timeseries_summary_metrics(
+                    result.df,
+                    unit=getattr(payload.chart_spec.y, "units", None),
+                )
+
+            if summary_metrics:
+                summary_cards = format_summary_cards(summary_metrics)
+                if summary_cards:
+                    await cl.Message(content=summary_cards).send()
 
             await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
                 for_id=msg.id
@@ -242,7 +531,7 @@ async def on_message(message: cl.Message):
 
         # sources
         sources_elapsed_ms = 0.0
-        if payload.sources:
+        if payload.sources and payload.structured_response is None:
             sources_started = perf_counter() if DEBUG_ENABLED else 0.0
             lines = [f"• {s.label}" for s in payload.sources]
 

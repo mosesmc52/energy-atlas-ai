@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
+
 # ============================================================
 # Gas Risk Daily Job
 # ============================================================
@@ -51,20 +53,39 @@ run_cmd() {
 }
 
 # ============================================================
-# STEP 1 — Scrapy EBB ingestion (pipelines)
+# STEP 1 — NOAA weather aggregation
 # ============================================================
 
-step "[STEP 1] Scrapy: EBB pipeline ingestion"
+step "[STEP 1] NOAA weather aggregation"
+run_cmd python "${WORKSPACE_ROOT}/scripts/noaa/download_and_aggregate_ghcnd.py"
 
-cd /app/scrapy
+# ============================================================
+# STEP 2 — EIA crawlers
+# ============================================================
 
-# ------------------------------
-# PIPELINE: Algonquin
-# ------------------------------
-substep "Pipeline: Algonquin — Capacity"
-run_cmd scrapy crawl algonquin_capacity -a days_ago=3 -s LOG_LEVEL=INFO
+step "[STEP 2] EIA crawlers"
+run_cmd python "${WORKSPACE_ROOT}/scripts/eia/crawlers/run_all.py"
 
-echo "[STEP 1] Scrapy ingestion completed"
+# ============================================================
+# STEP 3 — Dallas Fed Energy Survey sync
+# ============================================================
+
+step "[STEP 3] Dallas Fed Energy Survey sync"
+run_cmd python "${WORKSPACE_ROOT}/scripts/des/sync_des.py" --include-reports --include-historical
+
+# ============================================================
+# STEP 4 — Pipeline projects ingestion
+# ============================================================
+
+step "[STEP 4] Pipeline projects ingestion"
+run_cmd python "${WORKSPACE_ROOT}/scripts/eia/ng/pipelines/ingest_pipeline_projects.py"
+
+# ============================================================
+# STEP 5 — State-to-state capacity ingestion
+# ============================================================
+
+step "[STEP 5] State-to-state capacity ingestion"
+run_cmd python "${WORKSPACE_ROOT}/scripts/eia/ng/pipelines/ingest_state_to_state_capacity.py"
 
 
 JOB_END_TS="$(date -u)"

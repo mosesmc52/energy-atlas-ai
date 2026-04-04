@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 from schemas.answer import SourceRef
 from tools.cache_base import CacheBackedTimeseriesAdapterBase
+from tools.forecasting import ForecastResult, forecast_linear_trend
 
 DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "1",
@@ -62,6 +63,24 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
     # ----------------------------
     # Public methods (router can call these)
     # ----------------------------
+
+    def forecast_result(
+        self,
+        result: GridStatusResult,
+        *,
+        metric: str,
+        horizon_days: int = 7,
+        lookback_observations: int = 30,
+        include_overlay: bool = False,
+    ) -> ForecastResult:
+        return forecast_linear_trend(
+            result.df,
+            metric=metric,
+            horizon_days=horizon_days,
+            lookback_observations=lookback_observations,
+            include_overlay=include_overlay,
+            source_reference=result.source.reference,
+        )
 
     def iso_fuel_mix(
         self,

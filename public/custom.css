@@ -93,11 +93,95 @@
   display: none !important;
 }
 
+html,
+body,
+#root {
+    background-color: #FAF9F5 !important;
+}
+
+.MuiBox-root,
+.MuiPaper-root {
+    background-color: #FAF9F5 !important;
+}
+
 
 #chat-submit {
-    background-color: #176bb2 !important; /* Example color */
+    background-color: #FAF9F5 !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
+    color: #0f172a !important;
 }
 
 #new-chat-button {
     display: none !important;
+}
+
+button {
+    background-color: #FAF9F5 !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
+    color: #0f172a !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+}
+
+button:hover,
+#chat-submit:hover {
+    background-color: #f3f1ea !important;
+    border-color: rgba(15, 23, 42, 0.22) !important;
+}
+
+table {
+    background-color: #ffffff !important;
+    border-radius: 16px !important;
+    overflow: hidden !important;
+}
+
+th,
+td {
+    background-color: #ffffff !important;
+}
+
+.js-plotly-plot,
+.plotly,
+.plot-container,
+.svg-container {
+    border-radius: 20px !important;
+    overflow: hidden !important;
+    background-color: #ffffff !important;
+}
+
+.prose a,
+.markdown a,
+[data-step-type="assistant_message"] a,
+[class*="message"] a {
+    color: #1B81C4 !important;
+}
+
+.prose a:hover,
+.markdown a:hover,
+[data-step-type="assistant_message"] a:hover,
+[class*="message"] a:hover {
+    color: #166da6 !important;
+}
+
+#energy-atlas-signin-link.energy-atlas-signin-link {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 20;
+    color: #0f172a;
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+#energy-atlas-signin-link.energy-atlas-signin-link:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+    #energy-atlas-signin-link.energy-atlas-signin-link {
+        left: 0.75rem;
+        font-size: 0.9rem;
+    }
 }

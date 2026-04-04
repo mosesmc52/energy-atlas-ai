@@ -1,0 +1,221 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-[#faf9f5]">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" name="viewport">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-touch-fullscreen" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>{% block title %}Energy Atlas{% endblock %}</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32.png' %}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'img/apple-touch-icon.png' %}">
+  <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio,line-clamp"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            atlas: {
+              50: "#eef4fb",
+              100: "#dbe7f7",
+              500: "#365fa4",
+              600: "#294a84",
+              900: "#1f355c"
+            }
+          },
+          boxShadow: {
+            panel: "0 24px 60px rgba(50, 44, 35, 0.08)"
+          }
+        }
+      }
+    };
+  </script>
+
+  {% block extra-styles %}{% endblock %}
+  {% block json-ld %}{% endblock %}
+
+  <style type="text/tailwindcss">
+    @layer base {
+      body {
+        @apply h-full antialiased;
+        background-image:
+          radial-gradient(circle at top left, rgba(54, 95, 164, 0.10), transparent 34%),
+          radial-gradient(circle at top right, rgba(180, 150, 98, 0.10), transparent 24%),
+          linear-gradient(180deg, #faf9f5 0%, #f7f3eb 54%, #f3eee4 100%);
+        color: #1f2937;
+      }
+
+      input,
+      select,
+      textarea {
+        @apply w-full rounded-xl px-4 py-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-atlas-500/20;
+        border: 1px solid rgba(123, 97, 71, 0.16);
+        background: rgba(255, 255, 255, 0.92);
+        color: #1f2937;
+      }
+
+      label {
+        @apply mb-2 block text-sm font-medium;
+        color: #334155;
+      }
+
+      textarea {
+        @apply min-h-32;
+      }
+
+      pre {
+        @apply overflow-x-auto rounded-2xl p-4 text-xs;
+        border: 1px solid rgba(123, 97, 71, 0.14);
+        background: rgba(255, 255, 255, 0.88);
+        color: #334155;
+      }
+    }
+
+    @layer components {
+      .panel {
+        @apply rounded-3xl p-6 shadow-panel;
+        border: 1px solid rgba(123, 97, 71, 0.12);
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(18px);
+      }
+
+      .btn-primary {
+        @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition focus:outline-none focus:ring-2 focus:ring-atlas-500/30;
+        background: #365fa4;
+      }
+
+      .btn-primary:hover {
+        background: #294a84;
+      }
+
+      .btn-secondary {
+        @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-atlas-500/15;
+        border: 1px solid rgba(123, 97, 71, 0.16);
+        background: rgba(255, 255, 255, 0.78);
+        color: #111111;
+      }
+
+      .btn-secondary:hover {
+        border-color: rgba(54, 95, 164, 0.24);
+        background: rgba(255, 255, 255, 0.96);
+      }
+
+      .btn-black {
+        @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-slate-900/20;
+        border: 1px solid #111111;
+        background: #111111;
+        color: #ffffff;
+      }
+
+      .btn-black:hover {
+        border-color: #000000;
+        background: #000000;
+      }
+
+      .field-group {
+        @apply space-y-2;
+      }
+
+      .form-stack {
+        @apply space-y-5;
+      }
+
+      .eyebrow {
+        @apply text-xs font-semibold uppercase tracking-[0.24em];
+        color: rgba(54, 95, 164, 0.72);
+      }
+    }
+
+    @layer utilities {
+      .text-white { color: #1f2937 !important; }
+      .text-slate-100 { color: #1f2937 !important; }
+      .text-slate-200 { color: #334155 !important; }
+      .text-slate-300 { color: #475569 !important; }
+      .text-slate-400 { color: #64748b !important; }
+      .text-slate-500 { color: #94a3b8 !important; }
+      .text-atlas-100 { color: #4f78bb !important; }
+      .hover\:text-white:hover { color: #1f2937 !important; }
+      .hover\:text-atlas-100:hover { color: #365fa4 !important; }
+      .bg-slate-950\/80, .bg-slate-950\/60, .bg-slate-950\/55, .bg-slate-950\/50, .bg-slate-950\/40,
+      .bg-slate-900\/80, .bg-slate-900\/75, .bg-slate-900\/70, .bg-slate-900\/60 {
+        background-color: rgba(255, 255, 255, 0.84) !important;
+      }
+      .border-slate-800\/90, .border-slate-800, .border-slate-700, .border-slate-600 {
+        border-color: rgba(123, 97, 71, 0.16) !important;
+      }
+      .border-white\/10 {
+        border-color: rgba(123, 97, 71, 0.12) !important;
+      }
+      .bg-white\/95 {
+        background-color: rgba(255, 255, 255, 0.92) !important;
+      }
+    }
+  </style>
+</head>
+
+<body class="h-full">
+{% block page-container %}
+  <div class="min-h-full">
+    {% block header %}
+      {% include "./common/header.html" %}
+    {% endblock %}
+
+    <main class="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      {% if messages %}
+        <div class="mb-6 space-y-3">
+          {% for message in messages %}
+            <div
+              class="flex items-start justify-between gap-4 border-y px-4 py-3
+              {% if 'error' in message.tags %}
+                border-rose-500 bg-rose-100 text-rose-700
+              {% elif 'warning' in message.tags %}
+                border-amber-500 bg-amber-100 text-amber-700
+              {% elif 'success' in message.tags %}
+                border-emerald-500 bg-emerald-100 text-emerald-700
+              {% else %}
+                border-blue-500 bg-blue-100 text-blue-700
+              {% endif %}"
+              role="alert"
+            >
+              <div class="min-w-0 flex-1">
+                <p class="font-bold">
+                  {% if 'error' in message.tags %}
+                    Error
+                  {% elif 'warning' in message.tags %}
+                    Warning
+                  {% elif 'success' in message.tags %}
+                    Success
+                  {% else %}
+                    Informational message
+                  {% endif %}
+                </p>
+                <p class="text-sm whitespace-pre-line">{{ message }}</p>
+              </div>
+              <button
+                type="button"
+                class="shrink-0 text-lg font-semibold leading-none opacity-70 transition hover:opacity-100"
+                aria-label="Close notification"
+                onclick="this.closest('[role=&quot;alert&quot;]').remove()"
+              >
+                &times;
+              </button>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% block page-content %}{% endblock %}
+    </main>
+  </div>
+{% endblock %}
+
+{% block modal %}{% endblock %}
+</body>
+
+{% block javascript %}
+  <script type="text/javascript" language="javascript" src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+{% endblock %}
+
+{% block extra-javascript %}{% endblock %}
+</html>

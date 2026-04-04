@@ -190,27 +190,51 @@ def read_table(ws: Worksheet, header_cell: str, data_cell: str) -> pd.DataFrame:
     data_row, data_col = _split_cell(data_cell)
     start_col = min(start_col, data_col)
 
-    end_col = detect_last_col_from_header(
-        ws, header_row=header_row, start_col=start_col
-    )
-    last_row = detect_last_row_from_data(
-        ws, start_row=data_row, start_col=start_col, end_col=end_col
+    max_col = min(max(ws.max_column, start_col), 5000)
+    row_iter = ws.iter_rows(
+        min_row=header_row,
+        max_row=ws.max_row,
+        min_col=start_col,
+        max_col=max_col,
+        values_only=True,
     )
 
-    headers = [
-        ws.cell(row=header_row, column=c).value for c in range(start_col, end_col + 1)
-    ]
+    try:
+        header_values = next(row_iter)
+    except StopIteration:
+        return pd.DataFrame()
+
+    last_nonblank_idx = 0
+    blanks = 0
+    for idx, value in enumerate(header_values):
+        if _is_blank(value):
+            blanks += 1
+            if blanks >= 12:
+                break
+        else:
+            last_nonblank_idx = idx
+            blanks = 0
+
+    headers = [header_values[idx] for idx in range(last_nonblank_idx + 1)]
     headers = [("" if h is None else str(h).strip()) for h in headers]
     headers = _dedupe_headers(headers)
 
-    if last_row < data_row:
-        return pd.DataFrame(columns=headers)
-
     rows = []
-    for r in range(data_row, last_row + 1):
-        rows.append(
-            [ws.cell(row=r, column=c).value for c in range(start_col, end_col + 1)]
-        )
+    blank_rows = 0
+    first_data_offset = data_row - header_row - 1
+    for offset, row in enumerate(row_iter):
+        if offset < first_data_offset:
+            continue
+
+        row_values = list(row[: last_nonblank_idx + 1])
+        if any(not _is_blank(value) for value in row_values):
+            rows.append(row_values)
+            blank_rows = 0
+        else:
+            rows.append(row_values)
+            blank_rows += 1
+            if blank_rows >= 80:
+                break
 
     df = pd.DataFrame(rows, columns=headers)
     df = df.dropna(how="all")
@@ -306,7 +330,7 @@ def main():
     p.add_argument(
         "--output-format",
         choices=["csv", "parquet"],
-        default="csv",
+        default="parquet",
         help="Output file format",
     )
     p.add_argument("--raw-dir", default="data/raw/eia/ng/pipeline")

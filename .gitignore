@@ -136,6 +136,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.example.env
 .envrc
 .venv
 env/
@@ -206,6 +208,12 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 data/
-.chainlit
+.chainlit/translations/
 service-account.json
 **/*.json
+docker_volumes/
+**/.terraform
+**/*.sqlite3
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/tfplan

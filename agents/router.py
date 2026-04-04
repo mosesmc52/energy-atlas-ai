@@ -318,7 +318,184 @@ RESERVES_RESOURCE_CATEGORY_KEYWORDS = {
     ],
 }
 
+PIPELINE_DATASET_KEYWORDS = {
+    "historical_projects": [
+        "historical projects",
+        "historical pipeline projects",
+        "pipeline project history",
+    ],
+    "inflow_by_region": [
+        "inflow by region",
+        "regional inflow",
+        "inflows by region",
+        "region inflow",
+    ],
+    "inflow_by_state": [
+        "inflow by state",
+        "state inflow",
+        "inflows by state",
+    ],
+    "inflow_single_year": [
+        "inflow single year",
+        "single year inflow",
+    ],
+    "major_pipeline_summary": [
+        "major pipeline summary",
+        "major pipelines",
+        "pipeline summary",
+    ],
+    "natural_gas_pipeline_projects": [
+        "pipeline projects",
+        "natural gas pipeline projects",
+        "project list",
+        "pipeline project",
+    ],
+    "outflow_by_region": [
+        "outflow by region",
+        "regional outflow",
+        "outflows by region",
+        "region outflow",
+    ],
+    "outflow_by_state": [
+        "outflow by state",
+        "state outflow",
+        "outflows by state",
+    ],
+    "pipeline_state2_state_capacity": [
+        "state to state capacity",
+        "state2state capacity",
+        "pipeline capacity",
+        "capacity by state pair",
+        "interstate capacity",
+    ],
+}
+
 ROUTE_MAP = {
+    "managed_money_net_percentile_156w": [
+        "managed money percentile",
+        "managed money extreme",
+        "managed money positioning percentile",
+        "managed money percentile 156w",
+    ],
+    "managed_money_net": [
+        "managed money net",
+        "net managed money",
+        "spec net length",
+        "managed money positioning",
+        "cot managed money net",
+        "cftc managed money net",
+    ],
+    "managed_money_long": [
+        "managed money long",
+        "spec longs",
+        "cftc longs",
+    ],
+    "managed_money_short": [
+        "managed money short",
+        "spec shorts",
+        "cftc shorts",
+    ],
+    "open_interest": [
+        "open interest",
+        "cftc open interest",
+        "cot open interest",
+    ],
+    "des_special_questions_text": [
+        "dallas fed special questions",
+        "special questions",
+        "survey special questions",
+    ],
+    "des_comments_text": [
+        "survey comments",
+        "des comments",
+        "dallas fed comments",
+        "respondent comments",
+    ],
+    "des_report_summary_text": [
+        "dallas fed energy survey",
+        "energy survey",
+        "oil and gas survey",
+        "current report",
+        "latest survey summary",
+    ],
+    "des_business_activity_index": [
+        "business activity index",
+        "dallas fed business activity",
+        "des business activity",
+    ],
+    "des_company_outlook_index": [
+        "company outlook",
+        "company outlook index",
+    ],
+    "des_outlook_uncertainty_index": [
+        "uncertainty index",
+        "outlook uncertainty",
+    ],
+    "des_oil_production_index": [
+        "oil production index",
+        "des oil production",
+    ],
+    "des_gas_production_index": [
+        "gas production index",
+        "natural gas production index",
+        "des gas production",
+    ],
+    "des_capex_index": [
+        "capex index",
+        "capital expenditures index",
+        "capital expenditure index",
+    ],
+    "des_employment_index": [
+        "employment index",
+        "des employment",
+    ],
+    "des_input_cost_index": [
+        "input cost index",
+        "input costs",
+    ],
+    "des_finding_development_costs_index": [
+        "finding and development costs",
+        "development costs index",
+    ],
+    "des_lease_operating_expense_index": [
+        "lease operating expense",
+        "lease operating expenses",
+    ],
+    "des_prices_received_services_index": [
+        "prices received services",
+        "prices received for services",
+    ],
+    "des_equipment_utilization_index": [
+        "equipment utilization",
+        "utilization of equipment",
+    ],
+    "des_operating_margin_index": [
+        "operating margin",
+        "operating margin index",
+    ],
+    "des_wti_price_expectation_1y": [
+        "wti expectations",
+        "wti price expectations",
+        "wti 1 year",
+        "wti one year",
+        "price expectations",
+    ],
+    "des_hh_price_expectation_1y": [
+        "henry hub expectations",
+        "henry hub price expectations",
+        "hh expectations",
+        "henry hub 1 year",
+    ],
+    "des_breakeven_oil_us": [
+        "break-even oil",
+        "breakeven oil",
+        "oil breakeven",
+    ],
+    "des_breakeven_gas_us": [
+        "break-even gas",
+        "breakeven gas",
+        "gas breakeven",
+    ],
     "iso_gas_dependency": [
         "gas share",
         "gas dependency",
@@ -426,6 +603,19 @@ ROUTE_MAP = {
         "reserves",
         "proved reserves",
     ],
+    "ng_pipeline": [
+        "pipeline projects",
+        "pipeline project",
+        "pipeline capacity",
+        "state to state capacity",
+        "major pipeline",
+        "pipeline summary",
+        "inflow by region",
+        "inflow by state",
+        "outflow by region",
+        "outflow by state",
+        "historical projects",
+    ],
 }
 
 ALLOWED_METRICS = set(ROUTE_MAP.keys())
@@ -440,6 +630,7 @@ ALLOWED_RESERVES_STATES = set(RESERVES_STATE_KEYWORDS.keys())
 ALLOWED_RESERVES_RESOURCE_CATEGORIES = set(
     RESERVES_RESOURCE_CATEGORY_KEYWORDS.keys()
 )
+ALLOWED_PIPELINE_DATASETS = set(PIPELINE_DATASET_KEYWORDS.keys())
 
 # ----------------------------
 # Normalization
@@ -463,6 +654,24 @@ NORMALIZE_PATTERNS: List[Tuple[str, str]] = [
 
 # metric-specific bonus terms
 BONUS_TERMS: Dict[str, List[str]] = {
+    "managed_money_net_percentile_156w": ["managed money", "percentile", "cftc", "cot"],
+    "managed_money_net": ["managed money", "net", "cftc", "cot"],
+    "managed_money_long": ["managed money", "long", "cftc", "cot"],
+    "managed_money_short": ["managed money", "short", "cftc", "cot"],
+    "open_interest": ["open interest", "cftc", "cot"],
+    "des_special_questions_text": ["special questions", "des", "dallas fed"],
+    "des_comments_text": ["comments", "survey comments", "des"],
+    "des_report_summary_text": ["energy survey", "dallas fed", "des"],
+    "des_business_activity_index": ["business activity", "des", "dallas fed"],
+    "des_company_outlook_index": ["company outlook", "des"],
+    "des_outlook_uncertainty_index": ["uncertainty", "des"],
+    "des_oil_production_index": ["oil production", "des"],
+    "des_gas_production_index": ["gas production", "des"],
+    "des_capex_index": ["capex", "capital expenditures", "des"],
+    "des_wti_price_expectation_1y": ["wti", "expectations", "des"],
+    "des_hh_price_expectation_1y": ["henry hub", "expectations", "des"],
+    "des_breakeven_oil_us": ["breakeven", "oil", "des"],
+    "des_breakeven_gas_us": ["breakeven", "gas", "des"],
     "working_gas_storage_change_weekly": ["last week", "weekly", "wow"],
     "working_gas_storage_lower48": ["storage", "inventory", "working gas"],
     "henry_hub_spot": ["henry hub", "spot", "benchmark"],
@@ -480,6 +689,7 @@ BONUS_TERMS: Dict[str, List[str]] = {
     "ng_electricity": ["power plants", "electricity", "power generation"],
     "ng_production_lower48": ["production", "output", "supply"],
     "ng_exploration_reserves_lower48": ["reserves", "exploration"],
+    "ng_pipeline": ["pipeline", "capacity", "projects", "inflow", "outflow"],
     "iso_load": ["load", "demand", "system demand"],
     "iso_gas_dependency": ["gas share", "gas-fired", "gas-fired generation"],
     "iso_renewables": ["renewables", "wind", "solar"],
@@ -501,6 +711,17 @@ DERIVED_PATTERNS = [
     r"\btight\b",
 ]
 EXPLAIN_PATTERNS = [r"\bwhy\b", r"\bbecause\b", r"\bdid .* rise\b", r"\bdid .* fall\b"]
+FORECAST_PATTERNS = [
+    r"\bforecast\b",
+    r"\bprojection\b",
+    r"\bproject\b",
+    r"\bprojected\b",
+    r"\bnext week\b",
+    r"\bnext 7 days\b",
+    r"\bnext 14 days\b",
+    r"\bnext two weeks\b",
+    r"\bnext 2 weeks\b",
+]
 
 
 @dataclass(frozen=True)
@@ -532,6 +753,8 @@ class HybridRouteResult:
     source: Literal["rule", "llm"] = "rule"
     reason: Optional[str] = None
     normalized_query: Optional[str] = None
+    include_forecast: bool = False
+    forecast_horizon_days: Optional[int] = None
 
 
 # ----------------------------
@@ -650,6 +873,14 @@ def route_reserves_resource_category(q: str) -> str | None:
     return None
 
 
+def route_pipeline_dataset(q: str) -> str | None:
+    q = q.lower()
+    for dataset, keys in PIPELINE_DATASET_KEYWORDS.items():
+        if contains_any(keys, q):
+            return dataset
+    return None
+
+
 def detect_intent(q: str) -> str:
     if any(re.search(p, q) for p in COMPARE_PATTERNS):
         return "compare"
@@ -660,6 +891,18 @@ def detect_intent(q: str) -> str:
     if any(re.search(p, q) for p in EXPLAIN_PATTERNS):
         return "explain"
     return "single_metric"
+
+
+def detect_forecast_request(q: str) -> bool:
+    return any(re.search(pattern, q) for pattern in FORECAST_PATTERNS)
+
+
+def detect_forecast_horizon_days(q: str) -> Optional[int]:
+    if not detect_forecast_request(q):
+        return None
+    if re.search(r"\b(14|fourteen)\s*day", q) or re.search(r"\b(two|2)\s+weeks?\b", q):
+        return 14
+    return 7
 
 
 def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
@@ -683,9 +926,56 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         score -= 0.5
     if metric == "ng_consumption_by_sector" and "most" in q:
         score += 0.75
+    if metric == "ng_consumption_lower48" and route_consumption_state(q) and any(
+        token in q for token in ("consumption", "usage")
+    ):
+        score += 1.5
+    if metric == "ng_production_lower48" and route_production_state(q) and any(
+        token in q for token in ("production", "output", "supply")
+    ):
+        score += 1.5
+    if metric == "ng_exploration_reserves_lower48" and (
+        route_reserves_state(q) or route_reserves_resource_category(q)
+    ):
+        score += 1.5
+    if metric == "lng_imports" and route_import_region(q) and "import" in q:
+        score += 1.5
+    if metric == "lng_exports" and route_export_region(q) and "export" in q:
+        score += 1.5
     if metric == "ng_electricity" and "share" in q:
         score -= 0.75
     if metric == "iso_fuel_mix" and "consumption" in q:
+        score -= 1.0
+    if metric == "lng_exports" and any(
+        term in q
+        for term in (
+            "pipeline projects",
+            "pipeline capacity",
+            "state to state capacity",
+            "inflow",
+            "outflow",
+            "major pipeline",
+        )
+    ):
+        score -= 1.25
+    if metric == "lng_imports" and any(
+        term in q
+        for term in ("pipeline capacity", "inflow", "outflow", "major pipeline")
+    ):
+        score -= 1.0
+    if metric == "des_gas_production_index" and "consumption" in q:
+        score -= 2.0
+    if metric == "open_interest" and "interest rate" in q:
+        score -= 1.5
+    if metric.startswith("des_") and "survey" not in q and "index" not in q and "dallas fed" not in q:
+        if metric not in {
+            "des_breakeven_oil_us",
+            "des_breakeven_gas_us",
+            "des_wti_price_expectation_1y",
+            "des_hh_price_expectation_1y",
+        }:
+            score -= 0.5
+    if metric.startswith("des_") and "demand" in q and "iso" in q:
         score -= 1.0
 
     return RouteCandidate(
@@ -755,6 +1045,12 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
         category = route_reserves_resource_category(q)
         if category:
             filters["resource_category"] = category
+    elif metric == "ng_pipeline":
+        dataset = route_pipeline_dataset(q)
+        if dataset:
+            filters["dataset"] = dataset
+        elif confidence >= 0.85:
+            filters["dataset"] = "natural_gas_pipeline_projects"
 
     return filters or None
 
@@ -869,6 +1165,12 @@ def validate_llm_route(
             filters.pop("resource_category", None)
         elif resource_category not in ALLOWED_RESERVES_RESOURCE_CATEGORIES:
             filters.pop("resource_category", None)
+    if "dataset" in filters:
+        dataset = filters["dataset"]
+        if primary_metric != "ng_pipeline":
+            filters.pop("dataset", None)
+        elif dataset not in ALLOWED_PIPELINE_DATASETS:
+            filters.pop("dataset", None)
 
     if llm.intent not in {
         "single_metric",
@@ -899,6 +1201,8 @@ def validate_llm_route(
         source="llm",
         reason=llm.reason,
         normalized_query=normalized_query,
+        include_forecast=detect_forecast_request(normalized_query),
+        forecast_horizon_days=detect_forecast_horizon_days(normalized_query),
     )
 
 
@@ -911,6 +1215,8 @@ def route_query(user_query: str) -> HybridRouteResult:
     start, end = resolve_date_range(user_query)
     has_explicit_dates = has_explicit_date_reference(user_query)
     intent = detect_intent(normalized)
+    include_forecast = detect_forecast_request(normalized)
+    forecast_horizon_days = detect_forecast_horizon_days(normalized)
 
     candidates = score_routes(normalized)
     confidence = candidate_confidence(candidates)
@@ -943,6 +1249,8 @@ def route_query(user_query: str) -> HybridRouteResult:
             source="rule",
             reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
             normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
         )
 
     if intent == "ranking" and top.metric == "ng_consumption_by_sector" and not ambiguous:
@@ -959,6 +1267,8 @@ def route_query(user_query: str) -> HybridRouteResult:
             source="rule",
             reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
             normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
         )
 
     # Multi-metric or advanced intent -> LLM assist
@@ -989,4 +1299,6 @@ def route_query(user_query: str) -> HybridRouteResult:
         source="rule",
         reason=f"Fallback rule route to {top.metric}",
         normalized_query=normalized,
+        include_forecast=include_forecast,
+        forecast_horizon_days=forecast_horizon_days,
     )
