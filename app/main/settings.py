@@ -143,6 +143,7 @@ class Base(Configuration):
     AWS_SES_SOURCE_ARN = os.getenv("AWS_SES_SOURCE_ARN", "").strip()
     AWS_SES_RETURN_PATH_ARN = os.getenv("AWS_SES_RETURN_PATH_ARN", "").strip()
     AWS_SES_FROM_ARN = os.getenv("AWS_SES_FROM_ARN", "").strip()
+    DJSTRIPE_FOREIGN_KEY_TO_FIELD = os.getenv("DJSTRIPE_FOREIGN_KEY_TO_FIELD", "id").strip()
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
     GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
     GOOGLE_OAUTH_SCOPES = [
@@ -174,7 +175,6 @@ class Development(Base):
     STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
     STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     STRIPE_LIVE_MODE = False  # Change to True in production
-    DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
 
 
 class Production(Base):

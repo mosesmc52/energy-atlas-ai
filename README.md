@@ -234,6 +234,14 @@ make tf-init
 make tf-apply
 ```
 
+After `make tf-apply`, check the current droplet IP:
+
+```bash
+make tf-output
+```
+
+The `droplet_ipv4` output is the IP your DNS records must point to.
+
 2. Create a production env file locally:
 
 ```bash
@@ -263,6 +271,30 @@ DEPLOY_ENV_FILE=.env.production
 ```
 
 The bootstrap script uploads the code, uploads `.env.production` as the remote `.env`, builds the production Docker images, and starts the SSL-enabled production Docker Compose stack defined in `docker/docker-compose.production.yml`.
+
+### DNS and SSL checklist
+
+Before automatic HTTPS can work, your public DNS must point to the current Terraform droplet IP.
+
+1. Get the current droplet IP:
+
+```bash
+make tf-output
+```
+
+2. In your DNS provider, point:
+
+- `askenergyatlas.com` → current `droplet_ipv4`
+
+3. Verify DNS locally:
+
+```bash
+dig +short askenergyatlas.com
+```
+
+4. Confirm the resolved IP matches Terraform output before expecting Caddy to issue TLS certificates.
+
+If DNS still points to an older droplet, Let's Encrypt validation will fail even if the new server is healthy.
 
 ### Updating the app after deployment
 
