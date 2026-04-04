@@ -242,6 +242,14 @@ cp .example.env .env.production
 
 3. Fill in the real production values in `.env.production`.
 
+At minimum, make sure `.env.production` includes:
+
+```env
+APP_DOMAIN=askenergyatlas.com
+APP_URL=https://askenergyatlas.com
+DJANGO_ALLOWED_HOSTS=askenergyatlas.com
+```
+
 4. Bootstrap the server:
 
 ```bash
@@ -254,7 +262,7 @@ This resolves the server IP from Terraform output and runs the bootstrap script 
 DEPLOY_ENV_FILE=.env.production
 ```
 
-The bootstrap script uploads the code, uploads `.env.production` as the remote `.env`, builds the Docker images, and starts the Docker Compose stack.
+The bootstrap script uploads the code, uploads `.env.production` as the remote `.env`, builds the production Docker images, and starts the SSL-enabled production Docker Compose stack defined in `docker/docker-compose.production.yml`.
 
 ### Updating the app after deployment
 
@@ -287,6 +295,7 @@ You can also run the scripts directly:
 - `update.sh` is intended for normal code deploys.
 - Use `update.sh` for routine releases because it is non-destructive and preserves persistent directories.
 - `bootstrap.sh` recreates the remote app directory, but now restores the uploaded production env file afterward when `--env-file` is used.
+- Production Caddy configuration lives in `docker/Caddyfile.production` and uses automatic HTTPS for `APP_DOMAIN`.
 
 ## Notes
 

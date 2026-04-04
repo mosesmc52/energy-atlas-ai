@@ -176,8 +176,8 @@ remote "set -euo pipefail;
     exit 127
   fi
 
-  \$DC -f docker/docker-compose.yml build
-  \$DC -f docker/docker-compose.yml up -d
-  \$DC -f docker/docker-compose.yml ps"
+  \$DC -f docker/docker-compose.production.yml build
+  \$DC -f docker/docker-compose.production.yml up -d
+  \$DC -f docker/docker-compose.production.yml ps"
 
 echo "==> Update complete: ${USER_NAME}@${HOST}:${REMOTE_DIR}"

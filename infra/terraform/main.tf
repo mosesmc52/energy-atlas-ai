@@ -35,7 +35,7 @@ resource "digitalocean_droplet" "energy_atlas_ai" {
 
 
 
-# Firewall: SSH + HTTP
+# Firewall: SSH + HTTP + HTTPS
 resource "digitalocean_firewall" "runner_fw" {
   name = "${local.droplet_slug}-fw"
 
@@ -50,6 +50,12 @@ resource "digitalocean_firewall" "runner_fw" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
