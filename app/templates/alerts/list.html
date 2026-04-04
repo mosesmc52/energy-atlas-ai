@@ -26,37 +26,37 @@
           </select>
         </form>
       </div>
-      <ul class="space-y-4">
+      <ul class="space-y-3">
         {% for rule in alert_rules %}
           <li class="max-w-4xl">
-            <a class="block rounded-[28px] border border-stone-200 bg-white px-6 py-6 shadow-[0_8px_26px_rgba(50,44,35,0.04)] transition hover:border-stone-300 hover:shadow-[0_12px_30px_rgba(50,44,35,0.06)]" href="{% url 'alerts:detail' rule.id %}">
-              <div class="space-y-5">
+            <a class="block rounded-[24px] border border-stone-200 bg-white px-5 py-4 shadow-[0_8px_26px_rgba(50,44,35,0.04)] transition hover:border-stone-300 hover:shadow-[0_12px_30px_rgba(50,44,35,0.06)]" href="{% url 'alerts:detail' rule.id %}">
+              <div class="space-y-4">
                 <div class="flex items-start justify-between gap-4">
-                  <div class="space-y-2">
-                    <h3 class="text-2xl font-semibold tracking-tight text-slate-900">{{ rule.name }}</h3>
+                  <div class="space-y-1.5">
+                    <h3 class="text-lg font-semibold tracking-tight text-slate-900">{{ rule.name }}</h3>
                     <p class="text-sm text-slate-400">Created {{ rule.created_at|date:"F j, Y" }}</p>
-                    <p class="max-w-3xl text-base leading-8 text-slate-600">{{ rule.question }}</p>
+                    <p class="max-w-3xl text-sm leading-7 text-slate-600">{{ rule.question }}</p>
                   </div>
                   {% if rule.is_enabled %}
-                    <span class="inline-flex items-center rounded-full bg-[#edf5df] px-4 py-2 text-sm font-semibold text-[#648b2f]">
-                      <span class="mr-2 text-base leading-none">•</span>Active
+                    <span class="inline-flex items-center rounded-full bg-[#edf5df] px-3 py-1.5 text-sm font-semibold text-[#648b2f]">
+                      <span class="mr-2 text-sm leading-none">•</span>Active
                     </span>
                   {% else %}
-                    <span class="inline-flex items-center rounded-full bg-stone-100 px-4 py-2 text-sm font-semibold text-stone-500">
-                      <span class="mr-2 text-base leading-none">•</span>{{ rule.get_status_display }}
+                    <span class="inline-flex items-center rounded-full bg-stone-100 px-3 py-1.5 text-sm font-semibold text-stone-500">
+                      <span class="mr-2 text-sm leading-none">•</span>{{ rule.get_status_display }}
                     </span>
                   {% endif %}
                 </div>
                 <dl class="grid gap-3 sm:grid-cols-3 lg:max-w-[480px]">
-                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-3">
+                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-2.5">
                     <dt class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Frequency</dt>
                     <dd class="mt-2 text-sm font-semibold text-slate-900">{{ rule.get_frequency_display }}</dd>
                   </div>
-                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-3">
+                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-2.5">
                     <dt class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Cooldown</dt>
                     <dd class="mt-2 text-sm font-semibold text-slate-900">{{ rule.cooldown_hours }}h</dd>
                   </div>
-                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-3">
+                  <div class="rounded-2xl bg-[#f7f3ea] px-4 py-2.5">
                     <dt class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Last sent</dt>
                     <dd class="mt-2 text-sm font-semibold text-slate-900">
                       {% if rule.last_notified_at %}

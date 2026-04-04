@@ -23,12 +23,15 @@ from django.urls import include, path
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import TemplateView
 
+from billing import views as billing_views
+
 
 def root_redirect(_request):
     return redirect("auth:signin")
 
 
 urlpatterns = [
+    path("stripe/webhook/", billing_views.stripe_webhook, name="stripe-webhook"),
     path("stripe/", include("djstripe.urls", namespace="djstripe")),
     path("secret-room/", admin.site.urls),
     path("", root_redirect, name="root"),
@@ -39,7 +42,7 @@ urlpatterns = [
     ),
     path(
         "pricing/",
-        TemplateView.as_view(template_name="common/pricing.html"),
+        billing_views.pricing_page,
         name="pricing",
     ),
     path("billing/", include("billing.urls")),

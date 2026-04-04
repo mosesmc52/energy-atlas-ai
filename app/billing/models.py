@@ -43,6 +43,9 @@ class PlanPrice(models.Model):
     )
     stripe_product_id = models.CharField(max_length=100, blank=True, default="")
     stripe_price_id = models.CharField(max_length=100, unique=True)
+    unit_amount_cents = models.PositiveIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=10, blank=True, default="usd")
+    display_price = models.CharField(max_length=50, blank=True, default="")
     interval = models.CharField(
         max_length=20,
         choices=BillingInterval.choices,
@@ -85,6 +88,9 @@ class UserSubscription(models.Model):
     current_period_start = models.DateTimeField(null=True, blank=True)
     current_period_end = models.DateTimeField(null=True, blank=True)
     cancel_at_period_end = models.BooleanField(default=False)
+    cancel_reason = models.TextField(blank=True, default="")
+    cancellation_feedback = models.TextField(blank=True, default="")
+    cancellation_comment = models.TextField(blank=True, default="")
     raw_payload_json = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

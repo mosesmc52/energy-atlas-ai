@@ -6,9 +6,15 @@
     </a>
 
     <div class="flex items-center gap-3">
-      <a href="{% url 'pricing' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">
-        {% if request.user.is_authenticated %}Upgrade{% else %}Pricing{% endif %}
-      </a>
+      {% if request.user.is_authenticated and has_active_subscription %}
+        <a href="{% url 'billing:manage' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">
+          Manage Subscription
+        </a>
+      {% else %}
+        <a href="{% url 'pricing' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">
+          {% if request.user.is_authenticated %}Upgrade{% else %}Pricing{% endif %}
+        </a>
+      {% endif %}
       {% if request.user.is_authenticated %}
         <form method="post" action="{% url 'auth:logout' %}">
           {% csrf_token %}

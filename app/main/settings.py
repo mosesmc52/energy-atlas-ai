@@ -79,6 +79,7 @@ class Base(Configuration):
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
                     "admincolors.context_processors.admin_theme",
+                    "billing.context_processors.billing_subscription",
                 ],
             },
         },
@@ -142,7 +143,7 @@ class Development(Base):
     DEBUG = _get_bool("DJANGO_DEBUG", True)
     STRIPE_LIVE_SECRET_KEY = os.environ.get("STRIPE_LIVE_SECRET_KEY", "")
     STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
-    STRIPE_PRO_PRICE_ID = os.environ.get("STRIPE_PRO_PRICE_ID", "")
+    STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     STRIPE_LIVE_MODE = False  # Change to True in production
     DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
 
@@ -151,5 +152,5 @@ class Production(Base):
     DEBUG = _get_bool("DJANGO_DEBUG", False)
     STRIPE_LIVE_SECRET_KEY = os.environ.get("STRIPE_LIVE_SECRET_KEY", "")
     STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
-    STRIPE_PRO_PRICE_ID = os.environ.get("STRIPE_PRO_PRICE_ID", "")
+    STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     STRIPE_LIVE_MODE = _get_bool("STRIPE_LIVE_MODE", True)

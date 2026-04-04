@@ -9,6 +9,9 @@ class PlanPriceInline(admin.TabularInline):
     fields = (
         "stripe_product_id",
         "stripe_price_id",
+        "unit_amount_cents",
+        "currency",
+        "display_price",
         "interval",
         "is_active",
         "metadata_json",
@@ -26,9 +29,23 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
 
 @admin.register(PlanPrice)
 class PlanPriceAdmin(admin.ModelAdmin):
-    list_display = ("stripe_price_id", "plan", "interval", "is_active", "updated_at")
+    list_display = (
+        "stripe_price_id",
+        "plan",
+        "display_price",
+        "currency",
+        "interval",
+        "is_active",
+        "updated_at",
+    )
     list_filter = ("interval", "is_active", "plan")
-    search_fields = ("stripe_price_id", "stripe_product_id", "plan__key", "plan__name")
+    search_fields = (
+        "stripe_price_id",
+        "stripe_product_id",
+        "display_price",
+        "plan__key",
+        "plan__name",
+    )
     autocomplete_fields = ("plan",)
     ordering = ("plan__name", "interval", "stripe_price_id")
 
@@ -47,6 +64,9 @@ class UserSubscriptionAdmin(admin.ModelAdmin):
     search_fields = (
         "user__username",
         "user__email",
+        "cancel_reason",
+        "cancellation_feedback",
+        "cancellation_comment",
         "stripe_customer_id",
         "stripe_subscription_id",
         "plan__key",
@@ -54,6 +74,11 @@ class UserSubscriptionAdmin(admin.ModelAdmin):
     )
     autocomplete_fields = ("user", "plan")
     list_select_related = ("user", "plan")
+    readonly_fields = (
+        "cancel_reason",
+        "cancellation_feedback",
+        "cancellation_comment",
+    )
     ordering = ("user__username",)
 
 

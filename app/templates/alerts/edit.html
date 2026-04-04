@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Alert{% endblock %}
+
+{% block page-content %}
+  <section class="space-y-4">
+    <div>
+      <a class="inline-flex items-center gap-3 rounded-[22px] border border-stone-300 bg-white px-6 py-3 text-base font-medium text-slate-900 shadow-[0_6px_18px_rgba(50,44,35,0.04)] transition hover:border-stone-400 hover:bg-stone-50" href="{{ back_url }}">
+        <span aria-hidden="true" class="text-xl leading-none text-slate-500">‹</span>
+        <span>Back</span>
+      </a>
+    </div>
+
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.98fr)]">
+    <form id="{{ form_id }}" method="post" action="{{ action_url }}" class="panel form-stack p-7 xl:p-8">
+      {% csrf_token %}
+
+      <div class="space-y-3 border-b border-stone-200 pb-6">
+        <p class="eyebrow">{{ eyebrow }}</p>
+        <h2 class="text-4xl font-semibold tracking-tight text-slate-900">{{ page_title }}</h2>
+        <p class="max-w-lg text-base leading-8 text-slate-600">{{ page_description }}</p>
+      </div>
+
+      <div class="field-group">
+        <label for="name" class="block text-sm/6 font-medium text-gray-900">Name</label>
+        <input id="name" type="text" name="name" placeholder="e.g. High error rate alert" value="{{ request.POST.name|default:initial_name|default:'' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+      </div>
+
+      <div class="field-group">
+        <label for="question" class="block text-sm/6 font-medium text-gray-900">Question</label>
+        <textarea id="question" name="question" rows="4" required placeholder="Ask a yes/no question about your data..." class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:initial_question|default:'' }}</textarea>
+        <p class="text-xs leading-5 text-slate-500">
+          You can use the same metric questions supported in the assistant, such as "What is the current Henry Hub price?", "Are exports higher than last year?", or "How much gas is currently in storage?" Alerts work best with yes/no condition-style questions.
+        </p>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div class="field-group">
+          <label for="frequency" class="block text-sm/6 font-medium text-gray-900">Frequency</label>
+          <select id="frequency" name="frequency" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+            {% for value, label in frequency_choices %}
+              <option value="{{ value }}" {% if request.POST.frequency|default:initial_frequency == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label for="trigger_type" class="block text-sm/6 font-medium text-gray-900">Trigger type</label>
+          <select id="trigger_type" name="trigger_type" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+            {% for value, label in trigger_type_choices %}
+              <option value="{{ value }}" {% if request.POST.trigger_type|default:initial_trigger_type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label for="cooldown_hours" class="block text-sm/6 font-medium text-gray-900">Cooldown hours</label>
+        <input id="cooldown_hours" type="number" min="0" name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:initial_cooldown_hours }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        <p class="text-xs leading-5 text-slate-500" title="Minimum number of hours to wait before sending the same alert again after it triggers.">
+          Minimum number of hours to wait before sending the same alert again after it triggers.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-stone-200 bg-[#faf7f0] p-5 text-sm text-slate-600">
+        <p class="font-medium text-slate-800">Delivery channel</p>
+        <p class="mt-1">Alerts created here are sent by email.</p>
+      </div>
+
+      <div class="flex flex-wrap gap-3 border-t border-stone-200 pt-5">
+        <button class="btn-black" type="submit" name="action" value="save">{{ submit_label }}</button>
+      </div>
+    </form>
+
+    <section class="panel min-h-[720px] p-7 xl:p-8">
+      {% if evaluation %}
+        <div class="space-y-6">
+          <div class="flex items-center justify-between gap-4 border-b border-stone-200 pb-5">
+            <div>
+              <p class="text-xl font-semibold text-slate-900">Test result</p>
+            </div>
+            <button class="btn-secondary gap-2" type="submit" form="{{ form_id }}" name="action" value="test">
+              <span aria-hidden="true">▶</span>
+              <span>Test alert</span>
+            </button>
+          </div>
+
+          <dl class="space-y-5 text-sm text-slate-600">
+            <div class="rounded-2xl border border-stone-200 bg-[#fcfbf7] p-5">
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Question</dt>
+              <dd class="mt-2 text-base leading-7 text-slate-800">{{ evaluation.question }}</dd>
+            </div>
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div class="rounded-2xl border border-stone-200 bg-white p-5">
+                <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Result</dt>
+                <dd class="mt-2 text-base font-semibold text-slate-900">
+                {% if evaluation.result == None %}
+                  unknown
+                {% elif evaluation.result %}
+                  true
+                {% else %}
+                  false
+                {% endif %}
+                </dd>
+              </div>
+              {% if evaluation.as_of %}
+                <div class="rounded-2xl border border-stone-200 bg-white p-5">
+                  <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">As of</dt>
+                  <dd class="mt-2 text-base font-medium text-slate-900">{{ evaluation.as_of }}</dd>
+                </div>
+              {% endif %}
+            </div>
+            <div class="rounded-2xl border border-stone-200 bg-white p-5">
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Explanation</dt>
+              <dd class="mt-2 text-base leading-7 text-slate-800">{{ evaluation.explanation }}</dd>
+            </div>
+            {% if evaluation.metric or evaluation.error_code %}
+              <div class="grid gap-4 sm:grid-cols-2">
+                {% if evaluation.metric %}
+                  <div class="rounded-2xl border border-stone-200 bg-white p-5">
+                    <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Metric</dt>
+                    <dd class="mt-2 text-base font-medium text-slate-900">{{ evaluation.metric }}</dd>
+                  </div>
+                {% endif %}
+                {% if evaluation.error_code %}
+                  <div class="rounded-2xl border border-rose-200 bg-rose-50 p-5">
+                    <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-rose-400">Error code</dt>
+                    <dd class="mt-2 text-base font-medium text-rose-700">{{ evaluation.error_code }}</dd>
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+          </dl>
+
+          {% if evaluation.values %}
+            <div>
+              <h3 class="text-lg font-semibold text-slate-900">Values</h3>
+              <pre class="mt-3">{{ evaluation.values }}</pre>
+            </div>
+          {% endif %}
+          {% if evaluation.metadata %}
+            <div>
+              <h3 class="text-lg font-semibold text-slate-900">Metadata</h3>
+              <pre class="mt-3">{{ evaluation.metadata }}</pre>
+            </div>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="flex h-full min-h-[640px] flex-col">
+          <div class="flex items-center justify-between gap-4 border-b border-stone-200 pb-5">
+            <p class="text-xl font-semibold text-slate-900">Test result</p>
+            <button class="btn-secondary gap-2" type="submit" form="{{ form_id }}" name="action" value="test">
+              <span aria-hidden="true">▶</span>
+              <span>Test alert</span>
+            </button>
+          </div>
+          <div class="mt-8 flex flex-1 flex-col items-center justify-center rounded-[28px] border border-stone-200 bg-[#fcfbf7] px-8 text-center">
+            <div class="flex h-14 w-14 items-center justify-center rounded-full border border-stone-300 bg-[#f7f2e7] text-sm font-semibold text-slate-400">!</div>
+            <h2 class="mt-6 text-2xl font-semibold text-slate-900">No test run yet</h2>
+            <p class="mt-3 max-w-sm text-base leading-7 text-slate-500">Use the Test alert button above to inspect the updated response before saving.</p>
+          </div>
+        </div>
+      {% endif %}
+    </section>
+    </div>
+  </section>
+{% endblock %}
