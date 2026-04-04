@@ -1,7 +1,7 @@
 {% load static %}
 <header class="border-b border-white/10 bg-white/80 backdrop-blur">
   <div class="mx-auto flex w-full max-w-7xl items-center justify-between gap-6 px-4 py-4 sm:px-6 lg:px-8">
-    <a href="{% if request.user.is_authenticated %}{% url 'alerts:list' %}{% else %}{% url 'auth:signin' %}{% endif %}" class="flex items-center gap-4">
+    <a href="{% if request.user.is_authenticated %}{% url 'alerts:list' %}{% else %}{% url 'root' %}{% endif %}" class="flex items-center gap-4">
       <img src="{% static 'img/logo-w-title.png' %}" alt="Energy Atlas" class="h-12 w-auto">
     </a>
 

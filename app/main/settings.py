@@ -121,6 +121,14 @@ class Base(Configuration):
     STATICFILES_DIRS = [BASE_DIR / "static"]
     LOGIN_URL = "/auth/signin/"
     LOGIN_REDIRECT_URL = "/alerts/"
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    GOOGLE_OAUTH_SCOPES = [
+        "openid",
+        "email",
+        "profile",
+    ]
 
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
