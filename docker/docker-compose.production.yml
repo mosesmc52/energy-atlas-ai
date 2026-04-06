@@ -10,6 +10,7 @@ services:
       APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN in the production env file}
     volumes:
       - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - static_data:/srv/static:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -49,7 +50,10 @@ services:
       DJANGO_DEBUG: "false"
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?Set DJANGO_ALLOWED_HOSTS in the production env file}
       DATABASE_URL: ${DATABASE_URL:-postgres://energy_atlas:energy_atlas@postgres:5432/energy_atlas}
+      DJANGO_STATIC_ROOT: /workspace/app/staticfiles
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - static_data:/workspace/app/staticfiles
     expose:
       - "8000"
     depends_on:
@@ -96,5 +100,6 @@ services:
 
 volumes:
   postgres_data:
+  static_data:
   caddy_data:
   caddy_config:

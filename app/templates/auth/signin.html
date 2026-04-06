@@ -9,7 +9,13 @@
   <div class="flex min-h-full flex-col justify-center py-12 sm:px-6 lg:px-8">
     <div class="sm:mx-auto sm:w-full sm:max-w-md">
       <img src="{% static 'img/logo-w-title.png' %}" alt="Energy Atlas" class="mx-auto h-14 w-auto" />
-      <h2 class="mt-6 text-center text-2xl/9 font-bold tracking-tight text-slate-800">Sign in to your account</h2>
+      <div class="mt-6 space-y-3 text-center">
+        <h2 class="text-4xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Welcome back to Energy Atlas</h2>
+        <p class="text-md text-slate-400 sm:text-sm">
+          New to Energy Atlas?
+          <a href="{% url 'auth:signup' %}{% if next %}?next={{ next|urlencode }}{% endif %}" class="font-semibold text-atlas-600 hover:text-atlas-500">Create an Account</a>
+        </p>
+      </div>
     </div>
 
     <div class="mt-10 sm:mx-auto sm:w-full sm:max-w-[480px]">
@@ -89,10 +95,6 @@
         </div>
       </div>
 
-      <p class="mt-10 text-center text-sm/6 text-slate-500">
-        Not a member?
-        <a href="{% url 'auth:signup' %}" class="font-semibold text-atlas-600 hover:text-atlas-500">Create an account</a>
-      </p>
     </div>
   </div>
 {% endblock %}

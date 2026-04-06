@@ -119,7 +119,9 @@
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <p class="text-sm font-medium leading-6 text-slate-600">{{ event.evaluated_at|date:"F j, Y" }} · {{ event.evaluated_at|date:"g:i A" }}</p>
                 <span class="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-500">
-                  {% if event.result == None %}
+                  {% if alert_rule.trigger_type == answer_trigger_type_value and not event.error_code %}
+                    answer returned
+                  {% elif event.result == None %}
                     unknown
                   {% elif event.result %}
                     triggered

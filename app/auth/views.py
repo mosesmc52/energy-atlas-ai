@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from urllib.parse import urlencode
 
@@ -14,7 +15,10 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
+from main.emailing import send_templated_email
+
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -39,6 +43,31 @@ def _google_user_from_email(email: str):
     return User.objects.filter(username__iexact=normalized_email).first() or User.objects.filter(
         email__iexact=normalized_email
     ).first()
+
+
+def _welcome_alert_url(request) -> str:
+    path = reverse("alerts:create")
+    app_url = str(getattr(settings, "APP_URL", "") or "").rstrip("/")
+    if app_url:
+        return f"{app_url}{path}"
+    return request.build_absolute_uri(path)
+
+
+def _send_welcome_email(*, request, user) -> None:
+    recipient = str(user.email or user.username or "").strip()
+    if not recipient:
+        return
+
+    try:
+        send_templated_email(
+            to=[recipient],
+            template_base="emails/welcome",
+            context={
+                "create_alert_url": _welcome_alert_url(request),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to send welcome email", extra={"user_id": user.id})
 
 
 @require_http_methods(["GET"])
@@ -134,6 +163,7 @@ def google_sign_in_callback_view(request):
         return redirect("auth:signin")
 
     user = _google_user_from_email(email)
+    created = False
     if user is None:
         user = User.objects.create_user(
             username=email,
@@ -141,6 +171,7 @@ def google_sign_in_callback_view(request):
             first_name=str(profile.get("given_name") or "").strip(),
             last_name=str(profile.get("family_name") or "").strip(),
         )
+        created = True
     else:
         updated_fields = []
         if not user.email:
@@ -156,6 +187,9 @@ def google_sign_in_callback_view(request):
             updated_fields.append("last_name")
         if updated_fields:
             user.save(update_fields=updated_fields)
+
+    if created:
+        _send_welcome_email(request=request, user=user)
 
     login(request, user)
     messages.success(request, "Signed in with Google successfully.")
@@ -210,6 +244,7 @@ def sign_up_view(request):
                     email=email,
                     password=password,
                 )
+                _send_welcome_email(request=request, user=user)
                 login(request, user)
                 messages.success(request, "Account created successfully.")
                 return redirect("alerts:list")

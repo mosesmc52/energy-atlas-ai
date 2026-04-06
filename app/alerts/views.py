@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from alerts.models import AlertDeliveryChannel, AlertEvent, AlertRule, AlertStatus
+from alerts.models import AlertDeliveryChannel, AlertEvent, AlertRule, AlertStatus, AlertTriggerType
 from alerts.services import (
     build_metric_forecaster,
     build_signal_evaluator,
@@ -104,6 +104,7 @@ def _alert_form_context(
         "page_description": description,
         "back_url": back_url,
         "form_id": form_id,
+        "answer_trigger_type_value": AlertTriggerType.EVERY_ANSWER,
     }
 
 
@@ -153,6 +154,7 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
         previous_result=rule.last_result,
         new_result=evaluation.result,
         trigger_type=rule.trigger_type,
+        error_code=evaluation.error_code,
     )
     AlertEvent.objects.create(
         alert_rule=rule,
@@ -433,6 +435,7 @@ def alert_detail_view(request, alert_rule_id: int):
             previous_result=alert_rule.last_result,
             new_result=evaluation.result,
             trigger_type=alert_rule.trigger_type,
+            error_code=evaluation.error_code,
         )
         AlertEvent.objects.create(
             alert_rule=alert_rule,
@@ -468,6 +471,7 @@ def alert_detail_view(request, alert_rule_id: int):
         {
             "alert_rule": alert_rule,
             "events": alert_rule.events.all()[:20],
+            "answer_trigger_type_value": AlertTriggerType.EVERY_ANSWER,
         },
     )
 

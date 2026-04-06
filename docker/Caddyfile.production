@@ -1,4 +1,9 @@
 {$APP_DOMAIN} {
+    handle_path /static/* {
+        root * /srv/static
+        file_server
+    }
+
     @django path /about /about/* /pricing /pricing/* /checkout /checkout/* /alerts /alerts/* /billing /billing/* /stripe /stripe/* /secret-room /secret-room/* /admin /admin/* /static /static/* /auth /auth/ /auth/signin /auth/signin/* /auth/signup /auth/signup/* /auth/forgot /auth/forgot/* /auth/logout /auth/logout/* /auth/google /auth/google/* /auth/google/callback /auth/google/callback/*
 
     handle @django {

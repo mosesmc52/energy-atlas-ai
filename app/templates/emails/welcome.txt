@@ -1,0 +1,22 @@
+Hi,
+
+Welcome to Energy Atlas.
+
+The goal is simple:
+help you monitor natural gas markets without checking EIA manually.
+
+To get started, create your first alert.
+
+Here are 3 good ones to begin with:
+
+* Storage deficit widening
+* LNG exports above seasonal average
+* Production deviating from trend
+
+You can set one up in under a minute:
+
+[Create your first alert] {{ create_alert_url }}
+
+Once your alerts are active, Energy Atlas will notify you when something changes.
+
+— Energy Atlas

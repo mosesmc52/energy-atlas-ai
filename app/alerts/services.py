@@ -23,6 +23,7 @@ from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
+from alerts.models import AlertTriggerType
 
 
 class SignalErrorCode:
@@ -280,12 +281,24 @@ def parsed_signal_from_rule(rule) -> ParsedSignal:
     )
 
 
-def should_trigger_alert(previous_result: Optional[bool], new_result: Optional[bool], trigger_type: str) -> bool:
+def is_answer_monitor_trigger(trigger_type: str) -> bool:
+    return trigger_type == AlertTriggerType.EVERY_ANSWER
+
+
+def should_trigger_alert(
+    previous_result: Optional[bool],
+    new_result: Optional[bool],
+    trigger_type: str,
+    *,
+    error_code: Optional[str] = None,
+) -> bool:
+    if is_answer_monitor_trigger(trigger_type):
+        return not error_code
     if new_result is None:
         return False
-    if trigger_type == "every_true":
+    if trigger_type == AlertTriggerType.EVERY_TRUE:
         return new_result is True
-    if trigger_type == "on_false_transition":
+    if trigger_type == AlertTriggerType.ON_FALSE_TRANSITION:
         return previous_result is True and new_result is False
     return previous_result is not True and new_result is True
 

@@ -28,9 +28,9 @@
 
       <div class="field-group">
         <label for="question" class="block text-sm/6 font-medium text-gray-900">Question</label>
-        <textarea id="question" name="question" rows="4" required placeholder="Ask a yes/no question about your data..." class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:initial_question|default:'' }}</textarea>
+        <textarea id="question" name="question" rows="4" required placeholder="Ask a question about your data..." class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:initial_question|default:'' }}</textarea>
         <p class="text-xs leading-5 text-slate-500">
-          You can use the same metric questions supported in the assistant, such as "What is the current Henry Hub price?", "Are exports higher than last year?", or "How much gas is currently in storage?" Alerts work best with yes/no condition-style questions.
+          You can use the same metric questions supported in the assistant, such as "What is the current Henry Hub price?", "Are exports higher than last year?", or "How much gas is currently in storage?" Use a condition-based trigger for yes/no alerts, or choose the answer-return trigger to send the latest answer on each evaluation.
         </p>
       </div>
 
@@ -39,7 +39,7 @@
           <label for="frequency" class="block text-sm/6 font-medium text-gray-900">Frequency</label>
           <select id="frequency" name="frequency" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
             {% for value, label in frequency_choices %}
-              <option value="{{ value }}" {% if request.POST.frequency == value %}selected{% endif %}>{{ label }}</option>
+              <option value="{{ value }}" {% if request.POST.frequency|default:initial_frequency == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
@@ -48,7 +48,7 @@
           <label for="trigger_type" class="block text-sm/6 font-medium text-gray-900">Trigger type</label>
           <select id="trigger_type" name="trigger_type" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
             {% for value, label in trigger_type_choices %}
-              <option value="{{ value }}" {% if request.POST.trigger_type == value %}selected{% endif %}>{{ label }}</option>
+              <option value="{{ value }}" {% if request.POST.trigger_type|default:initial_trigger_type == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
@@ -94,7 +94,9 @@
               <div class="rounded-2xl border border-stone-200 bg-white p-5">
                 <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Result</dt>
                 <dd class="mt-2 text-base font-semibold text-slate-900">
-                {% if evaluation.result == None %}
+                {% if request.POST.trigger_type|default:initial_trigger_type == answer_trigger_type_value and not evaluation.error_code %}
+                  answer returned
+                {% elif evaluation.result == None %}
                   unknown
                 {% elif evaluation.result %}
                   true

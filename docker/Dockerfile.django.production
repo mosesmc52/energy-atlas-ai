@@ -22,4 +22,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "poetry run python app/manage.py migrate && poetry run gunicorn main.wsgi:application --chdir app --bind 0.0.0.0:8000 --workers 3 --timeout 120"]
+CMD ["sh", "-c", "poetry run python app/manage.py migrate && poetry run python app/manage.py collectstatic --noinput && poetry run gunicorn main.wsgi:application --chdir app --bind 0.0.0.0:8000 --workers 3 --timeout 120"]

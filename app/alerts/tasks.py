@@ -60,6 +60,7 @@ def evaluate_alert_rule_now(alert_rule_id: int) -> dict:
             previous_result=rule.last_result,
             new_result=evaluation.result,
             trigger_type=rule.trigger_type,
+            error_code=evaluation.error_code,
         )
         notification_sent = False
 

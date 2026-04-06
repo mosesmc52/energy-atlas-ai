@@ -16,6 +16,7 @@ class AlertTriggerType(models.TextChoices):
     ON_TRUE_TRANSITION = "on_true_transition", "When condition becomes true"
     EVERY_TRUE = "every_true", "Every time condition is true"
     ON_FALSE_TRANSITION = "on_false_transition", "When condition becomes false"
+    EVERY_ANSWER = "every_answer", "Every evaluation returns the answer"
 
 
 class AlertDeliveryChannel(models.TextChoices):
