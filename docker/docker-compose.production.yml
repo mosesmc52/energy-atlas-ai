@@ -87,6 +87,8 @@ services:
     command: poetry run chainlit run chainlit/app.py --host 0.0.0.0 --port 8001
     working_dir: /workspace
     environment:
+      DJANGO_SETTINGS_MODULE: main.settings
+      DJANGO_CONFIGURATION: Production
       PYTHONUNBUFFERED: "1"
       CHAINLIT_HOST: "0.0.0.0"
       CHAINLIT_PORT: "8001"

@@ -21,6 +21,19 @@ app_root = proj_root / "app"
 if app_root.exists() and str(app_root) not in sys.path:
     sys.path.insert(0, str(app_root))
 
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
+os.environ.setdefault(
+    "DJANGO_CONFIGURATION",
+    "Production" if os.getenv("DJANGO_DEBUG", "").strip().lower() == "false" else "Development",
+)
+
+from configurations.importer import install
+
+install()
+
+import django
+
+django.setup()
 
 import chainlit as cl
 from agents.router import route_query
