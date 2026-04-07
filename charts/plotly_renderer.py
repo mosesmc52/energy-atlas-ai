@@ -169,6 +169,8 @@ def should_render_storage_change_summary_cards(spec: ChartSpec) -> bool:
 
 
 def should_render_timeseries_summary_cards(spec: ChartSpec) -> bool:
+    if "by region" in spec.title.lower():
+        return False
     if spec.chart_type not in {"line", "area"}:
         return False
     if isinstance(spec.y, AxisSpec):
@@ -433,7 +435,20 @@ def render_plotly(
         fig.update_layout(title=spec.title, template=template)
 
     elif chart_type in ("line", "area"):
-        fig = px.line(d, x=x_field, y=y_fields, title=spec.title, template=template)
+        color_field = None
+        if y_fields == ["value"]:
+            for candidate in ("region", "series"):
+                if candidate in d.columns:
+                    color_field = candidate
+                    break
+        fig = px.line(
+            d,
+            x=x_field,
+            y=y_fields[0] if color_field else y_fields,
+            color=color_field,
+            title=spec.title,
+            template=template,
+        )
         fig.update_traces(line=dict(width=3))
 
         if chart_type == "area":
@@ -567,6 +582,38 @@ def render_plotly(
         y_suffix = f" {y_units}" if y_units else ""
         tr.hovertemplate = f"{x_fmt}{name_line}<br>%{{y:,.2f}}{y_suffix}<extra></extra>"
 
+    if x_is_datetime and chart_type in {"line", "area", "stacked_area"}:
+        fig.update_xaxes(
+            rangeslider_visible=True,
+            rangeselector=dict(
+                x=0,
+                xanchor="left",
+                y=1.15,  # move selector above chart
+                yanchor="top",
+                bgcolor="rgba(240,240,240,0.9)",
+                activecolor="rgba(200,200,200,0.9)",
+                buttons=[
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(step="all", label="All"),
+                ],
+            ),
+        )
+
+    if x_is_datetime and chart_type in {"line", "area"} and "by region" not in spec.title.lower():
+        _apply_timeseries_dashboard_style(
+            fig,
+            d,
+            x_field=x_field,
+            y_fields=y_fields,
+            y_label=spec.y_label or (y_fields[0] if y_fields else "Value"),
+            y_units=y_units,
+        )
+
+    if _is_storage_change_chart(spec, y_fields) and x_field in d.columns:
+        _apply_storage_change_dashboard_style(fig, d, x_field=x_field, y_field="value")
+
     overlay_dict = (
         forecast_overlay.to_dict()
         if isinstance(forecast_overlay, ForecastResult)
@@ -591,37 +638,5 @@ def render_plotly(
                     )
                 )
                 fig.update_layout(showlegend=True)
-
-    if x_is_datetime and chart_type in {"line", "area", "stacked_area"}:
-        fig.update_xaxes(
-            rangeslider_visible=True,
-            rangeselector=dict(
-                x=0,
-                xanchor="left",
-                y=1.15,  # move selector above chart
-                yanchor="top",
-                bgcolor="rgba(240,240,240,0.9)",
-                activecolor="rgba(200,200,200,0.9)",
-                buttons=[
-                    dict(count=1, label="1M", step="month", stepmode="backward"),
-                    dict(count=6, label="6M", step="month", stepmode="backward"),
-                    dict(count=1, label="1Y", step="year", stepmode="backward"),
-                    dict(step="all", label="All"),
-                ],
-            ),
-        )
-
-    if x_is_datetime and chart_type in {"line", "area"}:
-        _apply_timeseries_dashboard_style(
-            fig,
-            d,
-            x_field=x_field,
-            y_fields=y_fields,
-            y_label=spec.y_label or (y_fields[0] if y_fields else "Value"),
-            y_units=y_units,
-        )
-
-    if _is_storage_change_chart(spec, y_fields) and x_field in d.columns:
-        _apply_storage_change_dashboard_style(fig, d, x_field=x_field, y_field="value")
 
     return fig

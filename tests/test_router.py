@@ -109,6 +109,29 @@ class TestRouter(unittest.TestCase):
             {"dataset": "natural_gas_pipeline_projects"},
         )
 
+    def test_storage_build_by_region_routes_to_weekly_change_grouped_by_region(self) -> None:
+        result = route_query("Show storage build by region.")
+        self.assertEqual(result.primary_metric, "working_gas_storage_change_weekly")
+        self.assertEqual(result.filters, {"group_by": "region"})
+
+    def test_storage_in_the_south_routes_to_south_central(self) -> None:
+        result = route_query("How much gas is in storage in the South?")
+        self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+        self.assertEqual(result.filters, {"region": "south_central"})
+
+    def test_withdrawals_happening_fastest_routes_to_regional_storage_change(self) -> None:
+        result = route_query("Where are withdrawals happening fastest?")
+        self.assertEqual(result.primary_metric, "working_gas_storage_change_weekly")
+        self.assertEqual(result.filters, {"group_by": "region"})
+
+    def test_compare_storage_and_weekly_change_together_routes_to_combined_storage_view(self) -> None:
+        result = route_query("Compare East storage and weekly change together.")
+        self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+        self.assertEqual(
+            result.filters,
+            {"region": "east", "include_weekly_change": True},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -117,6 +117,89 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertEqual(len(payload.report_context_sources), 1)
         self.assertEqual(payload.report_context_sources[0].title, "Today in Energy")
 
+    def test_regional_storage_change_builds_structured_ranking_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-08", "region": "east", "value": 40.0},
+                {"date": "2026-01-08", "region": "midwest", "value": 55.0},
+                {"date": "2026-01-08", "region": "pacific", "value": 12.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Regional Storage Change",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_change_weekly"},
+        )
+
+        payload = build_answer_with_openai(
+            query="Show storage build by region.",
+            result=result,
+        )
+
+        self.assertIn("Midwest posted the largest storage build", payload.answer_text)
+        self.assertIsNotNone(payload.structured_response)
+        self.assertEqual(payload.structured_response.data_points[0].metric, "Midwest")
+        self.assertEqual(
+            payload.chart_spec.title, "Weekly Change in Working Gas Storage by Region"
+        )
+
+    def test_regional_storage_change_can_rank_withdrawals(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-08", "region": "east", "value": -20.0},
+                {"date": "2026-01-08", "region": "midwest", "value": -55.0},
+                {"date": "2026-01-08", "region": "pacific", "value": -12.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Regional Storage Change",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_change_weekly"},
+        )
+
+        payload = build_answer_with_openai(
+            query="Where are withdrawals happening fastest?",
+            result=result,
+        )
+
+        self.assertIn("Midwest posted the fastest storage withdrawal", payload.answer_text)
+
+    def test_storage_level_and_change_builds_combined_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-01", "value": 800.0, "weekly_change": None},
+                {"date": "2026-01-08", "value": 850.0, "weekly_change": 50.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="East Storage Combined",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "east"}},
+        )
+
+        payload = build_answer_with_openai(
+            query="Compare East storage and weekly change together.",
+            result=result,
+        )
+
+        self.assertIn("East storage was 850 Bcf", payload.answer_text)
+        self.assertEqual(payload.chart_spec.title, "Working Gas in Storage and Weekly Change")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,7 +34,7 @@ STORAGE_REGION_KEYWORDS = {
     "lower48": ["lower48", "lower 48"],
     "east": ["east", "eastern"],
     "midwest": ["midwest", "mid-west"],
-    "south_central": ["south_central", "south central"],
+    "south_central": ["south_central", "south central", "south"],
     "mountain": ["mountain"],
     "pacific": ["pacific", "west coast"],
 }
@@ -165,6 +165,21 @@ EXPORT_REGION_KEYWORDS = {
     "united_arab_emirates": ["united_arab_emirates", "united arab emirates", "uae"],
     "united_kingdom": ["united_kingdom", "united kingdom", "uk"],
 }
+
+REGIONAL_GROUP_TERMS = (
+    "by region",
+    "regional",
+    "across regions",
+    "all regions",
+)
+
+STORAGE_COMPARE_TERMS = (
+    "weekly change",
+    "storage change",
+    "change in storage",
+    "week over week storage",
+    "storage wow",
+)
 
 CONSUMPTION_STATE_KEYWORDS = {
     "al": ["al", "alabama"],
@@ -537,6 +552,10 @@ ROUTE_MAP = {
         "weekly storage change",
         "week over week storage",
         "storage wow",
+        "storage build",
+        "storage injection",
+        "storage withdrawal",
+        "build",
         "net injection",
         "net withdrawal",
         "change in storage",
@@ -639,8 +658,10 @@ NORMALIZE_PATTERNS: List[Tuple[str, str]] = [
     (r"\blower forty[- ]?eight\b", "lower 48"),
     (r"\bnat gas\b", "natural gas"),
     (r"\bdraw\b", "withdrawal"),
-    (r"\bstorage build\b", "injection"),
-    (r"\bbuild in storage\b", "injection"),
+    (r"\bwithdrawals\b", "withdrawal"),
+    (r"\binjections\b", "injection"),
+    (r"\bstorage build\b", "storage injection"),
+    (r"\bbuild in storage\b", "storage injection"),
     (r"\bgrid mix\b", "fuel mix"),
     (r"\bpower mix\b", "fuel mix"),
     (r"\bstack\b", "fuel mix"),
@@ -672,7 +693,14 @@ BONUS_TERMS: Dict[str, List[str]] = {
     "des_hh_price_expectation_1y": ["henry hub", "expectations", "des"],
     "des_breakeven_oil_us": ["breakeven", "oil", "des"],
     "des_breakeven_gas_us": ["breakeven", "gas", "des"],
-    "working_gas_storage_change_weekly": ["last week", "weekly", "wow"],
+    "working_gas_storage_change_weekly": [
+        "last week",
+        "weekly",
+        "wow",
+        "build",
+        "injection",
+        "withdrawal",
+    ],
     "working_gas_storage_lower48": ["storage", "inventory", "working gas"],
     "henry_hub_spot": ["henry hub", "spot", "benchmark"],
     "lng_exports": ["exports", "export", "pipeline flow", "throughput"],
@@ -703,6 +731,7 @@ RANK_PATTERNS = [
     r"\bmost\b",
     r"\bleast\b",
     r"\bwhich region\b",
+    r"\bfastest\b",
 ]
 DERIVED_PATTERNS = [
     r"\bnet exporter\b",
@@ -782,6 +811,25 @@ def route_storage_region(q: str) -> str | None:
         if contains_any(keys, q):
             return region
     return None
+
+
+def wants_regional_grouping(q: str) -> bool:
+    q = q.lower()
+    return contains_any(REGIONAL_GROUP_TERMS, q)
+
+
+def wants_storage_ranking_by_region(q: str) -> bool:
+    q = q.lower()
+    return any(term in q for term in ("withdrawal", "injection", "build")) and any(
+        term in q for term in ("where", "fastest", "largest", "biggest", "most")
+    )
+
+
+def wants_storage_level_and_change(q: str) -> bool:
+    q = q.lower()
+    return "storage" in q and contains_any(STORAGE_COMPARE_TERMS, q) and any(
+        term in q for term in ("together", "compare")
+    )
 
 
 def route_trade_region(q: str) -> str | None:
@@ -944,6 +992,14 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         score += 1.5
     if metric == "ng_electricity" and "share" in q:
         score -= 0.75
+    if metric == "working_gas_storage_change_weekly" and any(
+        term in q for term in ("build", "injection", "withdrawal", "storage injection")
+    ):
+        score += 1.5
+    if metric == "working_gas_storage_lower48" and any(
+        term in q for term in ("build", "injection", "withdrawal", "storage injection")
+    ):
+        score -= 1.0
     if metric == "iso_fuel_mix" and "consumption" in q:
         score -= 1.0
     if metric == "lng_exports" and any(
@@ -1005,8 +1061,14 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
 
     elif metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}:
         region = route_storage_region(q)
-        if region:
+        if metric == "working_gas_storage_lower48" and wants_storage_level_and_change(q):
+            if region:
+                filters["region"] = region
+            filters["include_weekly_change"] = True
+        elif region:
             filters["region"] = region
+        elif wants_regional_grouping(q) or wants_storage_ranking_by_region(q):
+            filters["group_by"] = "region"
         elif confidence >= 0.85:
             filters["region"] = "lower48"
 
@@ -1233,6 +1295,33 @@ def route_query(user_query: str) -> HybridRouteResult:
     if not has_explicit_dates and top.metric == "ng_exploration_reserves_lower48":
         start = "2000-01-01"
     filters = build_filters(top.metric, normalized, confidence)
+
+    if (
+        top.metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}
+        and filters
+        and (
+            filters.get("region") in ALLOWED_STORAGE_REGIONS
+            or
+            filters.get("group_by") == "region"
+            or filters.get("include_weekly_change") is True
+        )
+    ):
+        return HybridRouteResult(
+            intent="single_metric" if filters.get("include_weekly_change") else intent,
+            primary_metric=top.metric,
+            metrics=[top.metric],
+            start=start,
+            end=end,
+            filters=filters,
+            confidence=confidence,
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason=f"Storage rule route on {top.metric} using {top.matched_terms}",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
 
     # Fast path: for single-metric questions, stay on rules unless the match is ambiguous.
     if intent == "single_metric" and not ambiguous:

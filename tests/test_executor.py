@@ -138,6 +138,70 @@ class TestMetricExecutor(unittest.TestCase):
             dataset="pipeline_state2_state_capacity",
         )
 
+    def test_storage_change_group_by_region_fetches_each_storage_region(self) -> None:
+        eia = Mock()
+        grid = Mock()
+
+        def make_result(*, region: str, **kwargs):
+            return Mock(
+                df=__import__("pandas").DataFrame(
+                    [{"date": "2024-01-05", "value": 10.0, "region": region}]
+                ).drop(columns=["region"]),
+                source=Mock(reference=f"ref:{region}"),
+                meta={"cache": {"hit": True}},
+            )
+
+        eia.storage_working_gas_change_weekly.side_effect = make_result
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="working_gas_storage_change_weekly",
+                start="2024-01-01",
+                end="2024-12-31",
+                filters={"group_by": "region"},
+            )
+        )
+
+        self.assertEqual(eia.storage_working_gas_change_weekly.call_count, 5)
+        self.assertEqual(set(result.df["region"]), {"east", "midwest", "south_central", "mountain", "pacific"})
+        self.assertEqual(result.source.reference, "eia-ng-client:derived_natural_gas.storage_change_weekly_by_region")
+
+    def test_storage_level_can_include_weekly_change(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        eia.storage_working_gas.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"date": "2024-01-05", "value": 100.0},
+                    {"date": "2024-01-12", "value": 110.0},
+                ]
+            ),
+            source=Mock(reference="ref:storage"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.storage_working_gas_change_weekly.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [{"date": "2024-01-12", "value": 10.0}]
+            ),
+            source=Mock(reference="ref:change"),
+            meta={"cache": {"hit": True}},
+        )
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="working_gas_storage_lower48",
+                start="2024-01-01",
+                end="2024-12-31",
+                filters={"region": "east", "include_weekly_change": True},
+            )
+        )
+
+        self.assertEqual(result.source.reference, "eia-ng-client:natural_gas.storage_with_weekly_change")
+        self.assertIn("weekly_change", result.df.columns)
+        self.assertEqual(result.df.iloc[-1]["weekly_change"], 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()

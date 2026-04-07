@@ -6,6 +6,7 @@ from charts.plotly_renderer import (
     compute_timeseries_summary_metrics,
     compute_storage_change_summary_metrics,
     render_plotly,
+    should_render_timeseries_summary_cards,
 )
 from schemas.chart_spec import ChartSpec
 from tools.forecasting import forecast_linear_trend
@@ -116,6 +117,50 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertFalse(bool(fig.layout.xaxis.rangeslider.visible))
         self.assertGreaterEqual(len(fig.layout.annotations), 2)
         self.assertGreaterEqual(len(fig.layout.shapes), 2)
+
+    def test_line_chart_splits_long_dataframe_by_region(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    ["2026-03-07", "2026-03-14", "2026-03-07", "2026-03-14"]
+                ),
+                "region": ["east", "east", "midwest", "midwest"],
+                "value": [15.0, 20.0, 10.0, 18.0],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="line",
+            title="Weekly Change in Working Gas Storage by Region",
+            x="date",
+            y=["value"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(len(fig.data), 2)
+        self.assertEqual({trace.name for trace in fig.data}, {"east", "midwest"})
+        self.assertFalse(should_render_timeseries_summary_cards(spec))
+
+    def test_storage_level_and_change_chart_renders_two_series(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-03-07", "2026-03-14"]),
+                "value": [800.0, 850.0],
+                "weekly_change": [20.0, 50.0],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="line",
+            title="Working Gas in Storage and Weekly Change",
+            x="date",
+            y=["value", "weekly_change"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(len(fig.data), 2)
+        self.assertEqual(fig.data[0].name, "value")
+        self.assertEqual(fig.data[1].name, "weekly_change")
 
 
 if __name__ == "__main__":

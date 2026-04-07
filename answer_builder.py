@@ -672,6 +672,213 @@ def _deterministic_sector_structured_answer(
     )
 
 
+def _is_regional_storage_change_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "working_gas_storage_change_weekly"
+        and df is not None
+        and not df.empty
+        and {"date", "value", "region"}.issubset(df.columns)
+    )
+
+
+def _is_storage_level_and_change_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "working_gas_storage_lower48"
+        and df is not None
+        and not df.empty
+        and {"date", "value", "weekly_change"}.issubset(df.columns)
+    )
+
+
+def _regional_storage_change_answer(df: pd.DataFrame, query: str = "") -> str:
+    if not _is_regional_storage_change_view("working_gas_storage_change_weekly", df):
+        return "No data was returned for the requested period."
+
+    ordered = df.copy()
+    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+    ordered = ordered.dropna(subset=["date", "value", "region"])
+    if ordered.empty:
+        return "No data was returned for the requested period."
+
+    latest_date = ordered["date"].max()
+    latest_rows = ordered.loc[ordered["date"] == latest_date].copy()
+    rank_withdrawals = "withdrawal" in (query or "").lower() or "fastest" in (query or "").lower()
+    latest_rows = latest_rows.sort_values("value", ascending=rank_withdrawals)
+    if latest_rows.empty:
+        return "No data was returned for the requested period."
+
+    leader = latest_rows.iloc[0]
+    leader_region = str(leader["region"]).replace("_", " ").title()
+    leader_value = float(leader["value"])
+    ranking = ", ".join(
+        f"{str(row['region']).replace('_', ' ').title()} ({_format_number(float(row['value']))} Bcf)"
+        for _, row in latest_rows.iterrows()
+    )
+    if rank_withdrawals:
+        descriptor = "the fastest storage withdrawal"
+    else:
+        descriptor = (
+            "the largest storage build"
+            if leader_value > 0
+            else "the largest storage withdrawal"
+            if leader_value < 0
+            else "the largest storage change"
+        )
+    return (
+        f"As of {latest_date.date().isoformat()}, {leader_region} posted {descriptor} "
+        f"at {_format_number(leader_value)} Bcf. Ranking: {ranking}."
+    )
+
+
+def _regional_storage_change_structured_answer(
+    *,
+    df: pd.DataFrame,
+    query: str,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _regional_storage_change_answer(df, query=query)
+    if answer == "No data was returned for the requested period.":
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No regional storage change data was returned for the requested period.",
+            drivers=["The dataset did not include any usable regional storage observations."],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no observations were returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    ordered = df.copy()
+    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+    ordered = ordered.dropna(subset=["date", "value", "region"])
+    latest_date = ordered["date"].max()
+    latest_rows = ordered.loc[ordered["date"] == latest_date].copy()
+    latest_rows = latest_rows.sort_values("value", ascending=False)
+    leader = latest_rows.iloc[0]
+    leader_region = str(leader["region"]).replace("_", " ").title()
+    data_points = [
+        AnswerDataPoint(
+            metric=str(row["region"]).replace("_", " ").title(),
+            value=_json_safe(float(row["value"])),
+            unit="Bcf",
+        )
+        for _, row in latest_rows.iterrows()
+    ]
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status="neutral", confidence=0.78),
+        summary=answer,
+        drivers=[
+            f"{leader_region} led the latest weekly storage change on {latest_date.date().isoformat()}.",
+            "Regional ranking is based on the latest available EIA storage week.",
+        ],
+        data_points=data_points,
+        forecast=AnswerForecast(
+            direction="flat",
+            reasoning="This response ranks regions using the latest observation and does not infer a directional forecast.",
+        ),
+        suggested_alerts=[],
+        alerts=[AnswerAlert(name=f"{leader_region} Leads Weekly Storage Change", status=True)],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
+def _storage_level_and_change_answer(
+    df: pd.DataFrame, *, region_label: str = "Selected region"
+) -> str:
+    if not _is_storage_level_and_change_view("working_gas_storage_lower48", df):
+        return "No data was returned for the requested period."
+
+    ordered = df.copy()
+    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+    ordered["weekly_change"] = pd.to_numeric(ordered["weekly_change"], errors="coerce")
+    ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
+    if ordered.empty:
+        return "No data was returned for the requested period."
+
+    latest = ordered.iloc[-1]
+    latest_date = latest["date"].date().isoformat()
+    storage_text = _format_number(float(latest["value"]))
+    if pd.notna(latest["weekly_change"]):
+        change_value = float(latest["weekly_change"])
+        flow_word = "injection" if change_value > 0 else "withdrawal" if change_value < 0 else "change"
+        change_text = _format_number(change_value)
+        return (
+            f"As of {latest_date}, {region_label} storage was {storage_text} Bcf and the latest weekly change "
+            f"was {change_text} Bcf ({flow_word})."
+        )
+    return f"As of {latest_date}, {region_label} storage was {storage_text} Bcf."
+
+
+def _storage_level_and_change_structured_answer(
+    *,
+    df: pd.DataFrame,
+    region_label: str,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _storage_level_and_change_answer(df, region_label=region_label)
+    if answer == "No data was returned for the requested period.":
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No storage level and weekly change data was returned for the requested period.",
+            drivers=["The dataset did not include usable storage observations for this combined view."],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no observations were returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    ordered = df.copy()
+    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+    ordered["weekly_change"] = pd.to_numeric(ordered["weekly_change"], errors="coerce")
+    ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
+    latest = ordered.iloc[-1]
+    data_points = [
+        AnswerDataPoint(metric="Storage", value=_json_safe(float(latest["value"])), unit="Bcf")
+    ]
+    if pd.notna(latest["weekly_change"]):
+        data_points.append(
+            AnswerDataPoint(
+                metric="Weekly Change",
+                value=_json_safe(float(latest["weekly_change"])),
+                unit="Bcf",
+            )
+        )
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status="neutral", confidence=0.76),
+        summary=answer,
+        drivers=[
+            "This combined view shows storage level and derived week-over-week change for the same region.",
+            "Weekly change is computed from row-to-row differences in the storage series.",
+        ],
+        data_points=data_points,
+        forecast=AnswerForecast(
+            direction="flat",
+            reasoning="This response combines latest storage level and weekly change rather than inferring a forecast.",
+        ),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
 def _deterministic_answer_text(
     *, metric: str, query: str, facts: dict[str, Any], mode: str
 ) -> str:
@@ -715,6 +922,11 @@ def build_answer_with_openai(
     src = result.source
 
     metric = result.meta.get("metric", "") if result.meta else ""
+    region_label = (
+        str(((result.meta or {}).get("filters") or {}).get("region") or "Selected region")
+        .replace("_", " ")
+        .title()
+    )
     source_date = src.retrieved_at.date().isoformat() if src.retrieved_at else None
     report_context_text = ""
     report_context_sources: list[AnswerSourceSummary] = []
@@ -738,6 +950,54 @@ def build_answer_with_openai(
             ),
             report_context_used=False,
             report_context_reason="ranking_response_no_rag",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
+    if _is_regional_storage_change_view(metric, df):
+        answer_text = _regional_storage_change_answer(df, query=query)
+        if df is not None and "date" in df.columns:
+            df = df.sort_values(["date", "region"]).reset_index(drop=True)
+        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_regional_storage_change_structured_answer(
+                df=df,
+                query=query,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="regional_storage_change_no_rag",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
+    if _is_storage_level_and_change_view(metric, df):
+        answer_text = _storage_level_and_change_answer(df, region_label=region_label)
+        if df is not None and "date" in df.columns:
+            df = df.sort_values("date").reset_index(drop=True)
+        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_storage_level_and_change_structured_answer(
+                df=df,
+                region_label=region_label,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="storage_level_and_change_no_rag",
             report_context_sources=[],
             data_preview=_make_preview(df),
             chart_spec=chart_spec,

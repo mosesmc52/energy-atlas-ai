@@ -267,6 +267,16 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
         return None
 
     title = METRIC_TITLES.get(metric, "Energy Metric")
+    has_region_dimension = "region" in df.columns and "value" in df.columns
+    if has_region_dimension and metric == "working_gas_storage_change_weekly":
+        title = "Weekly Change in Working Gas Storage by Region"
+    has_storage_combo = (
+        metric == "working_gas_storage_lower48"
+        and "weekly_change" in df.columns
+        and "value" in df.columns
+    )
+    if has_storage_combo:
+        title = "Working Gas in Storage and Weekly Change"
 
     if has_relationship:
         nums = _numeric_columns(df)
@@ -363,6 +373,15 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
         )
 
     if has_comparison:
+        if has_storage_combo:
+            return ChartSpec(
+                chart_type="line",
+                title=title,
+                x="date",
+                y=["value", "weekly_change"],
+                x_label="Date",
+                y_label="Bcf",
+            )
         y = _default_y(metric, df)
         if not y:
             return None
@@ -374,6 +393,16 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
             x_label="Date",
             y_label=y[0].replace("_", " ").title(),
             aggregation="monthly" if n_points > 28 else "none",
+        )
+
+    if has_storage_combo and has_multi_series:
+        return ChartSpec(
+            chart_type="line",
+            title=title,
+            x="date",
+            y=["value", "weekly_change"],
+            x_label="Date",
+            y_label="Bcf",
         )
 
     if metric == "iso_gas_dependency" or has_multi_series:

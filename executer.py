@@ -164,11 +164,94 @@ class MetricExecutor:
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
         region = str(filters.get("region") or "lower48")
-        return self.eia.storage_working_gas(start=start, end=end, region=region)
+        base = self.eia.storage_working_gas(start=start, end=end, region=region)
+        if not bool(filters.get("include_weekly_change")):
+            return base
+
+        weekly_change = self.eia.storage_working_gas_change_weekly(
+            start=start, end=end, region=region
+        )
+        left = base.df.copy()
+        right = weekly_change.df.copy()
+        if left is None or left.empty:
+            merged = pd.DataFrame(columns=["date", "value", "weekly_change"])
+        else:
+            merged = left.copy()
+            if right is not None and not right.empty:
+                right = right.rename(columns={"value": "weekly_change"})
+                merged = merged.merge(right[["date", "weekly_change"]], on="date", how="left")
+            else:
+                merged["weekly_change"] = pd.NA
+
+        return EIAResult(
+            df=merged,
+            source=SourceRef(
+                source_type="eia_api",
+                label=f"EIA Natural Gas Storage: Working Gas and Weekly Change ({region.replace('_', ' ').title()})",
+                reference="eia-ng-client:natural_gas.storage_with_weekly_change",
+                parameters={
+                    "region": region,
+                    "start": start,
+                    "end": end,
+                    "include_weekly_change": True,
+                    "source_storage_reference": base.source.reference,
+                    "source_change_reference": weekly_change.source.reference,
+                },
+            ),
+            meta={
+                "cache": {
+                    "storage": (base.meta or {}).get("cache"),
+                    "weekly_change": (weekly_change.meta or {}).get("cache"),
+                },
+                "note": "Working gas storage merged with derived weekly change for the same region.",
+            },
+        )
 
     def _eia_storage_change_weekly(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
+        if str(filters.get("group_by") or "") == "region":
+            regional_frames: list[pd.DataFrame] = []
+            sources: list[str] = []
+            region_meta: dict[str, Any] = {}
+            for region in sorted(EIAAdapter.STORAGE_REGIONS - {"lower48"}):
+                regional_result = self.eia.storage_working_gas_change_weekly(
+                    start=start, end=end, region=region
+                )
+                frame = regional_result.df.copy()
+                if frame is None or frame.empty:
+                    continue
+                frame["region"] = region
+                regional_frames.append(frame)
+                sources.append(regional_result.source.reference)
+                region_meta[region] = (regional_result.meta or {}).get("cache")
+
+            df = (
+                pd.concat(regional_frames, ignore_index=True)
+                if regional_frames
+                else pd.DataFrame(columns=["date", "value", "region"])
+            )
+            src = SourceRef(
+                source_type="eia_api",
+                label="EIA Natural Gas Storage: Weekly Change by Region",
+                reference="eia-ng-client:derived_natural_gas.storage_change_weekly_by_region",
+                parameters={
+                    "regions": sorted(EIAAdapter.STORAGE_REGIONS - {"lower48"}),
+                    "start": start,
+                    "end": end,
+                    "group_by": "region",
+                    "source_storage_references": sources,
+                },
+            )
+            return EIAResult(
+                df=df,
+                source=src,
+                meta={
+                    "cache": {"regions": region_meta},
+                    "note": "Derived as row-to-row weekly difference of working gas storage levels by EIA storage region.",
+                },
+            )
+
         region = str(filters.get("region") or "lower48")
         return self.eia.storage_working_gas_change_weekly(
             start=start, end=end, region=region

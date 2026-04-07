@@ -18,11 +18,11 @@ These test `working_gas_storage_lower48` and `working_gas_storage_change_weekly`
 
 ## Straightforward but useful
 
-* What is Lower 48 working gas storage right now?
-* Show weekly storage change for the East region over the last 12 weeks.
-* How much gas was injected into storage in the Midwest this month?
-* Did the South Central region post a withdrawal last week?
-* Compare Pacific and Mountain storage inventories this winter?
+* What is Lower 48 working gas storage right now? ✅
+* Show weekly storage change for the East region over the last 12 weeks. ✅
+* How much gas was injected into storage in the Midwest this month? ✅
+* Did the South Central region post a withdrawal last week? ✅
+* Compare Pacific and Mountain storage inventories this winter? ✅
 
 
 ## Edge cases
@@ -30,42 +30,40 @@ These test `working_gas_storage_lower48` and `working_gas_storage_change_weekly`
 * What happened to inventories last week in the eastern U.S.?
 
   * “eastern U.S.” may or may not match `"eastern"` cleanly depending on `contains_any`.
-* Show me storage for the western region.
+* Show me storage for the western region.  ✅
 
   * You do not have a `"west"` or `"western"` mapping; likely falls back to lower48.
-* How much gas is in storage in the South?
+* How much gas is in storage in the South? ❌
 
   * “South” is ambiguous and may fail to map to `south_central`.
-* Give me the weekly injection number for the lower forty-eight.
+* Give me the weekly injection number for the lower forty-eight. ✅
 
   * “lower forty-eight” will probably miss `lower48` and `lower 48`.
-* Was there a draw in inventories last Thursday?
+* Was there a draw in inventories last Thursday? ✅
 
   * “draw” is common market language but not explicitly in keywords.
-* Show storage build by region.
+* Show storage build by region. ❌
 
   * “build” is not in the change keywords.
-* How tight is storage versus normal?
+* How tight is storage versus normal? ✅
 
   * Could fail entirely; no “vs 5-year average” concept.
-* Where are withdrawals happening fastest?
+* Where are withdrawals happening fastest? ❌
 
   * Multi-region comparative intent not represented in router.
-* Compare East storage and weekly change together.
+* Compare East storage and weekly change together. ❌
 
   * Router only returns one metric.
-* Show me storage for Appalachia.
+* Show me storage for Appalachia. ✅
 
   * No regional alias for EIA storage regions.
 
 ## Keyword collision tests
 
-* Show gas demand and storage in ERCOT.
+* Show gas demand and storage in ERCOT. ❌
 
   * “storage” routes EIA storage; ERCOT is ignored because ISO filters only attach for `iso_` metrics.
-* Show power demand and storage in Texas.
-
-  * “demand” may route `iso_load`, while user also asked storage.
+* Show power demand and storage in Texas. ✅
 
 ---
 
@@ -811,90 +809,3 @@ If your goal is to build a formal test suite, this is the short list I would sta
 * Show hourly mix excluding imports.
 
 ---
-
-# 16. What these tests will reveal in your current router
-
-Your current router is likely to struggle with:
-
-**1. Single-metric assumption**
-
-* Many natural user questions ask for comparison, causality, or combined views.
-
-**2. Ambiguous keywords**
-
-* `demand`, `gas burn`, `generation`, `usage`, `supply`, `exports` all cross category boundaries.
-
-**3. Silent default routing**
-
-* ISO defaults to `ercot`
-* storage defaults to `lower48`
-* trade defaults to `united_states_pipeline_total`
-
-That is dangerous because bad routing may look valid.
-
-**4. Weak synonym coverage**
-
-* Common energy language like:
-
-  * draw / build
-  * nat gas
-  * cash gas
-  * burn
-  * penetration
-  * stack
-  * clean energy
-  * net exporter
-  * freeze-off
-
-**5. Geography mismatch**
-
-* User asks by state/city/basin, but router only understands fixed EIA/ISO regions.
-
-**6. Metric overlap**
-
-* `fuel mix`, `gas dependency`, `ng_electricity`, and `iso_renewables` overlap semantically.
-
----
-
-# 17. Recommended test format
-
-I would store these in a CSV or YAML like:
-
-```yaml
-- query: "How much gas was burned for electricity in Texas last week?"
-  expected_behavior: "ambiguous"
-  likely_routes:
-    - iso_gas_dependency
-    - ng_electricity
-  notes: "Tests Texas->ERCOT alias and gas burn ambiguity"
-
-- query: "Was there a draw in the lower forty-eight last week?"
-  expected_behavior: "should route storage change weekly"
-  likely_routes:
-    - working_gas_storage_change_weekly
-  notes: "Tests synonym support for draw and lower forty-eight"
-```
-
-And classify each case as:
-
-* `should_route_cleanly`
-* `should_route_but_needs_synonym_expansion`
-* `should_be_ambiguous`
-* `should_fail_gracefully`
-* `should_trigger_multi-metric planner`
-
----
-
-# 18. Best next step
-
-The strongest version of this is to build a **router challenge suite** with columns:
-
-* `category`
-* `query`
-* `expected_metric`
-* `expected_filters`
-* `expected_ambiguity`
-* `reason`
-* `priority`
-
-I can turn this into a ready-to-paste CSV or pytest fixture set for your router.
