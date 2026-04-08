@@ -1,3 +1,5 @@
+import secrets
+
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -174,3 +176,25 @@ class AlertEvent(models.Model):
 
     def __str__(self) -> str:
         return f"AlertEvent(alert_rule_id={self.alert_rule_id}, result={self.result}, triggered={self.was_triggered})"
+
+
+def _default_share_id() -> str:
+    return secrets.token_urlsafe(9)
+
+
+class SharedAnswer(models.Model):
+    share_id = models.CharField(
+        max_length=32,
+        unique=True,
+        db_index=True,
+        default=_default_share_id,
+    )
+    question = models.TextField()
+    response_json = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"SharedAnswer(share_id={self.share_id})"

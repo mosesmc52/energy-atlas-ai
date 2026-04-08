@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from alerts.models import AlertEvent, AlertRule
+from alerts.models import AlertEvent, AlertRule, SharedAnswer
 
 
 class AlertEventInline(admin.TabularInline):
@@ -140,3 +140,11 @@ class AlertEventAdmin(admin.ModelAdmin):
     readonly_fields = ("evaluated_at", "notification_sent_at")
     list_select_related = ("alert_rule", "alert_rule__user")
     ordering = ("-evaluated_at",)
+
+
+@admin.register(SharedAnswer)
+class SharedAnswerAdmin(admin.ModelAdmin):
+    list_display = ("id", "share_id", "question", "created_at")
+    search_fields = ("share_id", "question")
+    readonly_fields = ("share_id", "created_at")
+    ordering = ("-created_at",)

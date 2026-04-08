@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import pathlib
+import requests
 import sys
 import tempfile
 import urllib.parse
@@ -36,6 +37,7 @@ import django
 django.setup()
 
 import chainlit as cl
+from django.conf import settings
 from agents.router import route_query
 from alerts.services import (
     build_signal_evaluator,
@@ -66,6 +68,36 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
+SHARE_ACTION_NAME = "share_structured_answer"
+
+
+def _share_api_base_url() -> str:
+    explicit_base = os.getenv("ATLAS_BACKEND_URL", "").strip().rstrip("/")
+    if explicit_base:
+        return explicit_base
+
+    app_url = str(getattr(settings, "APP_URL", "") or "").strip().rstrip("/")
+    if app_url:
+        return app_url
+
+    return "http://127.0.0.1:8000"
+
+
+def _create_shared_answer(question: str, response_json: dict) -> str:
+    response = requests.post(
+        f"{_share_api_base_url()}/api/shared-answers/",
+        json={
+            "question": question,
+            "response_json": response_json,
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    share_url = str(payload.get("url") or "").strip()
+    if not share_url:
+        raise ValueError("Share API returned no URL")
+    return share_url
 
 
 def _display_metric_name(metric: str) -> str:
@@ -349,6 +381,7 @@ async def set_starters():
 async def on_chat_start():
     # Core deps
     cl.user_session.set("deps", build_container())
+    cl.user_session.set("shareable_answers", {})
 
     # Optional: Google Sheets question logging (best-effort)
     try:
@@ -502,6 +535,23 @@ async def on_message(message: cl.Message):
             else payload.answer_text
         )
         msg = await cl.Message(content=rendered_content).send()
+        if payload.structured_response is not None:
+            shareable_answers = dict(cl.user_session.get("shareable_answers") or {})
+            shareable_answers[msg.id] = {
+                "question": user_query,
+                "response_json": payload.structured_response.model_dump(mode="json"),
+            }
+            cl.user_session.set("shareable_answers", shareable_answers)
+            msg.actions = [
+                cl.Action(
+                    name=SHARE_ACTION_NAME,
+                    label="Share",
+                    tooltip="Create an unlisted share link for this answer",
+                    icon="share",
+                    payload={"message_id": msg.id},
+                )
+            ]
+            await msg.update()
         message_elapsed_ms = (
             (perf_counter() - message_started) * 1000 if DEBUG_ENABLED else 0.0
         )
@@ -590,3 +640,33 @@ async def on_message(message: cl.Message):
 
         # Keep errors visible during development
         await cl.Message(content=f"Error: {e}").send()
+
+
+@cl.action_callback(SHARE_ACTION_NAME)
+async def share_structured_answer(action: cl.Action):
+    message_id = str((action.payload or {}).get("message_id") or "").strip()
+    shareable_answers = cl.user_session.get("shareable_answers") or {}
+    answer_payload = shareable_answers.get(message_id) if isinstance(shareable_answers, dict) else None
+    if not answer_payload:
+        await cl.Message(
+            content="This answer is no longer available to share in the current session."
+        ).send()
+        return
+
+    try:
+        share_url = await asyncio.to_thread(
+            _create_shared_answer,
+            str(answer_payload.get("question") or ""),
+            dict(answer_payload.get("response_json") or {}),
+        )
+    except Exception as e:
+        logger.warning("Share link creation failed: %s", e)
+        await cl.Message(content="Unable to create a share link right now.").send()
+        return
+
+    await cl.Message(
+        content=(
+            "**Share Link**\n"
+            f"Unlisted link for this answer only: {share_url}"
+        )
+    ).send()

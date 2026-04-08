@@ -179,6 +179,14 @@ td {
     text-decoration: underline;
 }
 
+/* Hide Chainlit's built-in copy button on assistant messages */
+[id^="copy-message"],
+button[aria-label*="Copy"],
+button[title*="Copy"],
+button:has(svg.lucide-copy) {
+    display: none !important;
+}
+
 @media (max-width: 640px) {
     #energy-atlas-signin-link.energy-atlas-signin-link {
         left: 0.75rem;

@@ -2,15 +2,24 @@ from __future__ import annotations
 
 import json
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from alerts.models import AlertDeliveryChannel, AlertEvent, AlertRule, AlertStatus, AlertTriggerType
+from alerts.models import (
+    AlertDeliveryChannel,
+    AlertEvent,
+    AlertRule,
+    AlertStatus,
+    AlertTriggerType,
+    SharedAnswer,
+)
 from alerts.services import (
     build_metric_forecaster,
     build_signal_evaluator,
@@ -21,6 +30,7 @@ from alerts.services import (
     should_trigger_alert,
 )
 from billing.services import can_create_alert
+from schemas.answer import StructuredAnswer
 
 
 def _request_payload(request) -> dict:
@@ -44,6 +54,74 @@ def _coerce_bool(value) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _shared_answer_context(shared_answer: SharedAnswer) -> dict:
+    response = (
+        shared_answer.response_json if isinstance(shared_answer.response_json, dict) else {}
+    )
+    signal = response.get("signal") if isinstance(response.get("signal"), dict) else {}
+    status = str(signal.get("status") or "").lower()
+    signal_labels = {
+        "bullish": "Bullish",
+        "bearish": "Bearish",
+        "neutral": "Neutral",
+    }
+    signal_styles = {
+        "bullish": "bg-emerald-100 text-emerald-700 ring-emerald-200",
+        "bearish": "bg-rose-100 text-rose-700 ring-rose-200",
+        "neutral": "bg-amber-100 text-amber-700 ring-amber-200",
+    }
+    try:
+        confidence_pct = round(float(signal.get("confidence") or 0) * 100)
+    except (TypeError, ValueError):
+        confidence_pct = 0
+
+    drivers = [str(item).strip() for item in (response.get("drivers") or []) if str(item).strip()]
+    sources = []
+    for source in response.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        title = str(source.get("title") or "").strip()
+        if not title:
+            continue
+        sources.append(
+            {
+                "title": title,
+                "date": str(source.get("date") or "").strip(),
+            }
+        )
+
+    datapoints = []
+    for datapoint in response.get("data_points") or []:
+        if not isinstance(datapoint, dict):
+            continue
+        metric = str(datapoint.get("metric") or "").strip()
+        value = datapoint.get("value")
+        unit = str(datapoint.get("unit") or "").strip()
+        if not metric or value in (None, ""):
+            continue
+        datapoints.append(
+            {
+                "metric": metric.replace("_", " ").title(),
+                "value": value,
+                "unit": unit,
+            }
+        )
+
+    forecast = response.get("forecast") if isinstance(response.get("forecast"), dict) else {}
+    return {
+        "shared_answer": shared_answer,
+        "signal_label": signal_labels.get(status, "Insight"),
+        "signal_style": signal_styles.get(status, "bg-slate-100 text-slate-700 ring-slate-200"),
+        "confidence_pct": confidence_pct,
+        "summary": str(response.get("summary") or response.get("answer") or "").strip(),
+        "drivers": drivers,
+        "forecast_direction": str(forecast.get("direction") or "").strip(),
+        "forecast_reasoning": str(forecast.get("reasoning") or "").strip(),
+        "sources": sources,
+        "datapoints": datapoints,
+    }
 
 
 UNSUPPORTED_ALERT_QUESTION_MESSAGE = (
@@ -579,4 +657,48 @@ def create_alert_rule_view(request):
             "evaluation": evaluation,
         },
         status=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def create_shared_answer_view(request):
+    payload = _request_payload(request)
+    question = str(payload.get("question") or "").strip()
+    response_json = payload.get("response_json")
+
+    if not question:
+        return JsonResponse({"error": "question is required"}, status=400)
+    if not isinstance(response_json, dict):
+        return JsonResponse({"error": "response_json must be an object"}, status=400)
+
+    try:
+        structured_response = StructuredAnswer.model_validate(response_json)
+    except Exception:
+        return JsonResponse({"error": "response_json is invalid"}, status=400)
+
+    shared_answer = SharedAnswer.objects.create(
+        question=question,
+        response_json=structured_response.model_dump(mode="json"),
+    )
+    share_path = reverse("shared-answer-detail", args=[shared_answer.share_id])
+    app_url = str(getattr(settings, "APP_URL", "") or "").strip().rstrip("/")
+    share_url = f"{app_url}{share_path}" if app_url else request.build_absolute_uri(share_path)
+    return JsonResponse(
+        {
+            "share_id": shared_answer.share_id,
+            "url": share_url,
+            "path": share_path,
+        },
+        status=201,
+    )
+
+
+@require_http_methods(["GET"])
+def shared_answer_detail_view(request, share_id: str):
+    shared_answer = get_object_or_404(SharedAnswer, share_id=share_id)
+    return render(
+        request,
+        "shared/detail.html",
+        _shared_answer_context(shared_answer),
     )

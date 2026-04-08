@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.test import RequestFactory, SimpleTestCase, TestCase
 from django.urls import reverse
 
-from alerts.models import AlertRule, AlertTriggerType
+from alerts.models import AlertRule, AlertTriggerType, SharedAnswer
 from alerts.services import ParsedSignal, SignalEvaluation, should_trigger_alert
 from alerts.tasks import evaluate_alert_rule_now
 from alerts.views import forecast_metric_view
@@ -173,3 +173,86 @@ class AlertRuleAnswerMonitorFlowTests(TestCase):
         self.assertTrue(event.was_triggered)
         self.assertTrue(event.notification_sent)
         self.assertEqual(rule.last_explanation, evaluation.explanation)
+
+
+class SharedAnswerTests(TestCase):
+    def test_create_shared_answer_returns_public_url_and_persists_payload(self):
+        response = self.client.post(
+            reverse("create-shared-answer"),
+            data=json.dumps(
+                {
+                    "question": "Are exports higher than last year?",
+                    "response_json": {
+                        "answer": "Exports remain above last year.",
+                        "signal": {"status": "bullish", "confidence": 0.84},
+                        "summary": "Exports remain above last year.",
+                        "drivers": ["LNG feedgas demand stayed firm."],
+                        "data_points": [
+                            {"metric": "lng_exports", "value": 14.2, "unit": "bcf/d"}
+                        ],
+                        "forecast": {
+                            "direction": "up",
+                            "reasoning": "Current utilization remains elevated.",
+                        },
+                        "suggested_alerts": [],
+                        "alerts": [],
+                        "sources": [
+                            {"title": "EIA LNG Export Feedgas", "date": "2026-04-07"}
+                        ],
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = json.loads(response.content)
+        shared_answer = SharedAnswer.objects.get(share_id=payload["share_id"])
+        self.assertTrue(payload["url"].endswith(payload["path"]))
+        self.assertEqual(shared_answer.question, "Are exports higher than last year?")
+        self.assertEqual(shared_answer.response_json["signal"]["status"], "bullish")
+
+    def test_create_shared_answer_rejects_invalid_structured_response(self):
+        response = self.client.post(
+            reverse("create-shared-answer"),
+            data=json.dumps(
+                {
+                    "question": "Are exports higher than last year?",
+                    "response_json": {"summary": "Missing required fields"},
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(SharedAnswer.objects.count(), 0)
+
+    def test_shared_answer_detail_page_renders_saved_insight(self):
+        shared_answer = SharedAnswer.objects.create(
+            question="How much gas is currently in storage?",
+            response_json={
+                "answer": "Storage remains below the five-year average.",
+                "signal": {"status": "neutral", "confidence": 0.61},
+                "summary": "Storage remains below the five-year average.",
+                "drivers": ["End-of-season inventories are still tight."],
+                "data_points": [
+                    {"metric": "working_gas_storage_lower48", "value": 1820, "unit": "bcf"}
+                ],
+                "forecast": {
+                    "direction": "flat",
+                    "reasoning": "Near-term injections are expected to track seasonal norms.",
+                },
+                "suggested_alerts": [],
+                "alerts": [],
+                "sources": [{"title": "EIA Weekly Storage", "date": "2026-04-03"}],
+            },
+        )
+
+        response = self.client.get(
+            reverse("shared-answer-detail", args=[shared_answer.share_id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "How much gas is currently in storage?")
+        self.assertContains(response, "Storage remains below the five-year average.")
+        self.assertContains(response, "EIA Weekly Storage")

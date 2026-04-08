@@ -23,6 +23,7 @@ from django.urls import include, path
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import TemplateView
 
+from alerts import views as alert_views
 from billing import views as billing_views
 
 
@@ -48,6 +49,8 @@ urlpatterns = [
     path("billing/", include("billing.urls")),
     path("auth/", include("auth.urls")),
     path("alerts/", include("alerts.urls")),
+    path("api/shared-answers/", alert_views.create_shared_answer_view, name="create-shared-answer"),
+    path("shared/<str:share_id>/", alert_views.shared_answer_detail_view, name="shared-answer-detail"),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 
