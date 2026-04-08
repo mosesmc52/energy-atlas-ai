@@ -92,7 +92,16 @@ def _create_shared_answer(question: str, response_json: dict) -> str:
         },
         timeout=15,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        logger.warning(
+            "Share API request failed: status=%s body=%s payload=%s",
+            response.status_code,
+            response.text[:2000],
+            response_json,
+        )
+        raise
     payload = response.json()
     share_url = str(payload.get("url") or "").strip()
     if not share_url:

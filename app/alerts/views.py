@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from django.conf import settings
 from django.contrib import messages
@@ -31,6 +32,8 @@ from alerts.services import (
 )
 from billing.services import can_create_alert
 from schemas.answer import StructuredAnswer
+
+logger = logging.getLogger(__name__)
 
 
 def _request_payload(request) -> dict:
@@ -674,7 +677,14 @@ def create_shared_answer_view(request):
 
     try:
         structured_response = StructuredAnswer.model_validate(response_json)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Shared answer validation failed: %s payload_keys=%s payload=%s",
+            exc,
+            sorted(response_json.keys()) if isinstance(response_json, dict) else None,
+            response_json,
+            exc_info=True,
+        )
         return JsonResponse({"error": "response_json is invalid"}, status=400)
 
     shared_answer = SharedAnswer.objects.create(
