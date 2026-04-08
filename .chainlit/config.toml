@@ -146,7 +146,7 @@ alert_style = "classic"
 
 custom_meta_url = "https://askenergyatlas.com"
 
-custom_meta_image_url = "https://askenergyatlas.com/public/images/social-card.png"
+custom_meta_image_url = "https://askenergyatlas.com/public/images/social-card-compact.png"
 
 # Load assistant logo directly from URL.
 logo_file_url = "/public/images/logo.png"
