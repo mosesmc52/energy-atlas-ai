@@ -1,6 +1,20 @@
 {% extends "base.html" %}
 
 {% block title %}Shared Insight | Energy Atlas{% endblock %}
+{% block meta_description %}{{ summary|default:"Structured energy market insight from Energy Atlas."|striptags|truncatechars:160 }}{% endblock %}
+{% block social_meta %}
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Energy Atlas">
+  <meta property="og:title" content="{{ shared_answer.question|striptags|truncatechars:95 }}">
+  <meta property="og:description" content="{{ summary|default:'Structured energy market insight from Energy Atlas.'|striptags|truncatechars:200 }}">
+  <meta property="og:url" content="{{ share_url }}">
+  <meta property="og:image" content="{{ share_image_url }}">
+  <meta property="og:image:alt" content="Energy Atlas shared insight preview">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ shared_answer.question|striptags|truncatechars:70 }}">
+  <meta name="twitter:description" content="{{ summary|default:'Structured energy market insight from Energy Atlas.'|striptags|truncatechars:200 }}">
+  <meta name="twitter:image" content="{{ share_image_url }}">
+{% endblock %}
 
 {% block header %}{% endblock %}
 

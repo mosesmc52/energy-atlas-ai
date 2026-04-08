@@ -707,8 +707,24 @@ def create_shared_answer_view(request):
 @require_http_methods(["GET"])
 def shared_answer_detail_view(request, share_id: str):
     shared_answer = get_object_or_404(SharedAnswer, share_id=share_id)
+    context = _shared_answer_context(shared_answer)
+    app_url = str(getattr(settings, "APP_URL", "") or "").strip().rstrip("/")
+    share_path = reverse("shared-answer-detail", args=[shared_answer.share_id])
+    share_url = f"{app_url}{share_path}" if app_url else request.build_absolute_uri(share_path)
+    share_image_path = "/public/images/social-card.png"
+    share_image_url = (
+        f"{app_url}{share_image_path}"
+        if app_url
+        else request.build_absolute_uri(share_image_path)
+    )
+    context.update(
+        {
+            "share_url": share_url,
+            "share_image_url": share_image_url,
+        }
+    )
     return render(
         request,
         "shared/detail.html",
-        _shared_answer_context(shared_answer),
+        context,
     )

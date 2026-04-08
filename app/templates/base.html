@@ -8,6 +8,8 @@
   <meta name="apple-touch-fullscreen" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>{% block title %}Energy Atlas{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}Energy Atlas AI provides structured energy market insights, metrics, and shareable analyst readouts.{% endblock %}">
+  {% block social_meta %}{% endblock %}
   <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32.png' %}">
   <link rel="apple-touch-icon" sizes="180x180" href="{% static 'img/apple-touch-icon.png' %}">
   <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio,line-clamp"></script>
