@@ -81,6 +81,7 @@ class Base(Configuration):
                     "django.contrib.messages.context_processors.messages",
                     "admincolors.context_processors.admin_theme",
                     "billing.context_processors.billing_subscription",
+                    "main.analytics.analytics_events",
                 ],
             },
         },

@@ -69,6 +69,20 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "on",
 }
 SHARE_ACTION_NAME = "share_structured_answer"
+ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics"
+
+
+async def _track_chainlit_event(event: str, **params: object) -> None:
+    payload = {
+        "type": ANALYTICS_MESSAGE_TYPE,
+        "event": event,
+        "app_surface": "chainlit",
+        **params,
+    }
+    try:
+        await cl.send_window_message(payload)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Unable to send Chainlit analytics event %s: %s", event, e)
 
 
 def _share_api_base_url() -> str:
@@ -391,6 +405,10 @@ async def on_chat_start():
     # Core deps
     cl.user_session.set("deps", build_container())
     cl.user_session.set("shareable_answers", {})
+    await _track_chainlit_event(
+        "chat_started",
+        is_authenticated=bool(cl.user_session.get("user")),
+    )
 
     # Optional: Google Sheets question logging (best-effort)
     try:
@@ -419,6 +437,10 @@ async def on_message(message: cl.Message):
     if not user_query:
         await cl.Message(content="Please enter a question.").send()
         return
+    await _track_chainlit_event(
+        "question_submitted",
+        is_authenticated=bool(cl.user_session.get("user")),
+    )
 
     parsed_signal = parse_signal_question(user_query)
     if (
@@ -611,6 +633,13 @@ async def on_message(message: cl.Message):
             if DEBUG_ENABLED:
                 sources_elapsed_ms = (perf_counter() - sources_started) * 1000
 
+        await _track_chainlit_event(
+            "answer_rendered",
+            has_chart=payload.chart_spec is not None,
+            has_forecast=forecast is not None,
+            is_authenticated=bool(cl.user_session.get("user")),
+        )
+
         if DEBUG_ENABLED:
             total_elapsed_ms = (perf_counter() - request_started) * 1000
             logger.info(
@@ -679,3 +708,7 @@ async def share_structured_answer(action: cl.Action):
             f"Unlisted link for this answer only: {share_url}"
         )
     ).send()
+    await _track_chainlit_event(
+        "shared_answer_created",
+        is_authenticated=bool(cl.user_session.get("user")),
+    )

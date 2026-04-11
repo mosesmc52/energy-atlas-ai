@@ -31,6 +31,7 @@ from alerts.services import (
     should_trigger_alert,
 )
 from billing.services import can_create_alert
+from main.analytics import queue_analytics_event
 from schemas.answer import StructuredAnswer
 
 logger = logging.getLogger(__name__)
@@ -343,8 +344,19 @@ def alert_list_view(request):
     checkout_status = str(request.GET.get("checkout") or "").strip().lower()
     if checkout_status in {"success", "cancel"}:
         if checkout_status == "success":
+            checkout_analytics = request.session.pop("pending_checkout_analytics", {})
+            queue_analytics_event(
+                request,
+                "subscription_completed",
+                plan=checkout_analytics.get("plan", ""),
+                billing_interval=checkout_analytics.get("billing_interval", ""),
+                value=checkout_analytics.get("value", ""),
+                currency=checkout_analytics.get("currency", ""),
+                app_surface="django",
+            )
             messages.success(request, "Checkout completed successfully.")
         else:
+            request.session.pop("pending_checkout_analytics", None)
             messages.warning(request, "Checkout was canceled.")
         redirect_query = request.GET.copy()
         redirect_query.pop("checkout", None)
@@ -417,6 +429,13 @@ def alert_create_view(request):
             if error:
                 messages.error(request, error)
             else:
+                queue_analytics_event(
+                    request,
+                    "alert_created",
+                    signal_id=rule.signal_id,
+                    source="manual",
+                    app_surface="django",
+                )
                 messages.success(request, "Alert created successfully.")
                 return redirect("alerts:list")
 

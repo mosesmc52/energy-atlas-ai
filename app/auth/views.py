@@ -15,6 +15,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
+from main.analytics import queue_analytics_event
 from main.emailing import send_templated_email
 
 User = get_user_model()
@@ -192,6 +193,13 @@ def google_sign_in_callback_view(request):
         _send_welcome_email(request=request, user=user)
 
     login(request, user)
+    if created:
+        queue_analytics_event(
+            request,
+            "sign_up_completed",
+            method="google",
+            app_surface="django",
+        )
     messages.success(request, "Signed in with Google successfully.")
     return redirect(next_url)
 
@@ -246,6 +254,12 @@ def sign_up_view(request):
                 )
                 _send_welcome_email(request=request, user=user)
                 login(request, user)
+                queue_analytics_event(
+                    request,
+                    "sign_up_completed",
+                    method="email",
+                    app_surface="django",
+                )
                 messages.success(request, "Account created successfully.")
                 return redirect("alerts:list")
 

@@ -26,6 +26,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from main.analytics import queue_analytics_event
+
 logger = logging.getLogger(__name__)
 HANDLED_STRIPE_EVENT_TYPES = {
     "checkout.session.completed",
@@ -554,6 +556,13 @@ def start_checkout(request: HttpRequest) -> HttpResponse:
         return redirect("pricing")
 
     price_id = plan_price.stripe_price_id
+    unit_amount_cents = plan_price.unit_amount_cents
+    if unit_amount_cents is None:
+        unit_amount_cents = plan_price.metadata_json.get("unit_amount")
+    try:
+        checkout_value = int(unit_amount_cents) / 100
+    except (TypeError, ValueError):
+        checkout_value = ""
 
     stripe.api_key = secret_key
     success_url = (
@@ -579,6 +588,22 @@ def start_checkout(request: HttpRequest) -> HttpResponse:
         success_url=success_url,
         cancel_url=cancel_url,
     )
+    queue_analytics_event(
+        request,
+        "subscription_started",
+        plan=plan_price.plan.key,
+        billing_interval=plan_price.interval,
+        value=checkout_value,
+        currency=str(plan_price.currency or "usd").upper(),
+        app_surface="django",
+    )
+    request.session["pending_checkout_analytics"] = {
+        "plan": plan_price.plan.key,
+        "billing_interval": plan_price.interval,
+        "value": checkout_value,
+        "currency": str(plan_price.currency or "usd").upper(),
+    }
+    request.session.modified = True
     return redirect(session.url, permanent=False)
 
 

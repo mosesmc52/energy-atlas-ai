@@ -1,33 +1,15 @@
 (function () {
-  const GA_MEASUREMENT_ID = "G-4DQHVPWTF2";
-  const GA_SCRIPT_ID = "energy-atlas-ga-script";
   const GTM_CONTAINER_ID = "GTM-K92P8VMQ";
   const GTM_SCRIPT_ID = "energy-atlas-gtm-script";
   const GTM_NOSCRIPT_ID = "energy-atlas-gtm-noscript";
+  const ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics";
   const LINK_ID = "energy-atlas-signin-link";
   const LINK_CLASS = "energy-atlas-signin-link";
   const SIGNIN_PATH = "/auth/signin/";
 
-  function ensureGoogleAnalytics() {
-    if (document.getElementById(GA_SCRIPT_ID) || typeof document.head === "undefined") {
-      return;
-    }
-
+  function trackEvent(payload) {
     window.dataLayer = window.dataLayer || [];
-    window.gtag =
-      window.gtag ||
-      function gtag() {
-        window.dataLayer.push(arguments);
-      };
-
-    window.gtag("js", new Date());
-    window.gtag("config", GA_MEASUREMENT_ID);
-
-    const script = document.createElement("script");
-    script.id = GA_SCRIPT_ID;
-    script.async = true;
-    script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`;
-    document.head.appendChild(script);
+    window.dataLayer.push(payload);
   }
 
   function ensureGoogleTagManager() {
@@ -35,8 +17,7 @@
       return;
     }
 
-    window.dataLayer = window.dataLayer || [];
-    window.dataLayer.push({ "gtm.start": new Date().getTime(), event: "gtm.js" });
+    trackEvent({ "gtm.start": new Date().getTime(), event: "gtm.js" });
 
     const script = document.createElement("script");
     script.id = GTM_SCRIPT_ID;
@@ -85,12 +66,28 @@
     link.className = LINK_CLASS;
     link.href = SIGNIN_PATH;
     link.textContent = "Sign In";
+    link.addEventListener("click", function () {
+      trackEvent({
+        event: "sign_in_clicked",
+        app_surface: "chainlit",
+        location: "chainlit_header",
+      });
+    });
     header.appendChild(link);
   }
 
+  window.addEventListener("message", function (event) {
+    const payload = event.data;
+    if (!payload || payload.type !== ANALYTICS_MESSAGE_TYPE || !payload.event) {
+      return;
+    }
+
+    const { type, ...analyticsEvent } = payload;
+    trackEvent(analyticsEvent);
+  });
+
   const observer = new MutationObserver(() => ensureSignInLink());
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  ensureGoogleAnalytics();
   ensureGoogleTagManager();
   ensureGoogleTagManagerNoScript();
   window.addEventListener("load", ensureSignInLink);

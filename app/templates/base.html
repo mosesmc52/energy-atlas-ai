@@ -12,13 +12,6 @@ new Date().getTime(),event:"gtm.js"});var f=d.getElementsByTagName(s)[0],
 j=d.createElement(s),dl=l!="dataLayer"?"&l="+l:"";j.async=true;j.src=
 "https://www.googletagmanager.com/gtm.js?id="+i+dl;f.parentNode.insertBefore(j,f);
 })(window,document,"script","dataLayer","GTM-K92P8VMQ");</script>
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-4DQHVPWTF2"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag("js", new Date());
-    gtag("config", "G-4DQHVPWTF2");
-  </script>
   <title>{% block title %}Energy Atlas{% endblock %}</title>
   <meta name="description" content="{% block meta_description %}Energy Atlas AI provides structured energy market insights, metrics, and shareable analyst readouts.{% endblock %}">
   {% block social_meta %}{% endblock %}
@@ -171,6 +164,33 @@ j=d.createElement(s),dl=l!="dataLayer"?"&l="+l:"";j.async=true;j.src=
 <body class="h-full">
 <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-K92P8VMQ"
 height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  document.addEventListener("click", function (event) {
+    const link = event.target.closest("a[href]");
+    if (!link) {
+      return;
+    }
+
+    const url = new URL(link.href, window.location.origin);
+    if (url.pathname === "/auth/signin/") {
+      window.dataLayer.push({
+        event: "sign_in_clicked",
+        app_surface: "django",
+        location: "django_link",
+      });
+    }
+  });
+</script>
+{% if analytics_events %}
+  {{ analytics_events|json_script:"analytics-events" }}
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    JSON.parse(document.getElementById("analytics-events").textContent).forEach(function (event) {
+      window.dataLayer.push(event);
+    });
+  </script>
+{% endif %}
 {% block page-container %}
   <div class="min-h-full">
     {% block header %}
