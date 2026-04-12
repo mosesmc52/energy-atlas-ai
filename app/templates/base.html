@@ -167,18 +167,26 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <script>
   window.dataLayer = window.dataLayer || [];
   document.addEventListener("click", function (event) {
+    if (!event.target || typeof event.target.closest !== "function") {
+      return;
+    }
+
     const link = event.target.closest("a[href]");
     if (!link) {
       return;
     }
 
-    const url = new URL(link.href, window.location.origin);
-    if (url.pathname === "/auth/signin/") {
-      window.dataLayer.push({
-        event: "sign_in_clicked",
-        app_surface: "django",
-        location: "django_link",
-      });
+    try {
+      const url = new URL(link.href, window.location.origin);
+      if (url.pathname === "/auth/signin/") {
+        window.dataLayer.push({
+          event: "sign_in_clicked",
+          app_surface: "django",
+          location: "django_link",
+        });
+      }
+    } catch (error) {
+      return;
     }
   });
 </script>

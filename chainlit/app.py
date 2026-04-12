@@ -33,6 +33,7 @@ from configurations.importer import install
 install()
 
 import django
+from openai import OpenAI
 
 django.setup()
 
@@ -70,6 +71,19 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
 }
 SHARE_ACTION_NAME = "share_structured_answer"
 ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics"
+GENERAL_ENERGY_TERMS = {
+    "gas",
+    "natural gas",
+    "lng",
+    "oil",
+    "crude",
+    "energy",
+    "power",
+    "electricity",
+    "producer",
+    "producers",
+    "production",
+}
 
 
 async def _track_chainlit_event(event: str, **params: object) -> None:
@@ -83,6 +97,46 @@ async def _track_chainlit_event(event: str, **params: object) -> None:
         await cl.send_window_message(payload)
     except Exception as e:  # noqa: BLE001
         logger.debug("Unable to send Chainlit analytics event %s: %s", event, e)
+
+
+def _looks_like_general_energy_question(question: str, previous_context: str = "") -> bool:
+    normalized = question.lower()
+    if any(term in normalized for term in GENERAL_ENERGY_TERMS):
+        return True
+    if previous_context and any(term in normalized for term in ("country", "countries", "top")):
+        return True
+    return False
+
+
+def _general_energy_answer(question: str, previous_context: str = "") -> str:
+    client = OpenAI()
+    user_content = question
+    if previous_context:
+        user_content = (
+            f"Previous energy question context: {previous_context}\n"
+            f"Current user question: {question}"
+        )
+    response = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "You are Energy Atlas AI. Answer general energy-market questions "
+                    "that do not require the app's structured datasets. Keep the answer "
+                    "concise and useful. If the question asks for rankings, state what "
+                    "metric and timeframe you are assuming. If exact current data may "
+                    "have changed, say so briefly instead of overstating precision. "
+                    "Do not fabricate live values or citations."
+                ),
+            },
+            {"role": "user", "content": user_content},
+        ],
+    )
+    answer = str(getattr(response, "output_text", "") or "").strip()
+    if not answer:
+        raise ValueError("OpenAI returned an empty general answer")
+    return answer
 
 
 def _share_api_base_url() -> str:
@@ -437,6 +491,7 @@ async def on_message(message: cl.Message):
     if not user_query:
         await cl.Message(content="Please enter a question.").send()
         return
+    previous_energy_context = str(cl.user_session.get("last_energy_question") or "")
     await _track_chainlit_event(
         "question_submitted",
         is_authenticated=bool(cl.user_session.get("user")),
@@ -485,6 +540,27 @@ async def on_message(message: cl.Message):
             ).send()
             return
         if route.intent == "unsupported" or route.primary_metric is None:
+            if _looks_like_general_energy_question(user_query, previous_energy_context):
+                try:
+                    answer = await asyncio.to_thread(
+                        _general_energy_answer,
+                        user_query,
+                        previous_energy_context,
+                    )
+                except Exception as e:
+                    logger.warning("General energy fallback failed: %s", e)
+                else:
+                    cl.user_session.set("last_energy_question", user_query)
+                    await cl.Message(content=answer).send()
+                    await _track_chainlit_event(
+                        "answer_rendered",
+                        has_chart=False,
+                        has_forecast=False,
+                        is_authenticated=bool(cl.user_session.get("user")),
+                        route_source="general_llm",
+                    )
+                    return
+
             fallback_reason = (
                 route.reason
                 or "This question did not map cleanly to a supported metric."
@@ -498,6 +574,7 @@ async def on_message(message: cl.Message):
             return
         if route.primary_metric is None:
             raise ValueError(f"Unable to determine a metric for intent: {route.intent}")
+        cl.user_session.set("last_energy_question", user_query)
 
         # (B) Execute -> fetch data (df + SourceRef)
         req = ExecuteRequest(
