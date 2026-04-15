@@ -40,6 +40,11 @@ django.setup()
 import chainlit as cl
 from django.conf import settings
 from agents.router import route_query
+from agents.guardrails import (
+    OUT_OF_SCOPE_MESSAGE,
+    is_natural_gas_question,
+    looks_like_general_energy_question,
+)
 from alerts.services import (
     build_signal_evaluator,
     is_builtin_signal_id,
@@ -71,19 +76,6 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
 }
 SHARE_ACTION_NAME = "share_structured_answer"
 ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics"
-GENERAL_ENERGY_TERMS = {
-    "gas",
-    "natural gas",
-    "lng",
-    "oil",
-    "crude",
-    "energy",
-    "power",
-    "electricity",
-    "producer",
-    "producers",
-    "production",
-}
 
 
 async def _track_chainlit_event(event: str, **params: object) -> None:
@@ -97,15 +89,6 @@ async def _track_chainlit_event(event: str, **params: object) -> None:
         await cl.send_window_message(payload)
     except Exception as e:  # noqa: BLE001
         logger.debug("Unable to send Chainlit analytics event %s: %s", event, e)
-
-
-def _looks_like_general_energy_question(question: str, previous_context: str = "") -> bool:
-    normalized = question.lower()
-    if any(term in normalized for term in GENERAL_ENERGY_TERMS):
-        return True
-    if previous_context and any(term in normalized for term in ("country", "countries", "top")):
-        return True
-    return False
 
 
 def _general_energy_answer(question: str, previous_context: str = "") -> str:
@@ -122,8 +105,9 @@ def _general_energy_answer(question: str, previous_context: str = "") -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are Energy Atlas AI. Answer general energy-market questions "
-                    "that do not require the app's structured datasets. Keep the answer "
+                    "You are Energy Atlas AI. Answer only natural-gas-market questions "
+                    "that do not require the app's structured datasets. Refuse any "
+                    "question that is outside natural gas. Keep the answer "
                     "concise and useful. If the question asks for rankings, state what "
                     "metric and timeframe you are assuming. If exact current data may "
                     "have changed, say so briefly instead of overstating precision. "
@@ -492,6 +476,9 @@ async def on_message(message: cl.Message):
         await cl.Message(content="Please enter a question.").send()
         return
     previous_energy_context = str(cl.user_session.get("last_energy_question") or "")
+    if not is_natural_gas_question(user_query, previous_energy_context):
+        await cl.Message(content=OUT_OF_SCOPE_MESSAGE).send()
+        return
     await _track_chainlit_event(
         "question_submitted",
         is_authenticated=bool(cl.user_session.get("user")),
@@ -540,7 +527,7 @@ async def on_message(message: cl.Message):
             ).send()
             return
         if route.intent == "unsupported" or route.primary_metric is None:
-            if _looks_like_general_energy_question(user_query, previous_energy_context):
+            if looks_like_general_energy_question(user_query, previous_energy_context):
                 try:
                     answer = await asyncio.to_thread(
                         _general_energy_answer,
