@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from billing.models import PlanPrice, SubscriptionPlan, UserSubscription, WebhookEvent
+from billing.models import (
+    PlanPrice,
+    SubscriptionPlan,
+    UserAlertAccessOverride,
+    UserSubscription,
+    WebhookEvent,
+)
 
 
 class PlanPriceInline(admin.TabularInline):
@@ -96,3 +102,17 @@ class WebhookEventAdmin(admin.ModelAdmin):
     search_fields = ("event_id", "event_type")
     readonly_fields = ("created_at",)
     ordering = ("-created_at",)
+
+
+@admin.register(UserAlertAccessOverride)
+class UserAlertAccessOverrideAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "free_full_alert_access",
+        "updated_at",
+    )
+    list_filter = ("free_full_alert_access",)
+    search_fields = ("user__username", "user__email")
+    autocomplete_fields = ("user",)
+    list_select_related = ("user",)
+    ordering = ("user__username",)
