@@ -107,6 +107,26 @@ class UserSubscription(models.Model):
         return f"{self.user} -> {self.plan.key} ({self.status})"
 
 
+class UserAlertAccessOverride(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="alert_access_override",
+    )
+    free_full_alert_access = models.BooleanField(
+        default=False,
+        help_text="Allows this account to create alerts without plan-based limits.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user__username"]
+
+    def __str__(self) -> str:
+        return f"{self.user} -> free_full_alert_access={self.free_full_alert_access}"
+
+
 class WebhookEvent(models.Model):
     provider = models.CharField(max_length=30, default="stripe")
     event_id = models.CharField(max_length=100, unique=True)

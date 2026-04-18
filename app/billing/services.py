@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from billing.models import SubscriptionPlan, SubscriptionStatus, UserSubscription
+from billing.models import (
+    SubscriptionPlan,
+    SubscriptionStatus,
+    UserAlertAccessOverride,
+    UserSubscription,
+)
 
 
 ENTITLED_SUBSCRIPTION_STATUSES = {
@@ -37,7 +42,19 @@ def get_active_alert_limit(user) -> int:
     return plan.active_alert_limit
 
 
+def has_free_full_alert_access(user) -> bool:
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return UserAlertAccessOverride.objects.filter(
+        user=user,
+        free_full_alert_access=True,
+    ).exists()
+
+
 def can_create_alert(user, current_active_alert_count: int) -> tuple[bool, str | None]:
+    if has_free_full_alert_access(user):
+        return True, None
+
     plan = get_user_plan(user)
     if plan is None:
         return False, "No default subscription plan is configured."
