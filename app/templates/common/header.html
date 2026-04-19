@@ -6,13 +6,27 @@
     </a>
 
     <div class="flex items-center gap-3">
+      {% if request.user.is_authenticated %}
+        <a
+          href="{{ chat_view_url }}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn-secondary px-4 py-2 text-sm font-semibold"
+        >
+          Open Chat
+        </a>
+      {% endif %}
       {% if request.user.is_authenticated and has_active_subscription %}
         <a href="{% url 'billing:manage' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">
           Manage Subscription
         </a>
-      {% else %}
+      {% elif not request.user.is_authenticated %}
         <a href="{% url 'pricing' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">
-          {% if request.user.is_authenticated %}Upgrade{% else %}Pricing{% endif %}
+          Pricing
+        </a>
+      {% elif not has_free_full_alert_access %}
+        <a href="{% url 'pricing' %}" class="btn-secondary px-4 py-2 text-sm font-semibold">
+          Upgrade
         </a>
       {% endif %}
       {% if request.user.is_authenticated %}

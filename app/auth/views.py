@@ -11,6 +11,7 @@ from django.contrib.auth import authenticate, get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
@@ -288,3 +289,15 @@ def forgot_password_view(request):
         messages.error(request, "Enter the email associated with your account.")
 
     return render(request, "auth/forgot.html")
+
+
+@require_http_methods(["GET"])
+def auth_status_view(request):
+    user = getattr(request, "user", None)
+    is_authenticated = bool(user and user.is_authenticated)
+    return JsonResponse(
+        {
+            "authenticated": is_authenticated,
+            "email": str(getattr(user, "email", "") or "").strip() if is_authenticated else "",
+        }
+    )

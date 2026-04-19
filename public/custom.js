@@ -6,6 +6,8 @@
   const LINK_ID = "energy-atlas-signin-link";
   const LINK_CLASS = "energy-atlas-signin-link";
   const SIGNIN_PATH = "/auth/signin/";
+  const AUTH_STATUS_PATH = "/auth/status/";
+  let authStatusPromise = null;
 
   function trackEvent(payload) {
     window.dataLayer = window.dataLayer || [];
@@ -45,6 +47,11 @@
     document.body.insertAdjacentElement("afterbegin", noscript);
   }
 
+  function removeSignInLinks() {
+    const links = document.querySelectorAll(`header a[href="${SIGNIN_PATH}"]`);
+    links.forEach((link) => link.remove());
+  }
+
   function ensureSignInLink() {
     const header = document.querySelector("header");
     if (!header) {
@@ -52,6 +59,11 @@
     }
 
     header.style.position = "relative";
+
+    const existingHeaderLink = header.querySelector(`a[href="${SIGNIN_PATH}"]`);
+    if (existingHeaderLink) {
+      return;
+    }
 
     const existing = document.getElementById(LINK_ID);
     if (existing) {
@@ -76,6 +88,33 @@
     header.appendChild(link);
   }
 
+  function fetchAuthStatus() {
+    if (authStatusPromise) {
+      return authStatusPromise;
+    }
+
+    authStatusPromise = fetch(AUTH_STATUS_PATH, {
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    })
+      .then((response) => (response.ok ? response.json() : { authenticated: false }))
+      .catch(() => ({ authenticated: false }));
+
+    return authStatusPromise;
+  }
+
+  function syncSignInVisibility() {
+    fetchAuthStatus().then((payload) => {
+      if (payload && payload.authenticated) {
+        removeSignInLinks();
+        return;
+      }
+      ensureSignInLink();
+    });
+  }
+
   window.addEventListener("message", function (event) {
     const payload = event.data;
     if (!payload || payload.type !== ANALYTICS_MESSAGE_TYPE || !payload.event) {
@@ -86,11 +125,11 @@
     trackEvent(analyticsEvent);
   });
 
-  const observer = new MutationObserver(() => ensureSignInLink());
+  const observer = new MutationObserver(() => syncSignInVisibility());
   observer.observe(document.documentElement, { childList: true, subtree: true });
   ensureGoogleTagManager();
   ensureGoogleTagManagerNoScript();
-  window.addEventListener("load", ensureSignInLink);
+  window.addEventListener("load", syncSignInVisibility);
   window.addEventListener("load", ensureGoogleTagManagerNoScript);
-  ensureSignInLink();
+  syncSignInVisibility();
 })();

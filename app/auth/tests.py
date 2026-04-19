@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -49,4 +50,37 @@ class SignUpWelcomeEmailTests(TestCase):
         self.assertIn(
             "[Create your first alert] https://app.energyatlas.example/alerts/create/",
             message.body,
+        )
+
+
+class AuthStatusViewTests(TestCase):
+    def test_auth_status_returns_not_authenticated_for_anonymous_user(self):
+        response = self.client.get(reverse("auth:status"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "authenticated": False,
+                "email": "",
+            },
+        )
+
+    def test_auth_status_returns_authenticated_user_email(self):
+        user = get_user_model().objects.create_user(
+            username="signedin@example.com",
+            email="signedin@example.com",
+            password="secret123",
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("auth:status"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "authenticated": True,
+                "email": "signedin@example.com",
+            },
         )
