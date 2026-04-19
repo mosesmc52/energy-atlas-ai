@@ -330,6 +330,42 @@ class AlertUiAndApiTests(TestCase):
         self.assertEqual(update_response.json()["operator"], AlertOperator.GTE)
         self.assertEqual(update_response.json()["threshold"], 3.8)
 
+    def test_import_metric_requires_country_code(self):
+        payload = self._base_payload()
+        payload["metric"] = "import"
+        with patch("alerts.views.can_create_alert", return_value=(True, None)):
+            response = self.client.post(reverse("alerts:create"), data=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "country_code is required")
+
+    def test_production_metric_accepts_state_selection(self):
+        payload = self._base_payload()
+        payload["metric"] = "production"
+        payload["geography_type"] = "state"
+        payload["state_code"] = "tx"
+        evaluation = SignalEvaluation(
+            question="test",
+            result=True,
+            explanation="deterministic",
+            values={
+                "raw_value": 3.4,
+                "evaluated_value": 3.4,
+                "condition_result": True,
+                "region": "tx",
+            },
+            metric="ng_production_lower48",
+        )
+        with (
+            patch("alerts.views.can_create_alert", return_value=(True, None)),
+            patch("alerts.views.build_signal_evaluator") as mock_build_evaluator,
+        ):
+            mock_build_evaluator.return_value.evaluate_rule.return_value = evaluation
+            response = self.client.post(reverse("alerts:create"), data=payload)
+
+        self.assertRedirects(response, reverse("alerts:list"))
+        rule = AlertRule.objects.get(user=self.user, metric="production")
+        self.assertEqual(rule.region, "tx")
+
 
 class CooldownBehaviorTests(TestCase):
     def setUp(self):

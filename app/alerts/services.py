@@ -110,37 +110,66 @@ BUILT_IN_SIGNAL_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 METRIC_REGISTRY: dict[str, dict[str, Any]] = {
+    "production": {
+        "label": "Production",
+        "target_metric": "ng_production_lower48",
+        "zscore_supported": True,
+        "geography": "state_or_national",
+    },
+    "consumption": {
+        "label": "Consumption",
+        "target_metric": "ng_consumption_lower48",
+        "zscore_supported": True,
+        "geography": "state_or_national",
+    },
+    "storage": {
+        "label": "Storage",
+        "target_metric": "working_gas_storage_lower48",
+        "zscore_supported": True,
+        "geography": "national_only",
+    },
+    "import": {
+        "label": "Import",
+        "target_metric": "lng_imports",
+        "zscore_supported": True,
+        "geography": "country_only",
+    },
+    "export": {
+        "label": "Export",
+        "target_metric": "lng_exports",
+        "zscore_supported": True,
+        "geography": "country_only",
+    },
     "henry_hub_spot_price": {
         "label": "Henry Hub spot price",
+        "target_metric": "henry_hub_spot",
         "zscore_supported": True,
-    },
-    "working_gas_storage_lower48": {
-        "label": "Working gas storage (Lower 48)",
-        "zscore_supported": True,
-    },
-    "ng_production_lower48": {
-        "label": "Natural gas production (Lower 48)",
-        "zscore_supported": True,
+        "geography": "none",
     },
     "lng_exports": {
         "label": "LNG exports",
         "zscore_supported": True,
+        "geography": "country_only",
     },
-    "ng_consumption_total": {
-        "label": "Natural gas consumption",
+    "lng_imports": {
+        "label": "LNG imports",
         "zscore_supported": True,
+        "geography": "country_only",
     },
     "weather_hdd_lower_48": {
         "label": "Heating degree days (Lower 48)",
         "zscore_supported": True,
+        "geography": "none",
     },
     "market_supply_regime": {
         "label": "Market supply regime",
         "zscore_supported": False,
+        "geography": "none",
     },
     "iso_gas_dependency": {
-        "label": "ISO gas dependency",
+        "label": "Power Grid Gas Share",
         "zscore_supported": True,
+        "geography": "none",
     },
 }
 
@@ -453,6 +482,7 @@ class SignalEvaluator:
                 metric=metric,
                 error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
             )
+        resolved_metric = str(metric_config.get("target_metric") or metric).strip()
 
         if value_mode not in {AlertValueMode.RAW, AlertValueMode.ZSCORE}:
             return SignalEvaluation(
@@ -475,7 +505,20 @@ class SignalEvaluator:
         end = date.today().isoformat()
         lookback_days = 365 if value_mode == AlertValueMode.ZSCORE else 60
         start = (date.today() - timedelta(days=lookback_days)).isoformat()
-        result = self._execute_metric(metric, start=start, end=end)
+        filters: dict[str, Any] = {}
+        region = str(getattr(rule, "region", "") or "").strip()
+        if region:
+            filters["region"] = region
+        try:
+            result = self._execute_metric(resolved_metric, start=start, end=end, filters=filters)
+        except Exception as exc:  # noqa: BLE001
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation=f"Unable to evaluate metric '{resolved_metric}': {exc}",
+                metric=resolved_metric,
+                error_code=SignalErrorCode.EVALUATION_ERROR,
+            )
         df = result.df.copy()
         if df.empty:
             return SignalEvaluation(
@@ -489,13 +532,13 @@ class SignalEvaluator:
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
             df = df.dropna(subset=["date"]).sort_values("date")
-        value_col = self._pick_value_column(df, metric)
+        value_col = self._pick_value_column(df, resolved_metric)
         if value_col is None:
             return SignalEvaluation(
                 question=rule.question,
                 result=None,
                 explanation="The selected metric did not return numeric values.",
-                metric=metric,
+                metric=resolved_metric,
                 error_code=SignalErrorCode.INSUFFICIENT_DATA,
             )
 
@@ -506,7 +549,7 @@ class SignalEvaluator:
                 question=rule.question,
                 result=None,
                 explanation="The selected metric returned no usable numeric observations.",
-                metric=metric,
+                metric=resolved_metric,
                 error_code=SignalErrorCode.INSUFFICIENT_DATA,
             )
 
@@ -560,7 +603,8 @@ class SignalEvaluator:
         )
 
         values: dict[str, Any] = {
-            "metric": metric,
+            "metric": resolved_metric,
+            "requested_metric": metric,
             "value_mode": value_mode,
             "operator": operator,
             "threshold": threshold,
@@ -569,6 +613,8 @@ class SignalEvaluator:
             "evaluated_value": evaluated_value,
             "condition_result": condition_result,
         }
+        if region:
+            values["region"] = region
         if previous_raw_value is not None:
             values["previous_raw_value"] = previous_raw_value
         if previous_evaluated_value is not None:
@@ -582,7 +628,7 @@ class SignalEvaluator:
             explanation=explanation,
             values=values,
             as_of=as_of,
-            metric=metric,
+            metric=resolved_metric,
             metadata={
                 "metric_source": result.source.reference,
                 "evaluated_at": self._evaluated_at(),

@@ -39,6 +39,60 @@ from schemas.answer import StructuredAnswer
 
 logger = logging.getLogger(__name__)
 
+US_STATE_OPTIONS = [
+    ("united_states_total", "National (United States)"),
+    ("al", "Alabama"),
+    ("ak", "Alaska"),
+    ("az", "Arizona"),
+    ("ar", "Arkansas"),
+    ("ca", "California"),
+    ("co", "Colorado"),
+    ("ct", "Connecticut"),
+    ("de", "Delaware"),
+    ("fl", "Florida"),
+    ("ga", "Georgia"),
+    ("hi", "Hawaii"),
+    ("id", "Idaho"),
+    ("il", "Illinois"),
+    ("in", "Indiana"),
+    ("ia", "Iowa"),
+    ("ks", "Kansas"),
+    ("ky", "Kentucky"),
+    ("la", "Louisiana"),
+    ("me", "Maine"),
+    ("md", "Maryland"),
+    ("ma", "Massachusetts"),
+    ("mi", "Michigan"),
+    ("mn", "Minnesota"),
+    ("ms", "Mississippi"),
+    ("mo", "Missouri"),
+    ("mt", "Montana"),
+    ("ne", "Nebraska"),
+    ("nv", "Nevada"),
+    ("nh", "New Hampshire"),
+    ("nj", "New Jersey"),
+    ("nm", "New Mexico"),
+    ("ny", "New York"),
+    ("nc", "North Carolina"),
+    ("nd", "North Dakota"),
+    ("oh", "Ohio"),
+    ("ok", "Oklahoma"),
+    ("or", "Oregon"),
+    ("pa", "Pennsylvania"),
+    ("ri", "Rhode Island"),
+    ("sc", "South Carolina"),
+    ("sd", "South Dakota"),
+    ("tn", "Tennessee"),
+    ("tx", "Texas"),
+    ("ut", "Utah"),
+    ("vt", "Vermont"),
+    ("va", "Virginia"),
+    ("wa", "Washington"),
+    ("wv", "West Virginia"),
+    ("wi", "Wisconsin"),
+    ("wy", "Wyoming"),
+]
+
 
 def _request_payload(request) -> dict:
     if str(request.content_type or "").startswith("application/json"):
@@ -156,6 +210,9 @@ def _alert_form_context(
     initial_value_mode: str,
     initial_operator: str,
     initial_threshold: str,
+    initial_geography_type: str,
+    initial_state_code: str,
+    initial_country_code: str,
     initial_frequency: str,
     initial_trigger_type: str,
     initial_cooldown_hours: int,
@@ -175,6 +232,9 @@ def _alert_form_context(
         "initial_value_mode": initial_value_mode,
         "initial_operator": initial_operator,
         "initial_threshold": initial_threshold,
+        "initial_geography_type": initial_geography_type,
+        "initial_state_code": initial_state_code,
+        "initial_country_code": initial_country_code,
         "initial_frequency": initial_frequency,
         "initial_trigger_type": initial_trigger_type,
         "initial_cooldown_hours": initial_cooldown_hours,
@@ -187,9 +247,11 @@ def _alert_form_context(
                 "value": metric_id,
                 "label": str(config.get("label") or metric_id.replace("_", " ").title()),
                 "zscore_supported": bool(config.get("zscore_supported", False)),
+                "geography": str(config.get("geography") or "none"),
             }
             for metric_id, config in get_metric_registry().items()
         ],
+        "state_options": US_STATE_OPTIONS,
         "action_url": action_url,
         "submit_label": submit_label,
         "eyebrow": eyebrow,
@@ -224,15 +286,15 @@ def _validate_rule_payload(payload: dict) -> tuple[dict | None, str | None]:
     metric_registry = get_metric_registry()
     if metric not in metric_registry:
         return None, f"metric '{metric}' is not supported"
+    metric_config = metric_registry[metric]
+    resolved_metric = str(metric_config.get("target_metric") or metric).strip()
 
     value_mode = validated.value_mode.strip()
     valid_value_modes = {choice[0] for choice in AlertValueMode.choices}
     if value_mode not in valid_value_modes:
         return None, f"value_mode '{value_mode}' is not supported"
 
-    if value_mode == AlertValueMode.ZSCORE and not bool(
-        metric_registry[metric].get("zscore_supported", False)
-    ):
+    if value_mode == AlertValueMode.ZSCORE and not bool(metric_config.get("zscore_supported", False)):
         return None, f"zscore mode is not supported for metric '{metric}'"
 
     operator = validated.operator.strip()
@@ -253,11 +315,36 @@ def _validate_rule_payload(payload: dict) -> tuple[dict | None, str | None]:
     threshold = float(validated.threshold)
     cooldown_hours = int(validated.cooldown_hours)
 
+    geography_mode = str(metric_config.get("geography") or "none")
+    geography_type = str(validated.geography_type or "").strip().lower()
+    state_code = str(validated.state_code or "").strip().lower()
+    country_code = str(validated.country_code or "").strip()
+    region = ""
+
+    if geography_mode == "country_only":
+        if not country_code:
+            return None, "country_code is required"
+        region = country_code
+        geography_type = "country"
+    elif geography_mode == "state_or_national":
+        if geography_type not in {"national", "state"}:
+            geography_type = "national"
+        if geography_type == "state":
+            if not state_code:
+                return None, "state_code is required"
+            region = state_code
+        else:
+            region = "united_states_total"
+    elif geography_mode == "national_only":
+        geography_type = "national"
+        region = "lower48" if resolved_metric == "working_gas_storage_lower48" else "united_states_total"
+
     return (
         {
             "name": validated.name.strip(),
             "question": validated.question.strip(),
             "metric": metric,
+            "resolved_metric": resolved_metric,
             "value_mode": value_mode,
             "operator": operator,
             "threshold": threshold,
@@ -265,6 +352,10 @@ def _validate_rule_payload(payload: dict) -> tuple[dict | None, str | None]:
             "trigger_type": trigger_type,
             "cooldown_hours": cooldown_hours,
             "delivery_channels": payload.get("delivery_channels") or [],
+            "region": region,
+            "geography_type": geography_type,
+            "state_code": state_code,
+            "country_code": country_code,
         },
         None,
     )
@@ -297,8 +388,13 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
         value_mode=normalized_payload["value_mode"],
         operator=normalized_payload["operator"],
         threshold=normalized_payload["threshold"],
-        region="",
-        config_json={},
+        region=normalized_payload["region"],
+        config_json={
+            "geography_type": normalized_payload["geography_type"],
+            "state_code": normalized_payload["state_code"],
+            "country_code": normalized_payload["country_code"],
+            "resolved_metric": normalized_payload["resolved_metric"],
+        },
         frequency=normalized_payload["frequency"],
         trigger_type=normalized_payload["trigger_type"],
         cooldown_hours=normalized_payload["cooldown_hours"],
@@ -373,8 +469,13 @@ def _update_rule_from_payload(*, alert_rule: AlertRule, payload: dict) -> tuple[
     alert_rule.value_mode = normalized_payload["value_mode"]
     alert_rule.operator = normalized_payload["operator"]
     alert_rule.threshold = normalized_payload["threshold"]
-    alert_rule.region = ""
-    alert_rule.config_json = {}
+    alert_rule.region = normalized_payload["region"]
+    alert_rule.config_json = {
+        "geography_type": normalized_payload["geography_type"],
+        "state_code": normalized_payload["state_code"],
+        "country_code": normalized_payload["country_code"],
+        "resolved_metric": normalized_payload["resolved_metric"],
+    }
     alert_rule.frequency = normalized_payload["frequency"]
     alert_rule.trigger_type = normalized_payload["trigger_type"]
     alert_rule.cooldown_hours = normalized_payload["cooldown_hours"]
@@ -458,7 +559,7 @@ def alert_list_view(request):
             redirect_url = f"{redirect_url}?{redirect_query.urlencode()}"
         return redirect(redirect_url)
 
-    sort = str(request.GET.get("sort") or "created").strip().lower()
+    sort = str(request.GET.get("sort") or "title").strip().lower()
     sort_config = ALERT_LIST_SORT_OPTIONS.get(sort, ALERT_LIST_SORT_OPTIONS["created"])
     alert_rules = (
         AlertRule.objects.filter(user=request.user)
@@ -489,6 +590,9 @@ def alert_create_view(request):
     initial_value_mode = AlertValueMode.RAW
     initial_operator = AlertOperator.GTE
     initial_threshold = "0"
+    initial_geography_type = "national"
+    initial_state_code = "united_states_total"
+    initial_country_code = ""
 
     if request.method == "GET":
         signal_id = str(request.GET.get("signal_id") or "").strip()
@@ -505,6 +609,9 @@ def alert_create_view(request):
             initial_name = str(request.GET.get("name") or "").strip()
             initial_question = str(request.GET.get("question") or "").strip()
             initial_metric = str(request.GET.get("metric") or "").strip()
+            initial_geography_type = str(request.GET.get("geography_type") or "national").strip()
+            initial_state_code = str(request.GET.get("state_code") or "united_states_total").strip()
+            initial_country_code = str(request.GET.get("country_code") or "").strip()
 
     if request.method == "POST":
         action = request.POST.get("action", "create")
@@ -548,6 +655,9 @@ def alert_create_view(request):
             initial_value_mode=request.POST.get("value_mode") or initial_value_mode,
             initial_operator=request.POST.get("operator") or initial_operator,
             initial_threshold=request.POST.get("threshold") or initial_threshold,
+            initial_geography_type=request.POST.get("geography_type") or initial_geography_type,
+            initial_state_code=request.POST.get("state_code") or initial_state_code,
+            initial_country_code=request.POST.get("country_code") or initial_country_code,
             initial_frequency=request.POST.get("frequency") or AlertRule._meta.get_field("frequency").default,
             initial_trigger_type=request.POST.get("trigger_type") or AlertRule._meta.get_field("trigger_type").default,
             initial_cooldown_hours=int(request.POST.get("cooldown_hours") or AlertRule._meta.get_field("cooldown_hours").default),
@@ -608,6 +718,9 @@ def alert_edit_view(request, alert_rule_id: int):
             initial_value_mode=request.POST.get("value_mode") or alert_rule.value_mode,
             initial_operator=request.POST.get("operator") or alert_rule.operator,
             initial_threshold=request.POST.get("threshold") or str(alert_rule.threshold),
+            initial_geography_type=request.POST.get("geography_type") or str((alert_rule.config_json or {}).get("geography_type") or "national"),
+            initial_state_code=request.POST.get("state_code") or str((alert_rule.config_json or {}).get("state_code") or "united_states_total"),
+            initial_country_code=request.POST.get("country_code") or str((alert_rule.config_json or {}).get("country_code") or ""),
             initial_frequency=request.POST.get("frequency") or alert_rule.frequency,
             initial_trigger_type=request.POST.get("trigger_type") or alert_rule.trigger_type,
             initial_cooldown_hours=int(request.POST.get("cooldown_hours") or alert_rule.cooldown_hours),
@@ -789,6 +902,7 @@ def create_alert_rule_view(request):
             "value_mode": rule.value_mode,
             "operator": rule.operator,
             "threshold": rule.threshold,
+            "region": rule.region,
             "evaluation": evaluation,
         },
         status=201,
@@ -814,6 +928,10 @@ def alert_rule_api_view(request, alert_rule_id: int):
                 "frequency": rule.frequency,
                 "trigger_type": rule.trigger_type,
                 "cooldown_hours": rule.cooldown_hours,
+                "region": rule.region,
+                "geography_type": str((rule.config_json or {}).get("geography_type") or ""),
+                "state_code": str((rule.config_json or {}).get("state_code") or ""),
+                "country_code": str((rule.config_json or {}).get("country_code") or ""),
                 "last_raw_value": rule.last_raw_value,
                 "last_evaluated_value": rule.last_evaluated_value,
                 "last_condition_result": rule.last_condition_result,

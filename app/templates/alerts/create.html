@@ -45,7 +45,7 @@
             <select id="metric" name="metric" required class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
               <option value="">Select metric</option>
               {% for metric in metric_choices %}
-                <option value="{{ metric.value }}" {% if request.POST.metric|default:initial_metric == metric.value %}selected{% endif %}>{{ metric.label }}</option>
+                <option value="{{ metric.value }}" data-geography="{{ metric.geography }}" {% if request.POST.metric|default:initial_metric == metric.value %}selected{% endif %}>{{ metric.label }}</option>
               {% endfor %}
             </select>
           </div>
@@ -68,6 +68,25 @@
           <div class="field-group">
             <label for="threshold" class="block text-sm/6 font-medium text-gray-900">Threshold</label>
             <input id="threshold" type="number" step="any" required name="threshold" value="{{ request.POST.threshold|default:initial_threshold }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+          </div>
+          <div id="geography-type-group" class="field-group">
+            <label for="geography_type" class="block text-sm/6 font-medium text-gray-900">Geography</label>
+            <select id="geography_type" name="geography_type" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+              <option value="national" {% if request.POST.geography_type|default:initial_geography_type == "national" %}selected{% endif %}>National</option>
+              <option value="state" {% if request.POST.geography_type|default:initial_geography_type == "state" %}selected{% endif %}>State</option>
+            </select>
+          </div>
+          <div id="state-code-group" class="field-group">
+            <label for="state_code" class="block text-sm/6 font-medium text-gray-900">State</label>
+            <select id="state_code" name="state_code" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+              {% for value, label in state_options %}
+                <option value="{{ value }}" {% if request.POST.state_code|default:initial_state_code == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div id="country-code-group" class="field-group">
+            <label for="country_code" class="block text-sm/6 font-medium text-gray-900">Country</label>
+            <input id="country_code" type="text" name="country_code" value="{{ request.POST.country_code|default:initial_country_code }}" placeholder="e.g. japan, mexico_pipeline" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
           </div>
         </div>
       </div>
@@ -204,4 +223,60 @@
     </section>
     </div>
   </section>
+{% endblock %}
+
+{% block javascript %}
+  {{ block.super }}
+  <script>
+    (function () {
+      const metricEl = document.getElementById("metric");
+      const geographyTypeEl = document.getElementById("geography_type");
+      const stateCodeEl = document.getElementById("state_code");
+      const countryCodeEl = document.getElementById("country_code");
+      const geographyTypeGroup = document.getElementById("geography-type-group");
+      const stateCodeGroup = document.getElementById("state-code-group");
+      const countryCodeGroup = document.getElementById("country-code-group");
+
+      function selectedMetricGeography() {
+        const selected = metricEl.options[metricEl.selectedIndex];
+        return selected ? String(selected.dataset.geography || "none") : "none";
+      }
+
+      function syncGeographyFields() {
+        const geo = selectedMetricGeography();
+        const geographyType = String(geographyTypeEl.value || "national");
+        if (geo === "country_only") {
+          geographyTypeGroup.style.display = "none";
+          stateCodeGroup.style.display = "none";
+          countryCodeGroup.style.display = "";
+          countryCodeEl.required = true;
+          geographyTypeEl.required = false;
+          stateCodeEl.required = false;
+        } else if (geo === "state_or_national") {
+          geographyTypeGroup.style.display = "";
+          countryCodeGroup.style.display = "none";
+          countryCodeEl.required = false;
+          geographyTypeEl.required = true;
+          if (geographyType === "state") {
+            stateCodeGroup.style.display = "";
+            stateCodeEl.required = true;
+          } else {
+            stateCodeGroup.style.display = "none";
+            stateCodeEl.required = false;
+          }
+        } else {
+          geographyTypeGroup.style.display = "none";
+          stateCodeGroup.style.display = "none";
+          countryCodeGroup.style.display = "none";
+          countryCodeEl.required = false;
+          geographyTypeEl.required = false;
+          stateCodeEl.required = false;
+        }
+      }
+
+      metricEl.addEventListener("change", syncGeographyFields);
+      geographyTypeEl.addEventListener("change", syncGeographyFields);
+      syncGeographyFields();
+    })();
+  </script>
 {% endblock %}
