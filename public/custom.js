@@ -4,7 +4,9 @@
   const GTM_NOSCRIPT_ID = "energy-atlas-gtm-noscript";
   const ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics";
   const SIGNIN_PATH = "/auth/signin/";
+  const ALERTS_PATH = "/alerts/";
   const AUTH_STATUS_PATH = "/auth/status/";
+  const DJANGO_AUTH_HINT_PARAM = "ea_from_django";
   let authStatusPromise = null;
 
   function trackEvent(payload) {
@@ -66,6 +68,62 @@
     });
   }
 
+  function _isSignInLink(link) {
+    const href = String(link.getAttribute("href") || "").trim();
+    const text = String(link.textContent || "").trim().toLowerCase();
+    if (!href) {
+      return false;
+    }
+    let pathname = "";
+    try {
+      pathname = new URL(href, window.location.origin).pathname.replace(/\/+$/, "");
+    } catch (_error) {
+      pathname = href.replace(/\/+$/, "");
+    }
+    return text === "sign in" || pathname === "/auth/signin";
+  }
+
+  function replaceSignInWithAlertsLink() {
+    const header = document.querySelector("header");
+    if (!header) {
+      return;
+    }
+
+    const links = Array.from(header.querySelectorAll("a[href]"));
+    const signInLinks = links.filter((link) => _isSignInLink(link));
+    if (!signInLinks.length) {
+      return;
+    }
+
+    signInLinks.forEach((link, index) => {
+      if (index === 0) {
+        link.setAttribute("href", ALERTS_PATH);
+        link.setAttribute("target", "_self");
+        link.setAttribute("rel", "");
+
+        const labelCandidates = Array.from(link.querySelectorAll("span, p, div"));
+        let updated = false;
+        labelCandidates.forEach((node) => {
+          if (String(node.textContent || "").trim().toLowerCase() === "sign in") {
+            node.textContent = "Alerts";
+            updated = true;
+          }
+        });
+        if (!updated) {
+          link.textContent = "Alerts";
+        }
+      } else {
+        link.remove();
+      }
+    });
+  }
+
+  function hasDjangoAuthHint() {
+    const params = new URLSearchParams(window.location.search || "");
+    const value = String(params.get(DJANGO_AUTH_HINT_PARAM) || "").trim().toLowerCase();
+    return value === "1" || value === "true" || value === "yes" || value === "on";
+  }
+
   function fetchAuthStatus() {
     if (authStatusPromise) {
       return authStatusPromise;
@@ -84,6 +142,11 @@
   }
 
   function syncSignInVisibility() {
+    if (hasDjangoAuthHint()) {
+      replaceSignInWithAlertsLink();
+      return;
+    }
+
     fetchAuthStatus().then((payload) => {
       if (payload && payload.authenticated === true) {
         removeSignInLinks();
