@@ -5,6 +5,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from billing.services import get_active_subscription, has_free_full_alert_access
 
+CHAT_SOURCE_PARAM = "from_app"
+
 
 def _chat_view_url(*, include_django_auth_hint: bool) -> str:
     base_url = str(getattr(settings, "APP_URL", "") or "").rstrip("/") or "/"
@@ -13,7 +15,7 @@ def _chat_view_url(*, include_django_auth_hint: bool) -> str:
 
     split = urlsplit(base_url)
     query = dict(parse_qsl(split.query, keep_blank_values=True))
-    query["ea_from_django"] = "1"
+    query[CHAT_SOURCE_PARAM] = "1"
     return urlunsplit(
         (
             split.scheme,

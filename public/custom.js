@@ -6,7 +6,7 @@
   const SIGNIN_PATH = "/auth/signin/";
   const ALERTS_PATH = "/alerts/";
   const AUTH_STATUS_PATH = "/auth/status/";
-  const DJANGO_AUTH_HINT_PARAM = "ea_from_django";
+  const CHAT_SOURCE_HINT_PARAMS = ["from_app", "from_django_app", "ea_from_django"];
   let authStatusPromise = null;
 
   function trackEvent(payload) {
@@ -115,8 +115,13 @@
 
   function hasDjangoAuthHint() {
     const params = new URLSearchParams(window.location.search || "");
-    const value = String(params.get(DJANGO_AUTH_HINT_PARAM) || "").trim().toLowerCase();
-    return value === "1" || value === "true" || value === "yes" || value === "on";
+    for (const paramName of CHAT_SOURCE_HINT_PARAMS) {
+      const value = String(params.get(paramName) || "").trim().toLowerCase();
+      if (value === "1" || value === "true" || value === "yes" || value === "on") {
+        return true;
+      }
+    }
+    return false;
   }
 
   function fetchAuthStatus() {
