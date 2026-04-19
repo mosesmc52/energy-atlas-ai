@@ -112,8 +112,8 @@
         Accept: "application/json",
       },
     })
-      .then((response) => (response.ok ? response.json() : { authenticated: true }))
-      .catch(() => ({ authenticated: true }));
+      .then((response) => (response.ok ? response.json() : { authenticated: false }))
+      .catch(() => ({ authenticated: false }));
 
     return authStatusPromise;
   }
