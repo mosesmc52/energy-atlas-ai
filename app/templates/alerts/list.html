@@ -1,6 +1,30 @@
 {% extends "base.html" %}
 
 {% block title %}Alerts{% endblock %}
+{% block extra-styles %}
+  <style>
+    @keyframes alert-active-dot-pulse {
+      0%, 100% {
+        transform: scale(1);
+        opacity: 0.9;
+      }
+      50% {
+        transform: scale(1.35);
+        opacity: 0.45;
+      }
+    }
+
+    .alert-active-dot {
+      display: inline-block;
+      width: 0.46rem;
+      height: 0.46rem;
+      border-radius: 9999px;
+      background: #648b2f;
+      animation: alert-active-dot-pulse 2.4s ease-in-out infinite;
+      transform-origin: center;
+    }
+  </style>
+{% endblock %}
 
 {% block page-content %}
   <section class="space-y-6">
@@ -39,7 +63,7 @@
                   </div>
                   {% if rule.is_enabled %}
                     <span class="inline-flex items-center rounded-full bg-[#edf5df] px-3 py-1.5 text-sm font-semibold text-[#648b2f]">
-                      <span class="mr-2 text-sm leading-none">•</span>Active
+                      <span class="mr-2 alert-active-dot" aria-hidden="true"></span>Active
                     </span>
                   {% else %}
                     <span class="inline-flex items-center rounded-full bg-stone-100 px-3 py-1.5 text-sm font-semibold text-stone-500">
