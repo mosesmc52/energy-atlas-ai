@@ -48,7 +48,7 @@
   }
 
   function removeSignInLinks() {
-    const signInCandidates = document.querySelectorAll("header a[href]");
+    const signInCandidates = document.querySelectorAll("a[href]");
     signInCandidates.forEach((link) => {
       const href = String(link.getAttribute("href") || "").trim();
       const text = String(link.textContent || "").trim().toLowerCase();
@@ -84,12 +84,7 @@
   }
 
   function replaceSignInWithAlertsLink() {
-    const header = document.querySelector("header");
-    if (!header) {
-      return;
-    }
-
-    const links = Array.from(header.querySelectorAll("a[href]"));
+    const links = Array.from(document.querySelectorAll("a[href]"));
     const signInLinks = links.filter((link) => _isSignInLink(link));
     if (!signInLinks.length) {
       return;
@@ -101,7 +96,7 @@
         link.setAttribute("target", "_self");
         link.setAttribute("rel", "");
 
-        const labelCandidates = Array.from(link.querySelectorAll("span, p, div"));
+        const labelCandidates = Array.from(link.querySelectorAll("*"));
         let updated = false;
         labelCandidates.forEach((node) => {
           if (String(node.textContent || "").trim().toLowerCase() === "sign in") {
