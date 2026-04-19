@@ -3,8 +3,6 @@
   const GTM_SCRIPT_ID = "energy-atlas-gtm-script";
   const GTM_NOSCRIPT_ID = "energy-atlas-gtm-noscript";
   const ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics";
-  const LINK_ID = "energy-atlas-signin-link";
-  const LINK_CLASS = "energy-atlas-signin-link";
   const SIGNIN_PATH = "/auth/signin/";
   const AUTH_STATUS_PATH = "/auth/status/";
   let authStatusPromise = null;
@@ -68,39 +66,6 @@
     });
   }
 
-  function ensureSignInLink() {
-    const header = document.querySelector("header");
-    if (!header) {
-      return;
-    }
-
-    header.style.position = "relative";
-
-    removeSignInLinks();
-
-    const existing = document.getElementById(LINK_ID);
-    if (existing) {
-      if (existing.parentElement !== header) {
-        header.appendChild(existing);
-      }
-      return;
-    }
-
-    const link = document.createElement("a");
-    link.id = LINK_ID;
-    link.className = LINK_CLASS;
-    link.href = SIGNIN_PATH;
-    link.textContent = "Sign In";
-    link.addEventListener("click", function () {
-      trackEvent({
-        event: "sign_in_clicked",
-        app_surface: "chainlit",
-        location: "chainlit_header",
-      });
-    });
-    header.appendChild(link);
-  }
-
   function fetchAuthStatus() {
     if (authStatusPromise) {
       return authStatusPromise;
@@ -120,9 +85,7 @@
 
   function syncSignInVisibility() {
     fetchAuthStatus().then((payload) => {
-      if (payload && payload.authenticated === false) {
-        ensureSignInLink();
-      } else {
+      if (payload && payload.authenticated === true) {
         removeSignInLinks();
       }
     });
