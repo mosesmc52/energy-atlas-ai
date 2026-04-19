@@ -48,8 +48,24 @@
   }
 
   function removeSignInLinks() {
-    const links = document.querySelectorAll(`header a[href="${SIGNIN_PATH}"]`);
-    links.forEach((link) => link.remove());
+    const signInCandidates = document.querySelectorAll("header a[href]");
+    signInCandidates.forEach((link) => {
+      const href = String(link.getAttribute("href") || "").trim();
+      const text = String(link.textContent || "").trim().toLowerCase();
+      const isSignInText = text === "sign in";
+      if (!href) {
+        return;
+      }
+      let pathname = "";
+      try {
+        pathname = new URL(href, window.location.origin).pathname.replace(/\/+$/, "");
+      } catch (_error) {
+        pathname = href.replace(/\/+$/, "");
+      }
+      if (isSignInText || pathname === "/auth/signin") {
+        link.remove();
+      }
+    });
   }
 
   function ensureSignInLink() {
@@ -60,10 +76,7 @@
 
     header.style.position = "relative";
 
-    const existingHeaderLink = header.querySelector(`a[href="${SIGNIN_PATH}"]`);
-    if (existingHeaderLink) {
-      return;
-    }
+    removeSignInLinks();
 
     const existing = document.getElementById(LINK_ID);
     if (existing) {
@@ -99,19 +112,19 @@
         Accept: "application/json",
       },
     })
-      .then((response) => (response.ok ? response.json() : { authenticated: false }))
-      .catch(() => ({ authenticated: false }));
+      .then((response) => (response.ok ? response.json() : { authenticated: true }))
+      .catch(() => ({ authenticated: true }));
 
     return authStatusPromise;
   }
 
   function syncSignInVisibility() {
     fetchAuthStatus().then((payload) => {
-      if (payload && payload.authenticated) {
+      if (payload && payload.authenticated === false) {
+        ensureSignInLink();
+      } else {
         removeSignInLinks();
-        return;
       }
-      ensureSignInLink();
     });
   }
 
