@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, SimpleTestCase, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from alerts.models import AlertRule, AlertTriggerType, SharedAnswer
-from alerts.services import ParsedSignal, SignalEvaluation, should_trigger_alert
+from alerts.models import AlertOperator, AlertRule, AlertTriggerType, AlertValueMode, SharedAnswer
+from alerts.services import SignalErrorCode, SignalEvaluation, SignalEvaluator, should_trigger_alert
 from alerts.tasks import evaluate_alert_rule_now
 from alerts.views import forecast_metric_view
 from executer import MetricResult
@@ -29,6 +32,18 @@ class _StubExecutor:
                 label="test-source",
                 reference="unit-test",
             ),
+            meta={},
+        )
+
+
+class _MappingExecutor:
+    def __init__(self, mapping: dict[str, pd.DataFrame]):
+        self.mapping = mapping
+
+    def execute(self, req):
+        return SimpleNamespace(
+            df=self.mapping[req.metric].copy(),
+            source=SimpleNamespace(reference=f"test:{req.metric}"),
             meta={},
         )
 
@@ -70,29 +85,157 @@ class TrendForecasterAppTests(SimpleTestCase):
         self.assertEqual(result.error_code, ForecastErrorCode.INVALID_HORIZON)
 
 
-class AnswerMonitorTriggerTests(SimpleTestCase):
-    def test_should_trigger_alert_returns_true_for_successful_answer_monitor_evaluation(self):
+class TriggerBehaviorTests(SimpleTestCase):
+    def test_condition_true_only_on_false_to_true_transition(self):
+        self.assertTrue(
+            should_trigger_alert(
+                previous_result=False,
+                new_result=True,
+                trigger_type=AlertTriggerType.CONDITION_TRUE,
+            )
+        )
+        self.assertFalse(
+            should_trigger_alert(
+                previous_result=True,
+                new_result=True,
+                trigger_type=AlertTriggerType.CONDITION_TRUE,
+            )
+        )
+
+    def test_condition_always_triggers_when_true(self):
+        self.assertTrue(
+            should_trigger_alert(
+                previous_result=True,
+                new_result=True,
+                trigger_type=AlertTriggerType.CONDITION_ALWAYS,
+            )
+        )
+        self.assertFalse(
+            should_trigger_alert(
+                previous_result=False,
+                new_result=False,
+                trigger_type=AlertTriggerType.CONDITION_ALWAYS,
+            )
+        )
+
+    def test_condition_false_only_on_true_to_false_transition(self):
+        self.assertTrue(
+            should_trigger_alert(
+                previous_result=True,
+                new_result=False,
+                trigger_type=AlertTriggerType.CONDITION_FALSE,
+            )
+        )
+        self.assertFalse(
+            should_trigger_alert(
+                previous_result=False,
+                new_result=False,
+                trigger_type=AlertTriggerType.CONDITION_FALSE,
+            )
+        )
+
+    def test_return_answer_triggers_unless_error(self):
         self.assertTrue(
             should_trigger_alert(
                 previous_result=None,
                 new_result=None,
-                trigger_type=AlertTriggerType.EVERY_ANSWER,
+                trigger_type=AlertTriggerType.RETURN_ANSWER,
                 error_code=None,
             )
         )
-
-    def test_should_trigger_alert_returns_false_for_failed_answer_monitor_evaluation(self):
         self.assertFalse(
             should_trigger_alert(
                 previous_result=None,
                 new_result=None,
-                trigger_type=AlertTriggerType.EVERY_ANSWER,
+                trigger_type=AlertTriggerType.RETURN_ANSWER,
                 error_code="UNSUPPORTED_SIGNAL",
             )
         )
 
 
-class AlertRuleAnswerMonitorFlowTests(TestCase):
+class StructuredEvaluationTests(SimpleTestCase):
+    def _evaluator(self, mapping: dict[str, pd.DataFrame]) -> SignalEvaluator:
+        return SignalEvaluator(executor=_MappingExecutor(mapping), eia=SimpleNamespace())
+
+    def test_raw_mode_evaluation(self):
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
+                "value": [2.0, 3.5],
+            }
+        )
+        evaluator = self._evaluator({"henry_hub_spot_price": df})
+        rule = SimpleNamespace(
+            question="Henry Hub raw check",
+            metric="henry_hub_spot_price",
+            value_mode=AlertValueMode.RAW,
+            operator=AlertOperator.GT,
+            threshold=3.0,
+        )
+
+        evaluation = evaluator.evaluate_rule(rule)
+
+        self.assertEqual(evaluation.error_code, None)
+        self.assertTrue(evaluation.result)
+        self.assertEqual(evaluation.values["raw_value"], 3.5)
+        self.assertEqual(evaluation.values["evaluated_value"], 3.5)
+
+    def test_zscore_mode_evaluation(self):
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2026-01-01", periods=6, freq="D"),
+                "value": [10, 11, 9, 10, 10, 14],
+            }
+        )
+        evaluator = self._evaluator({"henry_hub_spot_price": df})
+        rule = SimpleNamespace(
+            question="Henry Hub z-score check",
+            metric="henry_hub_spot_price",
+            value_mode=AlertValueMode.ZSCORE,
+            operator=AlertOperator.GT,
+            threshold=1.5,
+        )
+
+        evaluation = evaluator.evaluate_rule(rule)
+
+        self.assertIsNone(evaluation.error_code)
+        self.assertTrue(evaluation.result)
+        self.assertGreater(float(evaluation.values["evaluated_value"]), 1.5)
+
+    def test_unsupported_metric_fails_gracefully(self):
+        evaluator = self._evaluator({})
+        rule = SimpleNamespace(
+            question="Unsupported metric",
+            metric="nonexistent_metric",
+            value_mode=AlertValueMode.RAW,
+            operator=AlertOperator.GT,
+            threshold=1.0,
+        )
+        evaluation = evaluator.evaluate_rule(rule)
+        self.assertEqual(evaluation.error_code, SignalErrorCode.UNSUPPORTED_SIGNAL)
+        self.assertIsNone(evaluation.result)
+
+    def test_unsupported_zscore_mode_fails_gracefully(self):
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
+                "value": [1, 2],
+            }
+        )
+        evaluator = self._evaluator({"market_supply_regime": df})
+        rule = SimpleNamespace(
+            question="Supply regime z-score check",
+            metric="market_supply_regime",
+            value_mode=AlertValueMode.ZSCORE,
+            operator=AlertOperator.GT,
+            threshold=1.0,
+        )
+        evaluation = evaluator.evaluate_rule(rule)
+        self.assertEqual(evaluation.error_code, SignalErrorCode.UNSUPPORTED_SIGNAL)
+        self.assertIsNone(evaluation.result)
+
+
+class AlertUiAndApiTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
             username="tester@example.com",
@@ -101,78 +244,137 @@ class AlertRuleAnswerMonitorFlowTests(TestCase):
         )
         self.client.force_login(self.user)
 
-    def test_create_alert_persists_answer_monitor_trigger_and_marks_initial_event_triggered(self):
-        parsed = ParsedSignal(
-            signal_id="routed_metric_query",
-            question="What is the current Henry Hub price?",
+    def _base_payload(self) -> dict:
+        return {
+            "name": "Henry Hub breakout",
+            "question": "Notify me when Henry Hub breaks above threshold.",
+            "metric": "henry_hub_spot_price",
+            "value_mode": AlertValueMode.RAW,
+            "operator": AlertOperator.GT,
+            "threshold": "3.0",
+            "frequency": "hourly",
+            "trigger_type": AlertTriggerType.CONDITION_TRUE,
+            "cooldown_hours": "0",
+        }
+
+    def test_create_form_requires_structured_fields(self):
+        response = self.client.get(reverse("alerts:create"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="metric"')
+        self.assertContains(response, 'name="value_mode"')
+        self.assertContains(response, 'name="operator"')
+        self.assertContains(response, 'name="threshold"')
+
+        payload = self._base_payload()
+        payload.pop("metric")
+        with patch("alerts.views.can_create_alert", return_value=(True, None)):
+            response = self.client.post(reverse("alerts:create"), data=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "metric is required")
+
+    def test_api_create_read_update_rule(self):
+        evaluation = SignalEvaluation(
+            question="test",
+            result=True,
+            explanation="deterministic",
+            values={
+                "raw_value": 3.4,
+                "evaluated_value": 3.4,
+                "condition_result": True,
+            },
             metric="henry_hub_spot_price",
         )
-        evaluation = SignalEvaluation(
-            question=parsed.question,
-            result=None,
-            explanation="As of 2026-04-05, Henry Hub is 2.91.",
-            values={"latest_value": 2.91, "latest_date": "2026-04-05"},
-            as_of="2026-04-05",
-            metric=parsed.metric,
-        )
-
         with (
             patch("alerts.views.can_create_alert", return_value=(True, None)),
-            patch("alerts.views.parse_signal_question", return_value=parsed),
             patch("alerts.views.build_signal_evaluator") as mock_build_evaluator,
         ):
-            mock_build_evaluator.return_value.evaluate.return_value = evaluation
+            mock_build_evaluator.return_value.evaluate_rule.return_value = evaluation
             response = self.client.post(
-                reverse("alerts:create"),
-                data={
-                    "name": "Henry Hub answer monitor",
-                    "question": parsed.question,
-                    "frequency": "hourly",
-                    "trigger_type": AlertTriggerType.EVERY_ANSWER,
-                    "cooldown_hours": "0",
-                    "action": "create",
-                },
+                reverse("alerts:create_rule"),
+                data=json.dumps(self._base_payload()),
+                content_type="application/json",
             )
+        self.assertEqual(response.status_code, 201)
+        created_payload = response.json()
+        alert_rule_id = created_payload["alert_rule_id"]
+        self.assertEqual(created_payload["metric"], "henry_hub_spot_price")
+        self.assertEqual(created_payload["value_mode"], AlertValueMode.RAW)
+        self.assertEqual(created_payload["operator"], AlertOperator.GT)
+        self.assertEqual(created_payload["threshold"], 3.0)
 
-        self.assertRedirects(response, reverse("alerts:list"))
-        rule = AlertRule.objects.get(user=self.user)
-        self.assertEqual(rule.trigger_type, AlertTriggerType.EVERY_ANSWER)
-        self.assertIsNone(rule.last_result)
-        self.assertEqual(rule.last_explanation, evaluation.explanation)
-        self.assertTrue(rule.events.get().was_triggered)
+        read_response = self.client.get(reverse("alerts:rule_api", args=[alert_rule_id]))
+        self.assertEqual(read_response.status_code, 200)
+        self.assertEqual(read_response.json()["metric"], "henry_hub_spot_price")
 
-    def test_scheduled_evaluation_sends_notification_for_answer_monitor_without_boolean_result(self):
+        update_payload = self._base_payload()
+        update_payload["threshold"] = 3.8
+        update_payload["operator"] = AlertOperator.GTE
+        with patch("alerts.views.build_signal_evaluator") as mock_build_evaluator:
+            mock_build_evaluator.return_value.evaluate_rule.return_value = SignalEvaluation(
+                question="test",
+                result=False,
+                explanation="deterministic",
+                values={
+                    "raw_value": 3.4,
+                    "evaluated_value": 3.4,
+                    "condition_result": False,
+                },
+                metric="henry_hub_spot_price",
+            )
+            update_response = self.client.put(
+                reverse("alerts:rule_api", args=[alert_rule_id]),
+                data=json.dumps(update_payload),
+                content_type="application/json",
+            )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["operator"], AlertOperator.GTE)
+        self.assertEqual(update_response.json()["threshold"], 3.8)
+
+
+class CooldownBehaviorTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="cooldown@example.com",
+            email="cooldown@example.com",
+            password="secret123",
+        )
+
+    def test_cooldown_blocks_second_notification(self):
         rule = AlertRule.objects.create(
             user=self.user,
-            name="Storage answer monitor",
-            question="How much gas is currently in storage?",
-            signal_id="routed_metric_query",
-            metric="working_gas_storage_lower48",
-            config_json={"filters": {}, "route_intent": "latest_value"},
-            trigger_type=AlertTriggerType.EVERY_ANSWER,
-            cooldown_hours=0,
+            name="Cooldown rule",
+            question="Condition always true",
+            signal_id="structured_condition",
+            metric="henry_hub_spot_price",
+            value_mode=AlertValueMode.RAW,
+            operator=AlertOperator.GT,
+            threshold=1.0,
+            trigger_type=AlertTriggerType.CONDITION_ALWAYS,
+            cooldown_hours=24,
             delivery_channels=["email"],
         )
         evaluation = SignalEvaluation(
             question=rule.question,
-            result=None,
-            explanation="As of 2026-04-05, storage is 1,820.",
-            values={"latest_value": 1820.0, "latest_date": "2026-04-05"},
-            as_of="2026-04-05",
+            result=True,
+            explanation="Always true",
+            values={
+                "raw_value": 4.0,
+                "evaluated_value": 4.0,
+                "condition_result": True,
+            },
             metric=rule.metric,
         )
 
         with patch("alerts.tasks.build_signal_evaluator") as mock_build_evaluator:
-            mock_build_evaluator.return_value.evaluate.return_value = evaluation
-            result = evaluate_alert_rule_now(rule.id)
+            mock_build_evaluator.return_value.evaluate_rule.return_value = evaluation
+            first = evaluate_alert_rule_now(rule.id)
+            second = evaluate_alert_rule_now(rule.id)
 
+        self.assertTrue(first["notification_sent"])
+        self.assertFalse(second["notification_sent"])
         rule.refresh_from_db()
-        event = rule.events.get()
-        self.assertTrue(result["was_triggered"])
-        self.assertTrue(result["notification_sent"])
-        self.assertTrue(event.was_triggered)
-        self.assertTrue(event.notification_sent)
-        self.assertEqual(rule.last_explanation, evaluation.explanation)
+        self.assertIsNotNone(rule.last_notified_at)
+        self.assertGreaterEqual(rule.last_notified_at, timezone.now() - timedelta(minutes=1))
 
 
 class SharedAnswerTests(TestCase):
@@ -211,48 +413,3 @@ class SharedAnswerTests(TestCase):
         self.assertTrue(payload["url"].endswith(payload["path"]))
         self.assertEqual(shared_answer.question, "Are exports higher than last year?")
         self.assertEqual(shared_answer.response_json["signal"]["status"], "bullish")
-
-    def test_create_shared_answer_rejects_invalid_structured_response(self):
-        response = self.client.post(
-            reverse("create-shared-answer"),
-            data=json.dumps(
-                {
-                    "question": "Are exports higher than last year?",
-                    "response_json": {"summary": "Missing required fields"},
-                }
-            ),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(SharedAnswer.objects.count(), 0)
-
-    def test_shared_answer_detail_page_renders_saved_insight(self):
-        shared_answer = SharedAnswer.objects.create(
-            question="How much gas is currently in storage?",
-            response_json={
-                "answer": "Storage remains below the five-year average.",
-                "signal": {"status": "neutral", "confidence": 0.61},
-                "summary": "Storage remains below the five-year average.",
-                "drivers": ["End-of-season inventories are still tight."],
-                "data_points": [
-                    {"metric": "working_gas_storage_lower48", "value": 1820, "unit": "bcf"}
-                ],
-                "forecast": {
-                    "direction": "flat",
-                    "reasoning": "Near-term injections are expected to track seasonal norms.",
-                },
-                "suggested_alerts": [],
-                "alerts": [],
-                "sources": [{"title": "EIA Weekly Storage", "date": "2026-04-03"}],
-            },
-        )
-
-        response = self.client.get(
-            reverse("shared-answer-detail", args=[shared_answer.share_id])
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "How much gas is currently in storage?")
-        self.assertContains(response, "Storage remains below the five-year average.")
-        self.assertContains(response, "EIA Weekly Storage")

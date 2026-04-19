@@ -23,21 +23,59 @@
 
       <div class="field-group">
         <label for="name" class="block text-sm/6 font-medium text-gray-900">Name</label>
-        <input id="name" type="text" name="name" placeholder="e.g. High error rate alert" value="{{ request.POST.name|default:initial_name|default:'' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        <input id="name" type="text" name="name" required placeholder="e.g. Henry Hub z-score breakout" value="{{ request.POST.name|default:initial_name|default:'' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
       </div>
 
       <div class="field-group">
-        <label for="question" class="block text-sm/6 font-medium text-gray-900">Question</label>
-        <textarea id="question" name="question" rows="4" required placeholder="Ask a question about your data..." class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:initial_question|default:'' }}</textarea>
+        <label for="question" class="block text-sm/6 font-medium text-gray-900">Alert Message</label>
+        <textarea id="question" name="question" rows="4" required placeholder="Explain the condition in plain English for alerts and reporting…" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">{{ request.POST.question|default:initial_question|default:'' }}</textarea>
         <p class="text-xs leading-5 text-slate-500">
-          You can use the same metric questions supported in the assistant, such as "What is the current Henry Hub price?", "Are exports higher than last year?", or "How much gas is currently in storage?" Use a condition-based trigger for yes/no alerts, or choose the answer-return trigger to send the latest answer on each evaluation.
+          This field is for human-readable context. Alert truth is evaluated by the condition definition below.
         </p>
+      </div>
+
+      <div class="rounded-2xl border border-stone-200 bg-[#fcfbf7] p-5 space-y-4">
+        <div>
+          <p class="text-sm font-semibold text-slate-900">Condition</p>
+          <p class="text-xs leading-5 text-slate-500">Define deterministic alert logic for metric evaluation.</p>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="field-group">
+            <label for="metric" class="block text-sm/6 font-medium text-gray-900">Metric</label>
+            <select id="metric" name="metric" required class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+              <option value="">Select metric</option>
+              {% for metric in metric_choices %}
+                <option value="{{ metric.value }}" {% if request.POST.metric|default:initial_metric == metric.value %}selected{% endif %}>{{ metric.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="value_mode" class="block text-sm/6 font-medium text-gray-900">Value mode</label>
+            <select id="value_mode" name="value_mode" required class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+              {% for value, label in value_mode_choices %}
+                <option value="{{ value }}" {% if request.POST.value_mode|default:initial_value_mode == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="operator" class="block text-sm/6 font-medium text-gray-900">Operator</label>
+            <select id="operator" name="operator" required class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+              {% for value, label in operator_choices %}
+                <option value="{{ value }}" {% if request.POST.operator|default:initial_operator == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="threshold" class="block text-sm/6 font-medium text-gray-900">Threshold</label>
+            <input id="threshold" type="number" step="any" required name="threshold" value="{{ request.POST.threshold|default:initial_threshold }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+          </div>
+        </div>
       </div>
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="field-group">
           <label for="frequency" class="block text-sm/6 font-medium text-gray-900">Frequency</label>
-          <select id="frequency" name="frequency" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+          <select id="frequency" name="frequency" required class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
             {% for value, label in frequency_choices %}
               <option value="{{ value }}" {% if request.POST.frequency|default:initial_frequency == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -46,7 +84,7 @@
 
         <div class="field-group">
           <label for="trigger_type" class="block text-sm/6 font-medium text-gray-900">Trigger type</label>
-          <select id="trigger_type" name="trigger_type" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+          <select id="trigger_type" name="trigger_type" required class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
             {% for value, label in trigger_type_choices %}
               <option value="{{ value }}" {% if request.POST.trigger_type|default:initial_trigger_type == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -56,7 +94,7 @@
 
       <div class="field-group">
         <label for="cooldown_hours" class="block text-sm/6 font-medium text-gray-900">Cooldown hours</label>
-        <input id="cooldown_hours" type="number" min="0" name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:'24' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
+        <input id="cooldown_hours" type="number" min="0" required name="cooldown_hours" value="{{ request.POST.cooldown_hours|default:'24' }}" class="block w-full rounded-xl border-0 bg-white px-4 py-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-stone-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-atlas-500 sm:text-sm/6">
         <p class="text-xs leading-5 text-slate-500" title="Minimum number of hours to wait before sending the same alert again after it triggers.">
           Minimum number of hours to wait before sending the same alert again after it triggers.
         </p>

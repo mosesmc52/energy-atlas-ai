@@ -23,7 +23,7 @@ from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
 from tools.gridstatus_adapter import GridStatusAdapter
-from alerts.models import AlertTriggerType
+from alerts.models import AlertOperator, AlertTriggerType, AlertValueMode
 
 
 class SignalErrorCode:
@@ -109,9 +109,48 @@ BUILT_IN_SIGNAL_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
+METRIC_REGISTRY: dict[str, dict[str, Any]] = {
+    "henry_hub_spot_price": {
+        "label": "Henry Hub spot price",
+        "zscore_supported": True,
+    },
+    "working_gas_storage_lower48": {
+        "label": "Working gas storage (Lower 48)",
+        "zscore_supported": True,
+    },
+    "ng_production_lower48": {
+        "label": "Natural gas production (Lower 48)",
+        "zscore_supported": True,
+    },
+    "lng_exports": {
+        "label": "LNG exports",
+        "zscore_supported": True,
+    },
+    "ng_consumption_total": {
+        "label": "Natural gas consumption",
+        "zscore_supported": True,
+    },
+    "weather_hdd_lower_48": {
+        "label": "Heating degree days (Lower 48)",
+        "zscore_supported": True,
+    },
+    "market_supply_regime": {
+        "label": "Market supply regime",
+        "zscore_supported": False,
+    },
+    "iso_gas_dependency": {
+        "label": "ISO gas dependency",
+        "zscore_supported": True,
+    },
+}
+
 
 def get_builtin_signal_registry() -> dict[str, dict[str, Any]]:
     return BUILT_IN_SIGNAL_REGISTRY
+
+
+def get_metric_registry() -> dict[str, dict[str, Any]]:
+    return METRIC_REGISTRY
 
 
 def is_builtin_signal_id(signal_id: str) -> bool:
@@ -282,7 +321,7 @@ def parsed_signal_from_rule(rule) -> ParsedSignal:
 
 
 def is_answer_monitor_trigger(trigger_type: str) -> bool:
-    return trigger_type == AlertTriggerType.EVERY_ANSWER
+    return trigger_type == AlertTriggerType.RETURN_ANSWER
 
 
 def should_trigger_alert(
@@ -296,9 +335,9 @@ def should_trigger_alert(
         return not error_code
     if new_result is None:
         return False
-    if trigger_type == AlertTriggerType.EVERY_TRUE:
+    if trigger_type == AlertTriggerType.CONDITION_ALWAYS:
         return new_result is True
-    if trigger_type == AlertTriggerType.ON_FALSE_TRANSITION:
+    if trigger_type == AlertTriggerType.CONDITION_FALSE:
         return previous_result is True and new_result is False
     return previous_result is not True and new_result is True
 
@@ -352,6 +391,202 @@ class SignalEvaluator:
             explanation="This signal is not implemented.",
             metric=parsed.metric,
             error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
+        )
+
+    @staticmethod
+    def _zscore(series: pd.Series, value: float) -> Optional[float]:
+        numeric = pd.to_numeric(series, errors="coerce").dropna()
+        if len(numeric) < 3:
+            return None
+        std = float(numeric.std(ddof=0))
+        if std == 0:
+            return None
+        mean = float(numeric.mean())
+        return (value - mean) / std
+
+    @staticmethod
+    def _eq(left: float, right: float, *, tol: float = 1e-9) -> bool:
+        return abs(left - right) <= tol
+
+    @classmethod
+    def _compare_values(
+        cls,
+        *,
+        operator: str,
+        current_value: float,
+        threshold: float,
+        previous_value: Optional[float],
+    ) -> bool:
+        if operator == AlertOperator.LT:
+            return current_value < threshold
+        if operator == AlertOperator.LTE:
+            return current_value <= threshold
+        if operator == AlertOperator.GT:
+            return current_value > threshold
+        if operator == AlertOperator.GTE:
+            return current_value >= threshold
+        if operator == AlertOperator.EQ:
+            return cls._eq(current_value, threshold)
+        if operator == AlertOperator.CROSSES_ABOVE:
+            if previous_value is None:
+                return False
+            return previous_value <= threshold and current_value > threshold
+        if operator == AlertOperator.CROSSES_BELOW:
+            if previous_value is None:
+                return False
+            return previous_value >= threshold and current_value < threshold
+        raise ValueError(f"Unsupported operator: {operator}")
+
+    def evaluate_rule(self, rule) -> SignalEvaluation:
+        metric = str(rule.metric or "").strip()
+        value_mode = str(rule.value_mode or "").strip()
+        operator = str(rule.operator or "").strip()
+        threshold = float(rule.threshold)
+
+        registry = get_metric_registry()
+        metric_config = registry.get(metric)
+        if metric_config is None:
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation=f"Metric '{metric}' is not supported for alerts.",
+                metric=metric,
+                error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
+            )
+
+        if value_mode not in {AlertValueMode.RAW, AlertValueMode.ZSCORE}:
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation=f"Value mode '{value_mode}' is not supported.",
+                metric=metric,
+                error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
+            )
+
+        if value_mode == AlertValueMode.ZSCORE and not bool(metric_config.get("zscore_supported", False)):
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation=f"Z-score mode is not supported for metric '{metric}'.",
+                metric=metric,
+                error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
+            )
+
+        end = date.today().isoformat()
+        lookback_days = 365 if value_mode == AlertValueMode.ZSCORE else 60
+        start = (date.today() - timedelta(days=lookback_days)).isoformat()
+        result = self._execute_metric(metric, start=start, end=end)
+        df = result.df.copy()
+        if df.empty:
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation="No data was returned for the selected metric.",
+                metric=metric,
+                error_code=SignalErrorCode.INSUFFICIENT_DATA,
+            )
+
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.dropna(subset=["date"]).sort_values("date")
+        value_col = self._pick_value_column(df, metric)
+        if value_col is None:
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation="The selected metric did not return numeric values.",
+                metric=metric,
+                error_code=SignalErrorCode.INSUFFICIENT_DATA,
+            )
+
+        df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+        df = df.dropna(subset=[value_col])
+        if df.empty:
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation="The selected metric returned no usable numeric observations.",
+                metric=metric,
+                error_code=SignalErrorCode.INSUFFICIENT_DATA,
+            )
+
+        latest_row = df.iloc[-1]
+        latest_raw_value = float(latest_row[value_col])
+        previous_raw_value = float(df.iloc[-2][value_col]) if len(df) >= 2 else None
+
+        if value_mode == AlertValueMode.RAW:
+            evaluated_value = latest_raw_value
+            previous_evaluated_value = previous_raw_value
+        else:
+            z_value = self._zscore(df[value_col], latest_raw_value)
+            if z_value is None:
+                return SignalEvaluation(
+                    question=rule.question,
+                    result=None,
+                    explanation="Not enough historical variation to compute a z-score.",
+                    metric=metric,
+                    error_code=SignalErrorCode.INSUFFICIENT_DATA,
+                )
+            evaluated_value = float(z_value)
+            previous_evaluated_value = None
+            if previous_raw_value is not None:
+                previous_z = self._zscore(df.iloc[:-1][value_col], previous_raw_value)
+                previous_evaluated_value = float(previous_z) if previous_z is not None else None
+
+        try:
+            condition_result = self._compare_values(
+                operator=operator,
+                current_value=evaluated_value,
+                threshold=threshold,
+                previous_value=previous_evaluated_value,
+            )
+        except ValueError as exc:
+            return SignalEvaluation(
+                question=rule.question,
+                result=None,
+                explanation=str(exc),
+                metric=metric,
+                error_code=SignalErrorCode.UNSUPPORTED_SIGNAL,
+            )
+
+        as_of = None
+        if "date" in latest_row and isinstance(latest_row["date"], pd.Timestamp):
+            as_of = latest_row["date"].date().isoformat()
+        mode_label = "z-score" if value_mode == AlertValueMode.ZSCORE else "raw value"
+        explanation = (
+            f"{metric_config.get('label', metric)} {mode_label} is "
+            f"{evaluated_value:.4f}; condition `{operator} {threshold}` evaluated to "
+            f"{'true' if condition_result else 'false'}."
+        )
+
+        values: dict[str, Any] = {
+            "metric": metric,
+            "value_mode": value_mode,
+            "operator": operator,
+            "threshold": threshold,
+            "value_column": value_col,
+            "raw_value": latest_raw_value,
+            "evaluated_value": evaluated_value,
+            "condition_result": condition_result,
+        }
+        if previous_raw_value is not None:
+            values["previous_raw_value"] = previous_raw_value
+        if previous_evaluated_value is not None:
+            values["previous_evaluated_value"] = previous_evaluated_value
+        if as_of:
+            values["as_of"] = as_of
+
+        return SignalEvaluation(
+            question=rule.question,
+            result=condition_result,
+            explanation=explanation,
+            values=values,
+            as_of=as_of,
+            metric=metric,
+            metadata={
+                "metric_source": result.source.reference,
+                "evaluated_at": self._evaluated_at(),
+            },
         )
 
     def _execute_metric(self, metric: str, start: str, end: str, filters: Optional[dict[str, Any]] = None):

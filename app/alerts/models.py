@@ -15,10 +15,25 @@ class AlertFrequency(models.TextChoices):
 
 
 class AlertTriggerType(models.TextChoices):
-    ON_TRUE_TRANSITION = "on_true_transition", "When condition becomes true"
-    EVERY_TRUE = "every_true", "Every time condition is true"
-    ON_FALSE_TRANSITION = "on_false_transition", "When condition becomes false"
-    EVERY_ANSWER = "every_answer", "Every evaluation returns the answer"
+    CONDITION_TRUE = "condition_true", "When condition becomes true"
+    CONDITION_ALWAYS = "condition_always", "Every time condition is true"
+    CONDITION_FALSE = "condition_false", "When condition becomes false"
+    RETURN_ANSWER = "return_answer", "Every evaluation returns the answer"
+
+
+class AlertValueMode(models.TextChoices):
+    RAW = "raw", "Raw value"
+    ZSCORE = "zscore", "Z-score"
+
+
+class AlertOperator(models.TextChoices):
+    LT = "<", "<"
+    LTE = "<=", "<="
+    GT = ">", ">"
+    GTE = ">=", ">="
+    EQ = "==", "=="
+    CROSSES_ABOVE = "crosses_above", "Crosses above"
+    CROSSES_BELOW = "crosses_below", "Crosses below"
 
 
 class AlertDeliveryChannel(models.TextChoices):
@@ -48,11 +63,26 @@ class AlertRule(models.Model):
     name = models.CharField(max_length=255)
     question = models.CharField(max_length=500)
 
-    # Example: "storage_below_5y_10pct"
-    signal_id = models.CharField(max_length=100, db_index=True)
+    # Legacy signal identifier; structured rules use "structured_condition".
+    signal_id = models.CharField(
+        max_length=100,
+        db_index=True,
+        default="structured_condition",
+    )
 
     # Optional categorization
-    metric = models.CharField(max_length=100, blank=True, default="")
+    metric = models.CharField(max_length=100)
+    value_mode = models.CharField(
+        max_length=20,
+        choices=AlertValueMode.choices,
+        default=AlertValueMode.RAW,
+    )
+    operator = models.CharField(
+        max_length=30,
+        choices=AlertOperator.choices,
+        default=AlertOperator.GTE,
+    )
+    threshold = models.FloatField(default=0.0)
     region = models.CharField(max_length=100, blank=True, default="")
 
     # Dynamic parameters for the signal
@@ -81,7 +111,7 @@ class AlertRule(models.Model):
     trigger_type = models.CharField(
         max_length=30,
         choices=AlertTriggerType.choices,
-        default=AlertTriggerType.ON_TRUE_TRANSITION,
+        default=AlertTriggerType.CONDITION_TRUE,
     )
 
     # Basic cooldown to suppress repeated sends
@@ -98,6 +128,9 @@ class AlertRule(models.Model):
     # Evaluation state tracking
     last_evaluated_at = models.DateTimeField(null=True, blank=True)
     last_result = models.BooleanField(null=True, blank=True)
+    last_raw_value = models.FloatField(null=True, blank=True)
+    last_evaluated_value = models.FloatField(null=True, blank=True)
+    last_condition_result = models.BooleanField(null=True, blank=True)
     last_triggered_at = models.DateTimeField(null=True, blank=True)
     last_notified_at = models.DateTimeField(null=True, blank=True)
 

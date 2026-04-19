@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from types import SimpleNamespace
 
 from django.conf import settings
 from django.contrib import messages
@@ -16,20 +17,22 @@ from django.views.decorators.http import require_http_methods
 from alerts.models import (
     AlertDeliveryChannel,
     AlertEvent,
+    AlertOperator,
     AlertRule,
     AlertStatus,
     AlertTriggerType,
+    AlertValueMode,
     SharedAnswer,
 )
 from alerts.services import (
     build_metric_forecaster,
     build_signal_evaluator,
+    get_metric_registry,
     is_builtin_signal_id,
-    parsed_signal_from_rule,
     parsed_signal_from_signal_id,
-    parse_signal_question,
     should_trigger_alert,
 )
+from alerts.schemas import AlertRulePayload
 from billing.services import can_create_alert
 from main.analytics import queue_analytics_event
 from schemas.answer import StructuredAnswer
@@ -38,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 def _request_payload(request) -> dict:
-    if request.content_type == "application/json":
+    if str(request.content_type or "").startswith("application/json"):
         try:
             return json.loads(request.body.decode("utf-8") or "{}")
         except json.JSONDecodeError:
@@ -47,7 +50,7 @@ def _request_payload(request) -> dict:
 
 
 def _delivery_channels_from_request(request) -> list[str]:
-    if request.content_type == "application/json":
+    if str(request.content_type or "").startswith("application/json"):
         payload = _request_payload(request)
         value = payload.get("delivery_channels") or []
         return value if isinstance(value, list) else []
@@ -128,16 +131,6 @@ def _shared_answer_context(shared_answer: SharedAnswer) -> dict:
     }
 
 
-UNSUPPORTED_ALERT_QUESTION_MESSAGE = (
-    "This question could not be mapped to a supported Energy Atlas metric.\n"
-    "Try a question the assistant already supports, such as:\n"
-    "- What is the current Henry Hub price?\n"
-    "- Are exports higher than last year?\n"
-    "- Is production growing year over year?\n"
-    "- How much gas is currently in storage?\n"
-    "- Which sector consumes the most gas?"
-)
-
 ALERT_LIST_SORT_OPTIONS = {
     "created": {
         "label": "Created",
@@ -159,6 +152,10 @@ def _alert_form_context(
     evaluation: dict | None,
     initial_name: str,
     initial_question: str,
+    initial_metric: str,
+    initial_value_mode: str,
+    initial_operator: str,
+    initial_threshold: str,
     initial_frequency: str,
     initial_trigger_type: str,
     initial_cooldown_hours: int,
@@ -174,11 +171,25 @@ def _alert_form_context(
         "evaluation": evaluation,
         "initial_name": initial_name,
         "initial_question": initial_question,
+        "initial_metric": initial_metric,
+        "initial_value_mode": initial_value_mode,
+        "initial_operator": initial_operator,
+        "initial_threshold": initial_threshold,
         "initial_frequency": initial_frequency,
         "initial_trigger_type": initial_trigger_type,
         "initial_cooldown_hours": initial_cooldown_hours,
         "frequency_choices": AlertRule._meta.get_field("frequency").choices,
         "trigger_type_choices": AlertRule._meta.get_field("trigger_type").choices,
+        "value_mode_choices": AlertRule._meta.get_field("value_mode").choices,
+        "operator_choices": AlertRule._meta.get_field("operator").choices,
+        "metric_choices": [
+            {
+                "value": metric_id,
+                "label": str(config.get("label") or metric_id.replace("_", " ").title()),
+                "zscore_supported": bool(config.get("zscore_supported", False)),
+            }
+            for metric_id, config in get_metric_registry().items()
+        ],
         "action_url": action_url,
         "submit_label": submit_label,
         "eyebrow": eyebrow,
@@ -186,14 +197,84 @@ def _alert_form_context(
         "page_description": description,
         "back_url": back_url,
         "form_id": form_id,
-        "answer_trigger_type_value": AlertTriggerType.EVERY_ANSWER,
+        "answer_trigger_type_value": AlertTriggerType.RETURN_ANSWER,
     }
 
 
+def _validate_rule_payload(payload: dict) -> tuple[dict | None, str | None]:
+    try:
+        validated = AlertRulePayload.model_validate(payload)
+    except Exception as exc:  # noqa: BLE001
+        if hasattr(exc, "errors"):
+            for err in exc.errors():  # type: ignore[attr-defined]
+                loc = err.get("loc") or []
+                field = str(loc[-1]) if loc else ""
+                err_type = str(err.get("type") or "")
+                if err_type == "missing" and field:
+                    return None, f"{field} is required"
+                if field == "threshold":
+                    return None, "threshold must be a numeric value"
+                if field == "cooldown_hours":
+                    if err_type == "greater_than_equal":
+                        return None, "cooldown_hours must be greater than or equal to 0"
+                    return None, "cooldown_hours must be an integer"
+        return None, "invalid alert payload"
+
+    metric = validated.metric.strip()
+    metric_registry = get_metric_registry()
+    if metric not in metric_registry:
+        return None, f"metric '{metric}' is not supported"
+
+    value_mode = validated.value_mode.strip()
+    valid_value_modes = {choice[0] for choice in AlertValueMode.choices}
+    if value_mode not in valid_value_modes:
+        return None, f"value_mode '{value_mode}' is not supported"
+
+    if value_mode == AlertValueMode.ZSCORE and not bool(
+        metric_registry[metric].get("zscore_supported", False)
+    ):
+        return None, f"zscore mode is not supported for metric '{metric}'"
+
+    operator = validated.operator.strip()
+    valid_operators = {choice[0] for choice in AlertOperator.choices}
+    if operator not in valid_operators:
+        return None, f"operator '{operator}' is not supported"
+
+    valid_frequencies = {choice[0] for choice in AlertRule._meta.get_field("frequency").choices}
+    frequency = validated.frequency.strip()
+    if frequency not in valid_frequencies:
+        return None, f"frequency '{frequency}' is not supported"
+
+    valid_trigger_types = {choice[0] for choice in AlertTriggerType.choices}
+    trigger_type = validated.trigger_type.strip()
+    if trigger_type not in valid_trigger_types:
+        return None, f"trigger_type '{trigger_type}' is not supported"
+
+    threshold = float(validated.threshold)
+    cooldown_hours = int(validated.cooldown_hours)
+
+    return (
+        {
+            "name": validated.name.strip(),
+            "question": validated.question.strip(),
+            "metric": metric,
+            "value_mode": value_mode,
+            "operator": operator,
+            "threshold": threshold,
+            "frequency": frequency,
+            "trigger_type": trigger_type,
+            "cooldown_hours": cooldown_hours,
+            "delivery_channels": payload.get("delivery_channels") or [],
+        },
+        None,
+    )
+
+
 def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | None, dict | None, str | None]:
-    question = (payload.get("question") or "").strip()
-    if not question:
-        return None, None, "question is required"
+    normalized_payload, error = _validate_rule_payload(payload)
+    if error:
+        return None, None, error
+    assert normalized_payload is not None
 
     current_active_alert_count = AlertRule.objects.filter(
         user=user,
@@ -206,34 +287,27 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
     if not is_allowed:
         return None, None, limit_error
 
-    parsed = parse_signal_question(question)
-    if parsed is None:
-        return None, None, UNSUPPORTED_ALERT_QUESTION_MESSAGE
-
     evaluator = build_signal_evaluator()
-    evaluation = evaluator.evaluate(parsed)
-
     rule = AlertRule.objects.create(
         user=user,
-        name=(payload.get("name") or question[:120]).strip() or question[:120],
-        question=question,
-        signal_id=parsed.signal_id,
-        metric=parsed.metric,
-        region=str(parsed.filters.get("region") or ""),
-        config_json={
-            "filters": parsed.filters,
-            **parsed.config,
-        },
-        frequency=payload.get("frequency") or AlertRule._meta.get_field("frequency").default,
-        trigger_type=payload.get("trigger_type") or AlertRule._meta.get_field("trigger_type").default,
-        cooldown_hours=int(
-            payload.get("cooldown_hours") or AlertRule._meta.get_field("cooldown_hours").default
-        ),
-        delivery_channels=payload.get("delivery_channels") or [],
+        name=normalized_payload["name"],
+        question=normalized_payload["question"],
+        signal_id="structured_condition",
+        metric=normalized_payload["metric"],
+        value_mode=normalized_payload["value_mode"],
+        operator=normalized_payload["operator"],
+        threshold=normalized_payload["threshold"],
+        region="",
+        config_json={},
+        frequency=normalized_payload["frequency"],
+        trigger_type=normalized_payload["trigger_type"],
+        cooldown_hours=normalized_payload["cooldown_hours"],
+        delivery_channels=normalized_payload["delivery_channels"],
     )
+    evaluation = evaluator.evaluate_rule(rule)
 
     was_triggered = should_trigger_alert(
-        previous_result=rule.last_result,
+        previous_result=rule.last_condition_result,
         new_result=evaluation.result,
         trigger_type=rule.trigger_type,
         error_code=evaluation.error_code,
@@ -249,6 +323,9 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
     )
 
     rule.last_result = evaluation.result
+    rule.last_raw_value = evaluation.values.get("raw_value")
+    rule.last_evaluated_value = evaluation.values.get("evaluated_value")
+    rule.last_condition_result = evaluation.values.get("condition_result")
     rule.last_evaluated_at = timezone.now()
     rule.last_explanation = evaluation.explanation
     rule.last_values_json = evaluation.values
@@ -257,6 +334,9 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
     rule.save(
         update_fields=[
             "last_result",
+            "last_raw_value",
+            "last_evaluated_value",
+            "last_condition_result",
             "last_evaluated_at",
             "last_explanation",
             "last_values_json",
@@ -268,39 +348,48 @@ def _create_rule_and_initial_event(*, user, payload: dict) -> tuple[AlertRule | 
     return rule, evaluation.to_dict(), None
 
 
-def _update_rule_from_payload(*, alert_rule: AlertRule, payload: dict) -> tuple[dict | None, str | None]:
-    question = (payload.get("question") or "").strip()
-    if not question:
-        return None, "question is required"
-
-    parsed = parse_signal_question(question)
-    if parsed is None:
-        return None, UNSUPPORTED_ALERT_QUESTION_MESSAGE
+def _evaluate_payload(payload: dict) -> tuple[dict | None, str | None]:
+    normalized_payload, error = _validate_rule_payload(payload)
+    if error:
+        return None, error
+    assert normalized_payload is not None
 
     evaluator = build_signal_evaluator()
-    evaluation = evaluator.evaluate(parsed)
+    evaluation = evaluator.evaluate_rule(SimpleNamespace(**normalized_payload))
+    return evaluation.to_dict(), None
 
-    alert_rule.name = (payload.get("name") or question[:120]).strip() or question[:120]
-    alert_rule.question = question
-    alert_rule.signal_id = parsed.signal_id
-    alert_rule.metric = parsed.metric
-    alert_rule.region = str(parsed.filters.get("region") or "")
-    alert_rule.config_json = {
-        "filters": parsed.filters,
-        **parsed.config,
-    }
-    alert_rule.frequency = payload.get("frequency") or alert_rule.frequency
-    alert_rule.trigger_type = payload.get("trigger_type") or alert_rule.trigger_type
-    alert_rule.cooldown_hours = int(
-        payload.get("cooldown_hours") or alert_rule.cooldown_hours
-    )
-    alert_rule.delivery_channels = payload.get("delivery_channels") or alert_rule.delivery_channels
+
+def _update_rule_from_payload(*, alert_rule: AlertRule, payload: dict) -> tuple[dict | None, str | None]:
+    normalized_payload, error = _validate_rule_payload(payload)
+    if error:
+        return None, error
+    assert normalized_payload is not None
+
+    evaluator = build_signal_evaluator()
+    alert_rule.name = normalized_payload["name"]
+    alert_rule.question = normalized_payload["question"]
+    alert_rule.signal_id = "structured_condition"
+    alert_rule.metric = normalized_payload["metric"]
+    alert_rule.value_mode = normalized_payload["value_mode"]
+    alert_rule.operator = normalized_payload["operator"]
+    alert_rule.threshold = normalized_payload["threshold"]
+    alert_rule.region = ""
+    alert_rule.config_json = {}
+    alert_rule.frequency = normalized_payload["frequency"]
+    alert_rule.trigger_type = normalized_payload["trigger_type"]
+    alert_rule.cooldown_hours = normalized_payload["cooldown_hours"]
+    alert_rule.delivery_channels = normalized_payload["delivery_channels"]
+    evaluation = evaluator.evaluate_rule(alert_rule)
+
     alert_rule.save(
         update_fields=[
             "name",
             "question",
             "signal_id",
             "metric",
+            "value_mode",
+            "operator",
+            "threshold",
             "region",
             "config_json",
             "frequency",
@@ -330,6 +419,10 @@ def create_builtin_alert_rule(
     payload = {
         "name": (title or parsed.question[:120]).strip() or parsed.question[:120],
         "question": parsed.question,
+        "metric": parsed.metric,
+        "value_mode": AlertValueMode.RAW,
+        "operator": AlertOperator.GTE,
+        "threshold": 0,
         "frequency": AlertRule._meta.get_field("frequency").default,
         "trigger_type": AlertRule._meta.get_field("trigger_type").default,
         "cooldown_hours": AlertRule._meta.get_field("cooldown_hours").default,
@@ -392,6 +485,10 @@ def alert_create_view(request):
     evaluation: dict | None = None
     initial_name = ""
     initial_question = ""
+    initial_metric = ""
+    initial_value_mode = AlertValueMode.RAW
+    initial_operator = AlertOperator.GTE
+    initial_threshold = "0"
 
     if request.method == "GET":
         signal_id = str(request.GET.get("signal_id") or "").strip()
@@ -401,24 +498,25 @@ def alert_create_view(request):
             if parsed is not None:
                 initial_question = parsed.question
                 initial_name = title or parsed.question[:120]
+                initial_metric = parsed.metric
+                if "threshold" in parsed.config:
+                    initial_threshold = str(parsed.config.get("threshold"))
         else:
             initial_name = str(request.GET.get("name") or "").strip()
             initial_question = str(request.GET.get("question") or "").strip()
+            initial_metric = str(request.GET.get("metric") or "").strip()
 
     if request.method == "POST":
         action = request.POST.get("action", "create")
         payload = request.POST.dict()
         payload["delivery_channels"] = [AlertDeliveryChannel.EMAIL]
         if action == "test":
-            question = (payload.get("question") or "").strip()
-            if not question:
-                messages.error(request, "question is required")
+            evaluation, error = _evaluate_payload(payload)
+            if error:
+                messages.error(request, error)
             else:
-                evaluator = build_signal_evaluator()
-                evaluation_obj = evaluator.evaluate_question(question)
-                evaluation = evaluation_obj.to_dict()
-                if evaluation_obj.error_code:
-                    messages.error(request, evaluation_obj.explanation)
+                if evaluation.get("error_code"):
+                    messages.error(request, str(evaluation.get("explanation") or "Alert test failed."))
                 else:
                     messages.success(request, "Alert test completed.")
         else:
@@ -446,6 +544,10 @@ def alert_create_view(request):
             evaluation=evaluation,
             initial_name=initial_name,
             initial_question=initial_question,
+            initial_metric=initial_metric,
+            initial_value_mode=request.POST.get("value_mode") or initial_value_mode,
+            initial_operator=request.POST.get("operator") or initial_operator,
+            initial_threshold=request.POST.get("threshold") or initial_threshold,
             initial_frequency=request.POST.get("frequency") or AlertRule._meta.get_field("frequency").default,
             initial_trigger_type=request.POST.get("trigger_type") or AlertRule._meta.get_field("trigger_type").default,
             initial_cooldown_hours=int(request.POST.get("cooldown_hours") or AlertRule._meta.get_field("cooldown_hours").default),
@@ -475,16 +577,13 @@ def alert_edit_view(request, alert_rule_id: int):
         payload = request.POST.dict()
         payload["delivery_channels"] = alert_rule.delivery_channels or [AlertDeliveryChannel.EMAIL]
 
-        question = (payload.get("question") or "").strip()
         if action == "test":
-            if not question:
-                messages.error(request, "question is required")
+            evaluation, error = _evaluate_payload(payload)
+            if error:
+                messages.error(request, error)
             else:
-                evaluator = build_signal_evaluator()
-                evaluation_obj = evaluator.evaluate_question(question)
-                evaluation = evaluation_obj.to_dict()
-                if evaluation_obj.error_code:
-                    messages.error(request, evaluation_obj.explanation)
+                if evaluation.get("error_code"):
+                    messages.error(request, str(evaluation.get("explanation") or "Alert test failed."))
                 else:
                     messages.success(request, "Alert test completed.")
         else:
@@ -505,6 +604,10 @@ def alert_edit_view(request, alert_rule_id: int):
             evaluation=evaluation,
             initial_name=request.POST.get("name") or alert_rule.name,
             initial_question=request.POST.get("question") or alert_rule.question,
+            initial_metric=request.POST.get("metric") or alert_rule.metric,
+            initial_value_mode=request.POST.get("value_mode") or alert_rule.value_mode,
+            initial_operator=request.POST.get("operator") or alert_rule.operator,
+            initial_threshold=request.POST.get("threshold") or str(alert_rule.threshold),
             initial_frequency=request.POST.get("frequency") or alert_rule.frequency,
             initial_trigger_type=request.POST.get("trigger_type") or alert_rule.trigger_type,
             initial_cooldown_hours=int(request.POST.get("cooldown_hours") or alert_rule.cooldown_hours),
@@ -530,9 +633,9 @@ def alert_detail_view(request, alert_rule_id: int):
 
     if request.method == "POST":
         evaluator = build_signal_evaluator()
-        evaluation = evaluator.evaluate(parsed_signal_from_rule(alert_rule))
+        evaluation = evaluator.evaluate_rule(alert_rule)
         was_triggered = should_trigger_alert(
-            previous_result=alert_rule.last_result,
+            previous_result=alert_rule.last_condition_result,
             new_result=evaluation.result,
             trigger_type=alert_rule.trigger_type,
             error_code=evaluation.error_code,
@@ -547,6 +650,9 @@ def alert_detail_view(request, alert_rule_id: int):
             was_triggered=was_triggered,
         )
         alert_rule.last_result = evaluation.result
+        alert_rule.last_raw_value = evaluation.values.get("raw_value")
+        alert_rule.last_evaluated_value = evaluation.values.get("evaluated_value")
+        alert_rule.last_condition_result = evaluation.values.get("condition_result")
         alert_rule.last_evaluated_at = timezone.now()
         alert_rule.last_explanation = evaluation.explanation
         alert_rule.last_values_json = evaluation.values
@@ -555,6 +661,9 @@ def alert_detail_view(request, alert_rule_id: int):
         alert_rule.save(
             update_fields=[
                 "last_result",
+                "last_raw_value",
+                "last_evaluated_value",
+                "last_condition_result",
                 "last_evaluated_at",
                 "last_explanation",
                 "last_values_json",
@@ -571,7 +680,7 @@ def alert_detail_view(request, alert_rule_id: int):
         {
             "alert_rule": alert_rule,
             "events": alert_rule.events.all()[:20],
-            "answer_trigger_type_value": AlertTriggerType.EVERY_ANSWER,
+            "answer_trigger_type_value": AlertTriggerType.RETURN_ANSWER,
         },
     )
 
@@ -669,16 +778,67 @@ def create_alert_rule_view(request):
         payload=payload,
     )
     if error:
-        status = 400 if error == "question is required" else 422
+        status = 400 if ("is required" in error or error == "invalid alert payload") else 422
         return JsonResponse({"error": error}, status=status)
 
     return JsonResponse(
         {
             "alert_rule_id": rule.id,
             "signal_id": rule.signal_id,
+            "metric": rule.metric,
+            "value_mode": rule.value_mode,
+            "operator": rule.operator,
+            "threshold": rule.threshold,
             "evaluation": evaluation,
         },
         status=201,
+    )
+
+
+@require_http_methods(["GET", "PUT"])
+def alert_rule_api_view(request, alert_rule_id: int):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication required"}, status=401)
+
+    rule = get_object_or_404(AlertRule, id=alert_rule_id, user=request.user)
+    if request.method == "GET":
+        return JsonResponse(
+            {
+                "id": rule.id,
+                "name": rule.name,
+                "question": rule.question,
+                "metric": rule.metric,
+                "value_mode": rule.value_mode,
+                "operator": rule.operator,
+                "threshold": rule.threshold,
+                "frequency": rule.frequency,
+                "trigger_type": rule.trigger_type,
+                "cooldown_hours": rule.cooldown_hours,
+                "last_raw_value": rule.last_raw_value,
+                "last_evaluated_value": rule.last_evaluated_value,
+                "last_condition_result": rule.last_condition_result,
+            },
+            status=200,
+        )
+
+    payload = _request_payload(request)
+    payload["delivery_channels"] = rule.delivery_channels or [AlertDeliveryChannel.EMAIL]
+    evaluation, error = _update_rule_from_payload(
+        alert_rule=rule,
+        payload=payload,
+    )
+    if error:
+        return JsonResponse({"error": error}, status=400)
+    return JsonResponse(
+        {
+            "id": rule.id,
+            "metric": rule.metric,
+            "value_mode": rule.value_mode,
+            "operator": rule.operator,
+            "threshold": rule.threshold,
+            "evaluation": evaluation,
+        },
+        status=200,
     )
 
 

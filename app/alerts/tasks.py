@@ -21,7 +21,6 @@ from django.utils import timezone
 from alerts.models import AlertEvent, AlertFrequency, AlertRule
 from alerts.services import (
     build_signal_evaluator,
-    parsed_signal_from_rule,
     should_trigger_alert,
 )
 
@@ -54,10 +53,9 @@ def evaluate_alert_rule_now(alert_rule_id: int) -> dict:
             .get(id=alert_rule_id)
         )
 
-        parsed = parsed_signal_from_rule(rule)
-        evaluation = evaluator.evaluate(parsed)
+        evaluation = evaluator.evaluate_rule(rule)
         was_triggered = should_trigger_alert(
-            previous_result=rule.last_result,
+            previous_result=rule.last_condition_result,
             new_result=evaluation.result,
             trigger_type=rule.trigger_type,
             error_code=evaluation.error_code,
@@ -81,6 +79,9 @@ def evaluate_alert_rule_now(alert_rule_id: int) -> dict:
         )
 
         rule.last_result = evaluation.result
+        rule.last_raw_value = evaluation.values.get("raw_value")
+        rule.last_evaluated_value = evaluation.values.get("evaluated_value")
+        rule.last_condition_result = evaluation.values.get("condition_result")
         rule.last_evaluated_at = now
         rule.last_explanation = evaluation.explanation
         rule.last_values_json = evaluation.values
@@ -91,6 +92,9 @@ def evaluate_alert_rule_now(alert_rule_id: int) -> dict:
         rule.save(
             update_fields=[
                 "last_result",
+                "last_raw_value",
+                "last_evaluated_value",
+                "last_condition_result",
                 "last_evaluated_at",
                 "last_explanation",
                 "last_values_json",

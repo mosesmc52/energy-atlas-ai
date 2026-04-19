@@ -14,4 +14,5 @@ urlpatterns = [
     path("evaluate/", views.evaluate_signal_view, name="evaluate"),
     path("forecast/", views.forecast_metric_view, name="forecast"),
     path("rules/", views.create_alert_rule_view, name="create_rule"),
+    path("rules/<int:alert_rule_id>/", views.alert_rule_api_view, name="rule_api"),
 ]

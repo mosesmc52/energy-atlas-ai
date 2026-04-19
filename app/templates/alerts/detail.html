@@ -39,12 +39,20 @@
         <div class="border-t border-stone-200 pt-6">
           <dl class="grid gap-y-4 gap-x-8 sm:grid-cols-2">
             <div>
-              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Signal</dt>
-              <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.signal_id }}</dd>
-            </div>
-            <div>
               <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Metric</dt>
               <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.metric }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Value mode</dt>
+              <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.get_value_mode_display }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Operator</dt>
+              <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.operator }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Threshold</dt>
+              <dd class="mt-2 text-lg font-medium tracking-tight text-slate-800">{{ alert_rule.threshold }}</dd>
             </div>
             <div>
               <dt class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Frequency</dt>
