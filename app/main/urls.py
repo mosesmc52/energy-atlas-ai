@@ -55,3 +55,5 @@ urlpatterns = [
 
 
 admin.site.site_header = _("Energy Atlas AI")
+
+handler404 = "main.views.custom_404_view"
