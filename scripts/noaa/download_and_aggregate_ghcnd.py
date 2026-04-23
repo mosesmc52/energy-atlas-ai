@@ -33,6 +33,60 @@ NOAA_GHCND_ACCESS_BASE = (
     "https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/"
 )
 
+STATE_TO_WEATHER_REGION = {
+    "CT": "east",
+    "ME": "east",
+    "MA": "east",
+    "NH": "east",
+    "RI": "east",
+    "VT": "east",
+    "NJ": "east",
+    "NY": "east",
+    "PA": "east",
+    "IL": "midwest",
+    "IN": "midwest",
+    "MI": "midwest",
+    "OH": "midwest",
+    "WI": "midwest",
+    "IA": "midwest",
+    "KS": "midwest",
+    "MN": "midwest",
+    "MO": "midwest",
+    "NE": "midwest",
+    "ND": "midwest",
+    "SD": "midwest",
+    "DE": "south",
+    "FL": "south",
+    "GA": "south",
+    "MD": "south",
+    "NC": "south",
+    "SC": "south",
+    "VA": "south",
+    "DC": "south",
+    "WV": "south",
+    "AL": "south",
+    "KY": "south",
+    "MS": "south",
+    "TN": "south",
+    "AR": "south",
+    "LA": "south",
+    "OK": "south",
+    "TX": "south",
+    "AZ": "west",
+    "CO": "west",
+    "ID": "west",
+    "MT": "west",
+    "NV": "west",
+    "NM": "west",
+    "UT": "west",
+    "WY": "west",
+    "AK": "west",
+    "CA": "west",
+    "HI": "west",
+    "OR": "west",
+    "WA": "west",
+}
+
 
 # -----------------------------
 # Data structures ("items")
@@ -60,6 +114,12 @@ def compute_hdd_from_tavg_c(tavg_c: float, base_f: float = 65.0) -> float:
     """HDD = max(0, baseF - TavgF)."""
     tavg_f = c_to_f(tavg_c)
     return max(0.0, base_f - tavg_f)
+
+
+def compute_cdd_from_tavg_c(tavg_c: float, base_f: float = 65.0) -> float:
+    """CDD = max(0, TavgF - baseF)."""
+    tavg_f = c_to_f(tavg_c)
+    return max(0.0, tavg_f - base_f)
 
 
 def safe_mkdir(path: str) -> None:
@@ -154,6 +214,12 @@ def aggregate_region_daily(df_all: pd.DataFrame, region_id: str) -> pd.DataFrame
     df = df_all.copy()
     for col in ("tavg_c", "hdd"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "cdd" in df.columns:
+        df["cdd"] = pd.to_numeric(df["cdd"], errors="coerce")
+    else:
+        df["cdd"] = df["tavg_c"].apply(
+            lambda x: compute_cdd_from_tavg_c(float(x)) if pd.notna(x) else pd.NA
+        )
 
     df_valid = df.dropna(subset=["tavg_c"]).copy()
 
@@ -164,6 +230,8 @@ def aggregate_region_daily(df_all: pd.DataFrame, region_id: str) -> pd.DataFrame
         tavg_c_mean=("tavg_c", "mean"),
         hdd_median=("hdd", "median"),
         hdd_mean=("hdd", "mean"),
+        cdd_median=("cdd", "median"),
+        cdd_mean=("cdd", "mean"),
     ).sort_values("date")
 
     agg["tavg_f_median"] = agg["tavg_c_median"].apply(
@@ -186,6 +254,8 @@ def aggregate_region_daily(df_all: pd.DataFrame, region_id: str) -> pd.DataFrame
             "tavg_c_mean",
             "tavg_f_mean",
             "hdd_mean",
+            "cdd_median",
+            "cdd_mean",
         ]
     ].copy()
 
@@ -205,7 +275,7 @@ def load_station_meta(csv_path: str, region_filter: str) -> List[StationMetaItem
     elif "pipeline" in df.columns:
         df = df.rename(columns={"pipeline": "region"})
     else:
-        if region_filter.strip().lower() != "lower_48":
+        if region_filter.strip().lower() not in {"lower_48", "all"}:
             raise ValueError(
                 "stations csv missing 'region' column. "
                 "Provide a stations CSV with a 'region' (or legacy 'pipeline') column "
@@ -218,7 +288,8 @@ def load_station_meta(csv_path: str, region_filter: str) -> List[StationMetaItem
     df["region"] = df["region"].astype(str).str.strip().str.lower()
     df["ghcnd_station_id"] = df["ghcnd_station_id"].astype(str).str.strip()
 
-    df = df[df["region"] == region_filter.strip().lower()].copy()
+    if region_filter.strip().lower() != "all":
+        df = df[df["region"] == region_filter.strip().lower()].copy()
     if df.empty:
         raise ValueError(f"No stations found for region == {region_filter!r}")
 
@@ -266,8 +337,8 @@ def main():
     )
     p.add_argument(
         "--region",
-        default="lower_48",
-        help="Region filter (default: lower_48)",
+        default="all",
+        help="Region filter (default: all)",
     )
     p.add_argument("--out-dir", default="data/raw/noaa", help="Output directory")
     p.add_argument("--start", default=None, help="YYYY-MM-DD (optional)")
@@ -313,9 +384,38 @@ def main():
         frames.append(df_st)
 
     df_all = pd.concat(frames, ignore_index=True)
+    df_all["cdd"] = df_all["tavg_c"].apply(
+        lambda x: compute_cdd_from_tavg_c(float(x)) if pd.notna(x) else pd.NA
+    )
 
     # 3) Aggregate daily region series
-    df_region = aggregate_region_daily(df_all, region_id=region_id)
+    region_frames: list[pd.DataFrame] = []
+    if region_id == "all":
+        station_to_weather_region = {}
+        for st in stations:
+            state = str(st.state or "").strip().upper()
+            weather_region = STATE_TO_WEATHER_REGION.get(state)
+            if weather_region:
+                station_to_weather_region[st.ghcnd_station_id] = weather_region
+
+        df_all_with_regions = df_all.copy()
+        df_all_with_regions["weather_region"] = df_all_with_regions["ghcnd_station_id"].map(
+            station_to_weather_region
+        )
+
+        for weather_region in ("east", "midwest", "south", "west"):
+            subset = df_all_with_regions.loc[
+                df_all_with_regions["weather_region"] == weather_region
+            ].copy()
+            if subset.empty:
+                continue
+            region_frames.append(
+                aggregate_region_daily(subset, region_id=weather_region)
+            )
+        region_frames.append(aggregate_region_daily(df_all, region_id="lower_48"))
+        df_region = pd.concat(region_frames, ignore_index=True)
+    else:
+        df_region = aggregate_region_daily(df_all, region_id=region_id)
 
     # 4) Save outputs (CSV)
     station_norm_path = os.path.join(agg_dir, f"{region_id}_stations_normalized.csv")
@@ -324,6 +424,9 @@ def main():
 
     df_all.to_csv(station_norm_path, index=False)
     df_region.to_csv(region_path, index=False)
+    if region_id == "all":
+        combined_path = os.path.join(agg_dir, "daily_region_weather.csv")
+        df_region.to_csv(combined_path, index=False)
 
     meta = {
         "region_id": region_id,
@@ -335,6 +438,9 @@ def main():
         "outputs": {
             "stations_normalized_csv": station_norm_path,
             "region_daily_csv": region_path,
+            "daily_region_weather_csv": os.path.join(agg_dir, "daily_region_weather.csv")
+            if region_id == "all"
+            else None,
         },
         "date_filter": {"start_date": start_date, "end_date": args.end},
         "aggregation": {
@@ -349,6 +455,8 @@ def main():
 
     print(f"Saved station-normalized: {station_norm_path}")
     print(f"Saved region daily:      {region_path}")
+    if region_id == "all":
+        print(f"Saved combined regions: {os.path.join(agg_dir, 'daily_region_weather.csv')}")
     print(f"Saved metadata:          {meta_path}")
 
 

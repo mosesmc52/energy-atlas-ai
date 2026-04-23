@@ -368,7 +368,15 @@ def build_container():
             str(pathlib.Path(tempfile.gettempdir()) / "energy-atlas-ai-cache"),
         )
     )
-    eia_adapter = EIAAdapter(cache_dir=cache_root / "eia")
+    weather_csv_path = os.getenv("ATLAS_WEATHER_CSV_PATH")
+    if not weather_csv_path:
+        weather_csv_path = str(
+            (proj_root / "data" / "raw" / "noaa" / "regional" / "daily_region_weather.csv")
+        )
+    eia_adapter = EIAAdapter(
+        cache_dir=cache_root / "eia",
+        weather_csv_path=weather_csv_path,
+    )
     grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
     des_adapter = DallasEnergySurveyAdapter(
         raw_dir=cache_root / "des" / "raw",

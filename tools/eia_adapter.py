@@ -5,7 +5,7 @@ import os
 import re
 from io import StringIO
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
@@ -278,10 +278,24 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
     WEATHER_METRICS = {
         "hdd_mean",
         "hdd_median",
+        "cdd_mean",
+        "cdd_median",
         "tavg_f_mean",
         "tavg_f_median",
         "tavg_c_mean",
         "tavg_c_median",
+    }
+    WEATHER_REGION_COORDS = {
+        "east": (40.7128, -74.0060),  # New York
+        "midwest": (41.8781, -87.6298),  # Chicago
+        "south": (32.7767, -96.7970),  # Dallas
+        "west": (34.0522, -118.2437),  # Los Angeles
+    }
+    WEATHER_REGION_WEIGHTS = {
+        "east": 0.173,
+        "midwest": 0.208,
+        "south": 0.383,
+        "west": 0.236,
     }
     NG_CONSUMPTION_SECTOR_SERIES = {
         "residential": "N3010US2",
@@ -342,9 +356,36 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             enable_debug_timing=DEBUG_ENABLED,
         )
         self.client = EIAClient(api_key=api_key or os.getenv("EIA_API_KEY"))
-        self.weather_csv_path = (
-            Path(weather_csv_path) if weather_csv_path is not None else None
-        )
+        repo_root = Path(__file__).resolve().parents[1]
+        resolved_weather_path: Path | None = None
+        if weather_csv_path is not None:
+            configured_path = Path(weather_csv_path).expanduser()
+            if configured_path.is_absolute():
+                resolved_weather_path = configured_path
+            else:
+                # Support launching from non-repo working directories by resolving
+                # relative paths against the repository root as a fallback.
+                repo_relative_path = repo_root / configured_path
+                resolved_weather_path = (
+                    configured_path
+                    if configured_path.exists()
+                    else repo_relative_path
+                )
+        else:
+            relative_candidates = [
+                Path("data/raw/noaa/regional/daily_region_weather.csv"),
+                Path("data/raw/noaa/regional/lower_48_region_daily.csv"),
+            ]
+            candidates = relative_candidates + [repo_root / c for c in relative_candidates]
+            for candidate in candidates:
+                if candidate.exists():
+                    resolved_weather_path = candidate
+                    break
+            if resolved_weather_path is None:
+                # Keep a deterministic default so downstream errors are explicit
+                # (missing file) rather than ambiguous (path not configured).
+                resolved_weather_path = repo_root / relative_candidates[0]
+        self.weather_csv_path = resolved_weather_path
         self._weather_df_cache: pd.DataFrame | None = None
 
     # ----------------------------
@@ -528,6 +569,142 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             value_columns=[col],
         )
         return df.rename(columns={col: "tavg"})
+
+    def weather_degree_days_forecast_vs_5y(
+        self,
+        *,
+        start: str,
+        end: str,
+        region: str = "lower48",
+        normal_years: int = 5,
+    ) -> EIAResult:
+        """
+        Build 1-5 / 6-10 / 11-15 day HDD/CDD forecast anomalies versus rolling
+        5-year normals using the configured weather history and live forecast data.
+        """
+        canonical_region = self._canonical_weather_region(region)
+        if normal_years not in {1, 2, 3, 5}:
+            raise ValueError("normal_years must be one of: 1, 2, 3, 5")
+        forecast_df, forecast_as_of = self._fetch_open_meteo_degree_day_forecast()
+        if canonical_region != "lower_48":
+            forecast_df = forecast_df.loc[
+                forecast_df["region_id"] == canonical_region
+            ].copy()
+        else:
+            forecast_df = forecast_df.loc[
+                forecast_df["region_id"] == "lower_48"
+            ].copy()
+
+        if forecast_df.empty:
+            raise RuntimeError("No weather forecast data was returned for requested region.")
+
+        history = self._load_weather_csv().copy()
+        history["region_id"] = history["region_id"].astype(str)
+        history = history.loc[history["region_id"] == canonical_region].copy()
+        if history.empty:
+            raise RuntimeError(
+                f"No historical weather data available for region '{canonical_region}'."
+            )
+
+        rows: list[dict[str, Any]] = []
+        for bucket_start, bucket_end, bucket_label in (
+            (1, 5, "days_1_5"),
+            (6, 10, "days_6_10"),
+            (11, 15, "days_11_15"),
+        ):
+            bucket_forecast = self._bucket_degree_days(
+                forecast_df, start_day=bucket_start, end_day=bucket_end
+            )
+            if bucket_forecast is None:
+                continue
+            bucket_dates = bucket_forecast["dates"]
+            hdd_forecast = float(bucket_forecast["hdd"])
+            cdd_forecast = float(bucket_forecast["cdd"])
+
+            historical_bucket_values: list[tuple[float, float]] = []
+            for years_back in range(1, normal_years + 1):
+                shifted_dates = [self._shift_date_back_n_years(d, years_back) for d in bucket_dates]
+                hist_bucket = history.loc[history["date"].isin(shifted_dates)].copy()
+                if hist_bucket.empty:
+                    continue
+                hdd_hist = float(pd.to_numeric(hist_bucket["hdd_mean"], errors="coerce").sum())
+                cdd_col = "cdd_mean" if "cdd_mean" in hist_bucket.columns else None
+                if cdd_col is None:
+                    tavg_f = pd.to_numeric(hist_bucket["tavg_f_mean"], errors="coerce")
+                    cdd_hist = float((tavg_f - 65.0).clip(lower=0.0).sum())
+                else:
+                    cdd_hist = float(pd.to_numeric(hist_bucket[cdd_col], errors="coerce").sum())
+                historical_bucket_values.append((hdd_hist, cdd_hist))
+
+            if not historical_bucket_values:
+                continue
+
+            hdd_normal = sum(v[0] for v in historical_bucket_values) / len(historical_bucket_values)
+            cdd_normal = sum(v[1] for v in historical_bucket_values) / len(historical_bucket_values)
+            delta_hdd = hdd_forecast - hdd_normal
+            delta_cdd = cdd_forecast - cdd_normal
+
+            bucket_days = int(bucket_end - bucket_start + 1)
+            demand_delta_bcfd = self._estimate_gas_demand_delta_bcfd(
+                delta_hdd=delta_hdd,
+                delta_cdd=delta_cdd,
+                days=bucket_days,
+                region_id=canonical_region,
+            )
+
+            rows.append(
+                {
+                    "date": bucket_dates[-1],
+                    "region_id": canonical_region,
+                    "bucket": bucket_label,
+                    "bucket_start_day": bucket_start,
+                    "bucket_end_day": bucket_end,
+                    "forecast_hdd": round(hdd_forecast, 2),
+                    "normal_hdd_5y": round(hdd_normal, 2),
+                    "delta_hdd": round(delta_hdd, 2),
+                    "forecast_cdd": round(cdd_forecast, 2),
+                    "normal_cdd_5y": round(cdd_normal, 2),
+                    "delta_cdd": round(delta_cdd, 2),
+                    "demand_delta_bcfd": round(demand_delta_bcfd, 3),
+                    "normal_years": normal_years,
+                    "as_of": forecast_as_of,
+                }
+            )
+
+        out = pd.DataFrame(
+            rows,
+            columns=[
+                "date",
+                "region_id",
+                "bucket",
+                "bucket_start_day",
+                "bucket_end_day",
+                "forecast_hdd",
+                "normal_hdd_5y",
+                "delta_hdd",
+                "forecast_cdd",
+                "normal_cdd_5y",
+                "delta_cdd",
+                "demand_delta_bcfd",
+                "normal_years",
+                "as_of",
+            ],
+        )
+
+        src = self._make_source(
+            label=f"Weather Degree Days Forecast vs 5-Year Normal ({canonical_region.replace('_', ' ').title()})",
+            reference="open-meteo:degree_days.forecast_vs_5y",
+            parameters={
+                "region": canonical_region,
+                "start": start,
+                "end": end,
+                "forecast_provider": "open_meteo",
+                "forecast_as_of": forecast_as_of,
+                "buckets": ["days_1_5", "days_6_10", "days_11_15"],
+                "normal_years": normal_years,
+            },
+        )
+        return EIAResult(df=out, source=src, meta={"forecast_as_of": forecast_as_of})
 
     def henry_hub_spot(self, start: str, end: str) -> EIAResult:
         """
@@ -946,6 +1123,183 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         out = out.dropna(subset=value_columns, how="all")
         out = out.sort_values("date").reset_index(drop=True)
         return out
+
+    def _canonical_weather_region(self, region: str) -> str:
+        token = str(region or "").strip().lower()
+        mapping = {
+            "lower48": "lower_48",
+            "lower_48": "lower_48",
+            "national": "lower_48",
+            "us": "lower_48",
+            "u.s.": "lower_48",
+            "united_states": "lower_48",
+            "east": "east",
+            "midwest": "midwest",
+            "south": "south",
+            "west": "west",
+        }
+        if token not in mapping:
+            raise ValueError(
+                f"Invalid weather region '{region}'. Expected one of: {sorted(mapping.keys())}"
+            )
+        return mapping[token]
+
+    def _fetch_open_meteo_degree_day_forecast(self) -> tuple[pd.DataFrame, str]:
+        today_utc = datetime.now(timezone.utc).date()
+        end_utc = today_utc + timedelta(days=15)
+        as_of = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        by_region: dict[str, pd.DataFrame] = {}
+        for region_id, (lat, lon) in self.WEATHER_REGION_COORDS.items():
+            df = self._fetch_region_degree_day_forecast_open_meteo(
+                latitude=lat,
+                longitude=lon,
+                start=today_utc.isoformat(),
+                end=end_utc.isoformat(),
+            )
+            if df.empty:
+                continue
+            df["region_id"] = region_id
+            by_region[region_id] = df
+
+        if not by_region:
+            return pd.DataFrame(columns=["date", "region_id", "hdd_mean", "cdd_mean"]), as_of
+
+        regional_frames = [v.copy() for v in by_region.values()]
+        regional_df = pd.concat(regional_frames, ignore_index=True)
+
+        national_rows: list[dict[str, Any]] = []
+        all_dates = sorted(regional_df["date"].dropna().unique().tolist())
+        for d in all_dates:
+            day_slice = regional_df.loc[regional_df["date"] == d]
+            hdd_total = 0.0
+            cdd_total = 0.0
+            weight_total = 0.0
+            for region_id, weight in self.WEATHER_REGION_WEIGHTS.items():
+                row = day_slice.loc[day_slice["region_id"] == region_id]
+                if row.empty:
+                    continue
+                hdd_val = float(pd.to_numeric(row.iloc[0]["hdd_mean"], errors="coerce"))
+                cdd_val = float(pd.to_numeric(row.iloc[0]["cdd_mean"], errors="coerce"))
+                hdd_total += weight * hdd_val
+                cdd_total += weight * cdd_val
+                weight_total += weight
+            if weight_total <= 0:
+                continue
+            national_rows.append(
+                {
+                    "date": d,
+                    "region_id": "lower_48",
+                    "hdd_mean": hdd_total / weight_total,
+                    "cdd_mean": cdd_total / weight_total,
+                }
+            )
+
+        national_df = pd.DataFrame(national_rows)
+        merged = pd.concat([regional_df, national_df], ignore_index=True)
+        merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
+        merged = merged.dropna(subset=["date"]).sort_values(["region_id", "date"]).reset_index(drop=True)
+        return merged, as_of
+
+    def _fetch_region_degree_day_forecast_open_meteo(
+        self,
+        *,
+        latitude: float,
+        longitude: float,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame:
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "daily": "temperature_2m_max,temperature_2m_min",
+            "temperature_unit": "fahrenheit",
+            "timezone": "UTC",
+            "start_date": start,
+            "end_date": end,
+        }
+        response = requests.get(url, params=params, timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        daily = payload.get("daily") if isinstance(payload, dict) else None
+        if not isinstance(daily, dict):
+            return pd.DataFrame(columns=["date", "hdd_mean", "cdd_mean"])
+
+        dates = daily.get("time") or []
+        tmax = daily.get("temperature_2m_max") or []
+        tmin = daily.get("temperature_2m_min") or []
+        rows: list[dict[str, Any]] = []
+        for d, max_f, min_f in zip(dates, tmax, tmin):
+            try:
+                max_val = float(max_f)
+                min_val = float(min_f)
+            except (TypeError, ValueError):
+                continue
+            tavg_f = (max_val + min_val) / 2.0
+            rows.append(
+                {
+                    "date": d,
+                    "hdd_mean": max(0.0, 65.0 - tavg_f),
+                    "cdd_mean": max(0.0, tavg_f - 65.0),
+                }
+            )
+        return pd.DataFrame(rows, columns=["date", "hdd_mean", "cdd_mean"])
+
+    def _bucket_degree_days(
+        self,
+        df: pd.DataFrame,
+        *,
+        start_day: int,
+        end_day: int,
+    ) -> dict[str, Any] | None:
+        if df is None or df.empty:
+            return None
+        ordered = df.copy()
+        ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+        ordered["hdd_mean"] = pd.to_numeric(ordered["hdd_mean"], errors="coerce")
+        ordered["cdd_mean"] = pd.to_numeric(ordered["cdd_mean"], errors="coerce")
+        ordered = ordered.dropna(subset=["date", "hdd_mean", "cdd_mean"]).sort_values("date")
+        if ordered.empty:
+            return None
+        sliced = ordered.iloc[start_day - 1 : end_day].copy()
+        if sliced.empty:
+            return None
+        return {
+            "dates": [d.date() for d in sliced["date"].tolist()],
+            "hdd": float(sliced["hdd_mean"].sum()),
+            "cdd": float(sliced["cdd_mean"].sum()),
+        }
+
+    def _shift_date_back_n_years(self, value: date, years_back: int) -> pd.Timestamp:
+        shifted = pd.Timestamp(value) - pd.DateOffset(years=years_back)
+        return pd.to_datetime(shifted, errors="coerce")
+
+    def _estimate_gas_demand_delta_bcfd(
+        self,
+        *,
+        delta_hdd: float,
+        delta_cdd: float,
+        days: int,
+        region_id: str,
+    ) -> float:
+        region_scale = {
+            "lower_48": 1.0,
+            "east": 0.27,
+            "midwest": 0.23,
+            "south": 0.32,
+            "west": 0.18,
+        }.get(region_id, 1.0)
+        if days <= 0:
+            return 0.0
+        # HDD sensitivity is generally stronger than CDD sensitivity for gas demand.
+        hdd_sensitivity_bcfd_per_dd = 0.60 * region_scale
+        cdd_sensitivity_bcfd_per_dd = 0.35 * region_scale
+        avg_delta_hdd = delta_hdd / float(days)
+        avg_delta_cdd = delta_cdd / float(days)
+        return (hdd_sensitivity_bcfd_per_dd * avg_delta_hdd) + (
+            cdd_sensitivity_bcfd_per_dd * avg_delta_cdd
+        )
 
     def _call_library(
         self,

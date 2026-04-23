@@ -104,6 +104,7 @@ METRIC_TITLES = {
     "managed_money_net": "CFTC Managed Money Net",
     "managed_money_net_percentile_156w": "CFTC Managed Money Net Percentile",
     "open_interest": "CFTC Open Interest",
+    "weather_degree_days_forecast_vs_5y": "Forecast HDD/CDD vs 5-Year Average",
 }
 
 METRIC_Y_LABELS = {
@@ -117,6 +118,7 @@ METRIC_Y_LABELS = {
     "managed_money_net": "Contracts",
     "managed_money_net_percentile_156w": "Percentile",
     "open_interest": "Contracts",
+    "weather_degree_days_forecast_vs_5y": "Degree-Days",
 }
 
 
@@ -212,6 +214,7 @@ def _default_y(metric: str, df) -> list[str]:
         "managed_money_net": ["value"],
         "managed_money_net_percentile_156w": ["value"],
         "open_interest": ["value"],
+        "weather_degree_days_forecast_vs_5y": ["delta_hdd", "delta_cdd", "demand_delta_bcfd"],
     }
     preferred = defaults.get(metric, ["value"])
     y = [c for c in preferred if c in df.columns]

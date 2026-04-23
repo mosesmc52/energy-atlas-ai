@@ -58,6 +58,7 @@ class MetricExecutor:
             "ng_production_lower48": self._eia_ng_production_lower48,
             "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
             "ng_pipeline": self._eia_ng_pipeline,
+            "weather_degree_days_forecast_vs_5y": self._eia_weather_degree_days_forecast_vs_5y,
             # --- Dallas Fed Energy Survey ---
             "des_business_activity_index": self._des_metric,
             "des_company_outlook_index": self._des_metric,
@@ -315,6 +316,18 @@ class MetricExecutor:
     ) -> EIAResult:
         dataset = str(filters.get("dataset") or "natural_gas_pipeline_projects")
         return self.eia.ng_pipeline(start=start, end=end, dataset=dataset)
+
+    def _eia_weather_degree_days_forecast_vs_5y(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        region = str(filters.get("region") or "lower48")
+        normal_years = int(filters.get("normal_years") or 5)
+        return self.eia.weather_degree_days_forecast_vs_5y(
+            start=start,
+            end=end,
+            region=region,
+            normal_years=normal_years,
+        )
 
     def _des_metric(
         self, *, start: str, end: str, filters: Dict[str, Any]

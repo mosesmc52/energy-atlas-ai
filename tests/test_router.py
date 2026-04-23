@@ -132,6 +132,18 @@ class TestRouter(unittest.TestCase):
             {"region": "east", "include_weekly_change": True},
         )
 
+    def test_degree_day_forecast_routes_to_weather_metric(self) -> None:
+        result = route_query(
+            "How do current cooling/heating degree day forecasts compare to the 5-year average, and what impact does this have on natural gas demand?"
+        )
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "lower48", "normal_years": 5})
+
+    def test_degree_day_forecast_routes_requested_normal_window(self) -> None:
+        result = route_query("How do HDD forecasts compare to the 3-year average?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "lower48", "normal_years": 3})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,14 @@ STORAGE_REGION_KEYWORDS = {
     "pacific": ["pacific", "west coast"],
 }
 
+WEATHER_REGION_KEYWORDS = {
+    "lower48": ["lower 48", "lower48", "u.s.", "us", "national", "united states"],
+    "east": ["east", "eastern", "northeast"],
+    "midwest": ["midwest", "mid-west"],
+    "south": ["south", "southern", "southeast"],
+    "west": ["west", "western"],
+}
+
 TRADE_REGION_KEYWORDS = {
     "united_states_pipeline_total": [
         "us total",
@@ -635,6 +643,23 @@ ROUTE_MAP = {
         "outflow by state",
         "historical projects",
     ],
+    "weather_degree_days_forecast_vs_5y": [
+        "degree day",
+        "degree days",
+        "hdd",
+        "cdd",
+        "heating degree",
+        "cooling degree",
+        "1-year average",
+        "2-year average",
+        "3-year average",
+        "vs 5-year",
+        "vs 5 year",
+        "five-year average",
+        "5-year average",
+        "year average",
+        "weather normal",
+    ],
 }
 
 ALLOWED_METRICS = set(ROUTE_MAP.keys())
@@ -650,6 +675,8 @@ ALLOWED_RESERVES_RESOURCE_CATEGORIES = set(
     RESERVES_RESOURCE_CATEGORY_KEYWORDS.keys()
 )
 ALLOWED_PIPELINE_DATASETS = set(PIPELINE_DATASET_KEYWORDS.keys())
+ALLOWED_WEATHER_REGIONS = set(WEATHER_REGION_KEYWORDS.keys())
+ALLOWED_WEATHER_NORMAL_YEARS = {1, 2, 3, 5}
 
 # ----------------------------
 # Normalization
@@ -718,6 +745,15 @@ BONUS_TERMS: Dict[str, List[str]] = {
     "ng_production_lower48": ["production", "output", "supply"],
     "ng_exploration_reserves_lower48": ["reserves", "exploration"],
     "ng_pipeline": ["pipeline", "capacity", "projects", "inflow", "outflow"],
+    "weather_degree_days_forecast_vs_5y": [
+        "weather",
+        "forecast",
+        "hdd",
+        "cdd",
+        "degree day",
+        "5-year",
+        "normal",
+    ],
     "iso_load": ["load", "demand", "system demand"],
     "iso_gas_dependency": ["gas share", "gas-fired", "gas-fired generation"],
     "iso_renewables": ["renewables", "wind", "solar"],
@@ -810,6 +846,31 @@ def route_storage_region(q: str) -> str | None:
     for region, keys in STORAGE_REGION_KEYWORDS.items():
         if contains_any(keys, q):
             return region
+    return None
+
+
+def route_weather_region(q: str) -> str | None:
+    q = q.lower()
+    for region, keys in WEATHER_REGION_KEYWORDS.items():
+        if contains_any(keys, q):
+            return region
+    return None
+
+
+def route_weather_normal_years(q: str) -> int | None:
+    q = q.lower()
+    direct = re.search(r"\b([1235])\s*[- ]?year\b", q)
+    if direct:
+        return int(direct.group(1))
+    word_map = {
+        "one year": 1,
+        "two year": 2,
+        "three year": 3,
+        "five year": 5,
+    }
+    for phrase, value in word_map.items():
+        if phrase in q:
+            return value
     return None
 
 
@@ -1113,6 +1174,18 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
             filters["dataset"] = dataset
         elif confidence >= 0.85:
             filters["dataset"] = "natural_gas_pipeline_projects"
+    elif metric == "weather_degree_days_forecast_vs_5y":
+        region = route_weather_region(q)
+        if region:
+            filters["region"] = region
+        else:
+            filters["region"] = "lower48"
+        normal_years = route_weather_normal_years(q)
+        filters["normal_years"] = (
+            normal_years
+            if normal_years in ALLOWED_WEATHER_NORMAL_YEARS
+            else 5
+        )
 
     return filters or None
 
@@ -1219,6 +1292,9 @@ def validate_llm_route(
         elif primary_metric == "ng_exploration_reserves_lower48":
             if region not in ALLOWED_RESERVES_STATES:
                 filters.pop("region", None)
+        elif primary_metric == "weather_degree_days_forecast_vs_5y":
+            if region not in ALLOWED_WEATHER_REGIONS:
+                filters.pop("region", None)
         else:
             filters.pop("region", None)
     if "resource_category" in filters:
@@ -1233,6 +1309,20 @@ def validate_llm_route(
             filters.pop("dataset", None)
         elif dataset not in ALLOWED_PIPELINE_DATASETS:
             filters.pop("dataset", None)
+    if "normal_years" in filters:
+        normal_years = filters["normal_years"]
+        if primary_metric != "weather_degree_days_forecast_vs_5y":
+            filters.pop("normal_years", None)
+        else:
+            try:
+                parsed_years = int(normal_years)
+            except (TypeError, ValueError):
+                filters.pop("normal_years", None)
+            else:
+                if parsed_years in ALLOWED_WEATHER_NORMAL_YEARS:
+                    filters["normal_years"] = parsed_years
+                else:
+                    filters.pop("normal_years", None)
 
     if llm.intent not in {
         "single_metric",
@@ -1321,6 +1411,24 @@ def route_query(user_query: str) -> HybridRouteResult:
             normalized_query=normalized,
             include_forecast=include_forecast,
             forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if top.metric == "weather_degree_days_forecast_vs_5y" and confidence >= 0.6:
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=top.metric,
+            metrics=[top.metric],
+            start=start,
+            end=end,
+            filters=filters,
+            confidence=confidence,
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason=f"Weather degree-day rule route on {top.metric} using {top.matched_terms}",
+            normalized_query=normalized,
+            include_forecast=True,
+            forecast_horizon_days=15,
         )
 
     # Fast path: for single-metric questions, stay on rules unless the match is ambiguous.

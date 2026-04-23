@@ -228,6 +228,21 @@ class TestLLMRouterStructured(unittest.TestCase):
         self.assertIsNone(result.primary_metric)
         self.assertEqual(result.metrics, [])
 
+    def test_weather_degree_day_region_filter_is_preserved(self) -> None:
+        result = self._call_with_payload(
+            {
+                "intent": "single_metric",
+                "primary_metric": "weather_degree_days_forecast_vs_5y",
+                "metrics": ["weather_degree_days_forecast_vs_5y"],
+                "filters": {"region": "east", "normal_years": 3},
+                "reason": "East region degree-day anomaly forecast",
+                "confidence": 0.86,
+                "ambiguous": False,
+            }
+        )
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "east", "normal_years": 3})
+
 
 if __name__ == "__main__":
     unittest.main()

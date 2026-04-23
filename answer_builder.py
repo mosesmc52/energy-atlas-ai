@@ -95,6 +95,7 @@ METRIC_UNITS = {
     "managed_money_net": "contracts",
     "managed_money_net_percentile_156w": "percentile",
     "open_interest": "contracts",
+    "weather_degree_days_forecast_vs_5y": "degree-days",
 }
 
 SECTOR_LABELS = {
@@ -690,6 +691,120 @@ def _is_storage_level_and_change_view(metric: str, df: pd.DataFrame | None) -> b
     )
 
 
+def _is_weather_degree_day_forecast_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "weather_degree_days_forecast_vs_5y"
+        and df is not None
+        and not df.empty
+        and {
+            "bucket",
+            "forecast_hdd",
+            "normal_hdd_5y",
+            "delta_hdd",
+            "forecast_cdd",
+            "normal_cdd_5y",
+            "delta_cdd",
+            "demand_delta_bcfd",
+            "as_of",
+        }.issubset(df.columns)
+    )
+
+
+def _weather_normal_years(df: pd.DataFrame) -> int:
+    if "normal_years" not in df.columns or df.empty:
+        return 5
+    val = pd.to_numeric(df["normal_years"], errors="coerce").dropna()
+    if val.empty:
+        return 5
+    try:
+        parsed = int(val.iloc[-1])
+    except (TypeError, ValueError):
+        return 5
+    return parsed if parsed in {1, 2, 3, 5} else 5
+
+
+def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
+    if not _is_weather_degree_day_forecast_view("weather_degree_days_forecast_vs_5y", df):
+        return "No data was returned for the requested period."
+    ordered = df.copy()
+    ordered["bucket_start_day"] = pd.to_numeric(ordered["bucket_start_day"], errors="coerce")
+    ordered = ordered.sort_values("bucket_start_day")
+    if ordered.empty:
+        return "No data was returned for the requested period."
+    total_delta_hdd = float(pd.to_numeric(ordered["delta_hdd"], errors="coerce").sum())
+    total_delta_cdd = float(pd.to_numeric(ordered["delta_cdd"], errors="coerce").sum())
+    avg_demand_delta = float(pd.to_numeric(ordered["demand_delta_bcfd"], errors="coerce").mean())
+    normal_years = _weather_normal_years(ordered)
+    as_of = str(ordered.iloc[-1].get("as_of") or "").strip() or "n/a"
+    heating_direction = "above" if total_delta_hdd > 0 else "below" if total_delta_hdd < 0 else "near"
+    cooling_direction = "above" if total_delta_cdd > 0 else "below" if total_delta_cdd < 0 else "near"
+    demand_direction = "higher" if avg_demand_delta > 0 else "lower" if avg_demand_delta < 0 else "about flat"
+    net_effect = "up" if avg_demand_delta > 0 else "down" if avg_demand_delta < 0 else "unchanged"
+    return (
+        f"As of {as_of}, compared with the rolling {normal_years}-year average for days 1-15, "
+        f"expected heating need is {abs(total_delta_hdd):.1f} degree-days {heating_direction} normal "
+        f"and expected cooling (A/C) need is {abs(total_delta_cdd):.1f} degree-days {cooling_direction} normal. "
+        f"In plain terms, weather is likely to push natural gas demand {net_effect} by about "
+        f"{abs(avg_demand_delta):.2f} Bcf/d versus normal ({demand_direction} than normal)."
+    )
+
+
+def _weather_degree_day_forecast_structured_answer(
+    *,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _weather_degree_day_forecast_answer(df)
+    if answer == "No data was returned for the requested period.":
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No weather forecast degree-day anomaly data was returned for the requested period.",
+            drivers=["The weather forecast pipeline did not return usable HDD/CDD bucket data."],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no weather bucket data was returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    ordered = df.copy().sort_values("bucket_start_day")
+    total_delta_hdd = float(pd.to_numeric(ordered["delta_hdd"], errors="coerce").sum())
+    total_delta_cdd = float(pd.to_numeric(ordered["delta_cdd"], errors="coerce").sum())
+    avg_demand_delta = float(pd.to_numeric(ordered["demand_delta_bcfd"], errors="coerce").mean())
+    normal_years = _weather_normal_years(ordered)
+    signal_status = "bullish" if avg_demand_delta > 0 else "bearish" if avg_demand_delta < 0 else "neutral"
+    direction = "up" if avg_demand_delta > 0 else "down" if avg_demand_delta < 0 else "flat"
+    confidence = 0.78
+    data_points = [
+        AnswerDataPoint(metric="Total HDD Delta (1-15d)", value=round(total_delta_hdd, 2), unit="degree-days"),
+        AnswerDataPoint(metric="Total CDD Delta (1-15d)", value=round(total_delta_cdd, 2), unit="degree-days"),
+        AnswerDataPoint(metric="Estimated Demand Delta", value=round(avg_demand_delta, 3), unit="Bcf/d"),
+    ]
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status=signal_status, confidence=confidence),
+        summary=answer,
+        drivers=[
+            "Higher HDD usually means colder weather and more gas used for heating homes and businesses.",
+            "Higher CDD usually means hotter weather and more power demand for air conditioning, which can raise gas burn.",
+            "Demand delta is an estimate from weather effects only, not a full supply-demand balance model.",
+        ],
+        data_points=data_points,
+        forecast=AnswerForecast(
+            direction=direction,
+            reasoning=f"Direction reflects average weather-driven demand delta versus a rolling {normal_years}-year normal across forecast buckets.",
+        ),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
 def _regional_storage_change_answer(df: pd.DataFrame, query: str = "") -> str:
     if not _is_regional_storage_change_view("working_gas_storage_change_weekly", df):
         return "No data was returned for the requested period."
@@ -998,6 +1113,29 @@ def build_answer_with_openai(
             ),
             report_context_used=False,
             report_context_reason="storage_level_and_change_no_rag",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
+    if _is_weather_degree_day_forecast_view(metric, df):
+        answer_text = _weather_degree_day_forecast_answer(df)
+        if df is not None and "bucket_start_day" in df.columns:
+            df = df.sort_values("bucket_start_day").reset_index(drop=True)
+        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_weather_degree_day_forecast_structured_answer(
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="weather_degree_day_forecast_no_rag",
             report_context_sources=[],
             data_preview=_make_preview(df),
             chart_spec=chart_spec,

@@ -202,6 +202,54 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertIn("weekly_change", result.df.columns)
         self.assertEqual(result.df.iloc[-1]["weekly_change"], 10.0)
 
+    def test_weather_forecast_metric_passes_region_filter(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
+            df=None, source=None, meta={"cache": {}}
+        )
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        executor.execute(
+            ExecuteRequest(
+                metric="weather_degree_days_forecast_vs_5y",
+                start="2026-01-01",
+                end="2026-01-31",
+                filters={"region": "east"},
+            )
+        )
+
+        eia.weather_degree_days_forecast_vs_5y.assert_called_once_with(
+            start="2026-01-01",
+            end="2026-01-31",
+            region="east",
+            normal_years=5,
+        )
+
+    def test_weather_forecast_metric_passes_requested_normal_years(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
+            df=None, source=None, meta={"cache": {}}
+        )
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        executor.execute(
+            ExecuteRequest(
+                metric="weather_degree_days_forecast_vs_5y",
+                start="2026-01-01",
+                end="2026-01-31",
+                filters={"region": "west", "normal_years": 2},
+            )
+        )
+
+        eia.weather_degree_days_forecast_vs_5y.assert_called_once_with(
+            start="2026-01-01",
+            end="2026-01-31",
+            region="west",
+            normal_years=2,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
