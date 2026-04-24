@@ -7,12 +7,30 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from answer_builder import build_answer_with_openai
+from answer_builder import _is_suggested_alert_relevant, build_answer_with_openai
 from schemas.answer import SourceRef
 from tools.eia_adapter import EIAResult
 
 
 class TestAnswerBuilder(unittest.TestCase):
+    def test_storage_snapshot_query_rejects_deficit_widening_suggestion(self) -> None:
+        self.assertFalse(
+            _is_suggested_alert_relevant(
+                signal_id="storage_deficit_widening_wow",
+                metric="working_gas_storage_lower48",
+                query="What is Lower 48 working gas storage right now?",
+            )
+        )
+
+    def test_storage_deficit_query_allows_deficit_widening_suggestion(self) -> None:
+        self.assertTrue(
+            _is_suggested_alert_relevant(
+                signal_id="storage_deficit_widening_wow",
+                metric="working_gas_storage_lower48",
+                query="Is the storage deficit widening week-over-week?",
+            )
+        )
+
     def test_sector_consumption_empty_dataframe_does_not_crash(self) -> None:
         result = EIAResult(
             df=pd.DataFrame(columns=["date", "value", "series"]),
@@ -199,6 +217,68 @@ class TestAnswerBuilder(unittest.TestCase):
 
         self.assertIn("East storage was 850 Bcf", payload.answer_text)
         self.assertEqual(payload.chart_spec.title, "Working Gas in Storage and Weekly Change")
+
+    def test_weather_answer_formats_as_of_date_human_readable(self) -> None:
+        df = pd.DataFrame(
+            [
+                {
+                    "bucket": "days_1_5",
+                    "bucket_start_day": 1,
+                    "forecast_hdd": 12.0,
+                    "normal_hdd_5y": 16.0,
+                    "delta_hdd": -4.0,
+                    "forecast_cdd": 5.0,
+                    "normal_cdd_5y": 3.0,
+                    "delta_cdd": 2.0,
+                    "demand_delta_bcfd": -0.4,
+                    "as_of": "2026-04-23T15:28:23Z",
+                    "normal_years": 5,
+                },
+                {
+                    "bucket": "days_6_10",
+                    "bucket_start_day": 6,
+                    "forecast_hdd": 11.0,
+                    "normal_hdd_5y": 15.0,
+                    "delta_hdd": -4.0,
+                    "forecast_cdd": 6.0,
+                    "normal_cdd_5y": 4.0,
+                    "delta_cdd": 2.0,
+                    "demand_delta_bcfd": -0.5,
+                    "as_of": "2026-04-23T15:28:23Z",
+                    "normal_years": 5,
+                },
+                {
+                    "bucket": "days_11_15",
+                    "bucket_start_day": 11,
+                    "forecast_hdd": 10.0,
+                    "normal_hdd_5y": 14.0,
+                    "delta_hdd": -4.0,
+                    "forecast_cdd": 7.0,
+                    "normal_cdd_5y": 5.0,
+                    "delta_cdd": 2.0,
+                    "demand_delta_bcfd": -0.6,
+                    "as_of": "2026-04-23T15:28:23Z",
+                    "normal_years": 5,
+                },
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Weather Degree Days Forecast vs 5-Year Normal (Lower 48)",
+                reference="test",
+                retrieved_at=datetime(2026, 4, 23),
+            ),
+            meta={"metric": "weather_degree_days_forecast_vs_5y"},
+        )
+
+        payload = build_answer_with_openai(
+            query="How do current cooling/heating degree day forecasts compare to the 5-year average?",
+            result=result,
+        )
+
+        self.assertIn("As of April 23, 2026", payload.answer_text)
 
 
 if __name__ == "__main__":

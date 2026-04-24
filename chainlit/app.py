@@ -208,6 +208,8 @@ def format_summary_cards(metrics: list[dict]) -> str:
     values = []
     subtitles = []
     for metric in metrics:
+        if not isinstance(metric, dict):
+            continue
         raw_value = metric.get("value")
         value_text = _format_card_value(raw_value, str(metric.get("unit") or ""))
         if not value_text:
@@ -272,15 +274,15 @@ def format_response(data: StructuredAnswer | dict) -> str:
             )
         )
 
-    source_lines = [
-        (
-            f"- {source.get('title')} ({source.get('date')})"
-            if source.get("date")
-            else f"- {source.get('title')}"
-        )
-        for source in (data.get("sources") or [])
-        if str(source.get("title") or "").strip()
-    ]
+    source_lines = []
+    for source in (data.get("sources") or []):
+        if not isinstance(source, dict):
+            continue
+        title = str(source.get("title") or "").strip()
+        if not title:
+            continue
+        date = str(source.get("date") or "").strip()
+        source_lines.append(f"- {title} ({date})" if date else f"- {title}")
     if source_lines:
         sections.append("**Sources**\n" + "\n".join(source_lines))
 

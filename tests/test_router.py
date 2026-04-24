@@ -1,5 +1,8 @@
 import unittest
+from datetime import date
 from unittest.mock import patch
+
+import pandas as pd
 
 from agents.router import LLMRouteOutput
 from agents.router import route_query
@@ -143,6 +146,28 @@ class TestRouter(unittest.TestCase):
         result = route_query("How do HDD forecasts compare to the 3-year average?")
         self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
         self.assertEqual(result.filters, {"region": "lower48", "normal_years": 3})
+
+    def test_degree_day_forecast_routes_four_year_normal_window(self) -> None:
+        result = route_query("How do HDD forecasts compare to the 4-year average?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "lower48", "normal_years": 4})
+
+    def test_supply_expanding_or_tightening_routes_to_supply_balance_metric(self) -> None:
+        result = route_query("Is U.S. gas supply expanding or tightening?")
+        self.assertEqual(result.primary_metric, "ng_supply_balance_regime")
+        self.assertEqual(result.filters, {"region": "united_states_total"})
+
+    def test_consumption_query_defaults_to_two_year_window_without_explicit_dates(self) -> None:
+        result = route_query("How is gas consumption in California?")
+        expected_start = (pd.Timestamp(date.today()) - pd.DateOffset(years=2)).date().isoformat()
+        self.assertEqual(result.primary_metric, "ng_consumption_lower48")
+        self.assertEqual(result.start, expected_start)
+
+    def test_consumption_query_honors_last_year_phrase(self) -> None:
+        result = route_query("How is gas consumption in California over the last year?")
+        expected_start = (pd.Timestamp(date.today()) - pd.DateOffset(years=1)).date().isoformat()
+        self.assertEqual(result.primary_metric, "ng_consumption_lower48")
+        self.assertEqual(result.start, expected_start)
 
 
 if __name__ == "__main__":

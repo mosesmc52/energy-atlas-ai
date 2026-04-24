@@ -250,6 +250,54 @@ class TestMetricExecutor(unittest.TestCase):
             normal_years=2,
         )
 
+    def test_supply_balance_regime_metric_combines_component_signals(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        eia.ng_production_lower48.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"date": "2026-03-01", "value": 100.0},
+                    {"date": "2026-04-01", "value": 102.0},
+                ]
+            ),
+            source=Mock(reference="ref:prod"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.storage_working_gas_change_weekly.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [{"date": "2026-04-17", "value": 80.0}]
+            ),
+            source=Mock(reference="ref:storage_change"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"bucket": "days_1_5", "demand_delta_bcfd": -0.5, "as_of": "2026-04-24T00:00:00Z"},
+                    {"bucket": "days_6_10", "demand_delta_bcfd": -0.4, "as_of": "2026-04-24T00:00:00Z"},
+                ]
+            ),
+            source=Mock(reference="ref:weather"),
+            meta={"cache": {"hit": True}},
+        )
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="ng_supply_balance_regime",
+                start="2025-01-01",
+                end="2026-04-24",
+                filters={"region": "united_states_total"},
+            )
+        )
+
+        self.assertEqual(eia.ng_production_lower48.call_count, 1)
+        self.assertEqual(eia.storage_working_gas_change_weekly.call_count, 1)
+        self.assertEqual(eia.weather_degree_days_forecast_vs_5y.call_count, 1)
+        self.assertEqual(result.source.reference, "eia-ng-client:derived_natural_gas.supply_balance_regime")
+        self.assertIn("regime", result.df.columns)
+        self.assertEqual(result.df.iloc[-1]["regime"], "expanding")
+
 
 if __name__ == "__main__":
     unittest.main()

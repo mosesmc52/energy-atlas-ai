@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+import pandas as pd
+
 from agents.llm_router import LLMRouterError
 from agents.llm_router import llm_route_structured as llm_route_structured_impl
 from utils.dates import has_explicit_date_reference, resolve_date_range
@@ -625,6 +627,22 @@ ROUTE_MAP = {
     ],
     "ng_electricity": ["electricity", "power plants", "power generation"],
     "ng_production_lower48": ["production", "output", "supply", "dry gas production"],
+    "ng_supply_balance_regime": [
+        "gas supply",
+        "natural gas supply",
+        "supply expanding",
+        "supply tightening",
+        "expanding or tightening",
+        "tightening or expanding",
+        "market tightening",
+        "market balance",
+        "supply-demand balance",
+        "supply demand balance",
+        "fundamentals",
+        "supply constrained",
+        "tightening",
+        "loosening",
+    ],
     "ng_exploration_reserves_lower48": [
         "exploration",
         "reserves",
@@ -653,6 +671,7 @@ ROUTE_MAP = {
         "1-year average",
         "2-year average",
         "3-year average",
+        "4-year average",
         "vs 5-year",
         "vs 5 year",
         "five-year average",
@@ -676,7 +695,7 @@ ALLOWED_RESERVES_RESOURCE_CATEGORIES = set(
 )
 ALLOWED_PIPELINE_DATASETS = set(PIPELINE_DATASET_KEYWORDS.keys())
 ALLOWED_WEATHER_REGIONS = set(WEATHER_REGION_KEYWORDS.keys())
-ALLOWED_WEATHER_NORMAL_YEARS = {1, 2, 3, 5}
+ALLOWED_WEATHER_NORMAL_YEARS = {1, 2, 3, 4, 5}
 
 # ----------------------------
 # Normalization
@@ -743,6 +762,14 @@ BONUS_TERMS: Dict[str, List[str]] = {
     ],
     "ng_electricity": ["power plants", "electricity", "power generation"],
     "ng_production_lower48": ["production", "output", "supply"],
+    "ng_supply_balance_regime": [
+        "gas supply",
+        "market balance",
+        "fundamentals",
+        "tightening",
+        "loosening",
+        "supply constrained",
+    ],
     "ng_exploration_reserves_lower48": ["reserves", "exploration"],
     "ng_pipeline": ["pipeline", "capacity", "projects", "inflow", "outflow"],
     "weather_degree_days_forecast_vs_5y": [
@@ -859,13 +886,14 @@ def route_weather_region(q: str) -> str | None:
 
 def route_weather_normal_years(q: str) -> int | None:
     q = q.lower()
-    direct = re.search(r"\b([1235])\s*[- ]?year\b", q)
+    direct = re.search(r"\b([12345])\s*[- ]?years?\b", q)
     if direct:
         return int(direct.group(1))
     word_map = {
         "one year": 1,
         "two year": 2,
         "three year": 3,
+        "four year": 4,
         "five year": 5,
     }
     for phrase, value in word_map.items():
@@ -1043,6 +1071,14 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         token in q for token in ("production", "output", "supply")
     ):
         score += 1.5
+    if metric == "ng_supply_balance_regime" and "supply" in q and any(
+        token in q for token in ("tight", "tightening", "expand", "expanding", "loosen", "loosening")
+    ):
+        score += 2.0
+    if metric == "ng_supply_balance_regime" and any(
+        token in q for token in ("market balance", "fundamentals")
+    ):
+        score += 1.0
     if metric == "ng_exploration_reserves_lower48" and (
         route_reserves_state(q) or route_reserves_resource_category(q)
     ):
@@ -1160,6 +1196,8 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
             filters["region"] = state
         else:
             filters["region"] = "united_states_total"
+    elif metric == "ng_supply_balance_regime":
+        filters["region"] = "united_states_total"
 
     elif metric == "ng_exploration_reserves_lower48":
         state = route_reserves_state(q)
@@ -1384,6 +1422,8 @@ def route_query(user_query: str) -> HybridRouteResult:
     top = candidates[0]
     if not has_explicit_dates and top.metric == "ng_exploration_reserves_lower48":
         start = "2000-01-01"
+    if not has_explicit_dates and top.metric in {"ng_consumption_lower48", "ng_consumption_by_sector"}:
+        start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
     filters = build_filters(top.metric, normalized, confidence)
 
     if (

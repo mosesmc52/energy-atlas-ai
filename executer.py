@@ -56,6 +56,7 @@ class MetricExecutor:
             "ng_consumption_lower48": self._eia_ng_consumption_lower48,
             "ng_consumption_by_sector": self._eia_ng_consumption_by_sector,
             "ng_production_lower48": self._eia_ng_production_lower48,
+            "ng_supply_balance_regime": self._eia_ng_supply_balance_regime,
             "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
             "ng_pipeline": self._eia_ng_pipeline,
             "weather_degree_days_forecast_vs_5y": self._eia_weather_degree_days_forecast_vs_5y,
@@ -296,6 +297,143 @@ class MetricExecutor:
     ) -> EIAResult:
         state = str(filters.get("region") or "united_states_total")
         return self.eia.ng_production_lower48(start=start, end=end, state=state)
+
+    def _eia_ng_supply_balance_regime(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        region = str(filters.get("region") or "united_states_total")
+        production = self.eia.ng_production_lower48(start=start, end=end, state=region)
+        storage_change = self.eia.storage_working_gas_change_weekly(
+            start=start, end=end, region="lower48"
+        )
+
+        weather = None
+        weather_error = None
+        try:
+            weather = self.eia.weather_degree_days_forecast_vs_5y(
+                start=start,
+                end=end,
+                region="lower48",
+                normal_years=int(filters.get("normal_years") or 5),
+            )
+        except Exception as e:  # noqa: BLE001
+            weather_error = str(e)
+
+        prod_df = production.df.copy()
+        prod_df["date"] = pd.to_datetime(prod_df["date"], errors="coerce")
+        prod_df["value"] = pd.to_numeric(prod_df["value"], errors="coerce")
+        prod_df = prod_df.dropna(subset=["date", "value"]).sort_values("date")
+
+        stor_df = storage_change.df.copy()
+        stor_df["date"] = pd.to_datetime(stor_df["date"], errors="coerce")
+        stor_df["value"] = pd.to_numeric(stor_df["value"], errors="coerce")
+        stor_df = stor_df.dropna(subset=["date", "value"]).sort_values("date")
+
+        production_delta_abs = 0.0
+        production_delta_pct = 0.0
+        production_latest = None
+        production_date = None
+        if not prod_df.empty:
+            production_latest = float(prod_df.iloc[-1]["value"])
+            production_date = prod_df.iloc[-1]["date"]
+            if len(prod_df) >= 2:
+                prior = float(prod_df.iloc[-2]["value"])
+                production_delta_abs = production_latest - prior
+                if prior != 0:
+                    production_delta_pct = (production_delta_abs / abs(prior)) * 100.0
+
+        storage_weekly_change = 0.0
+        storage_date = None
+        if not stor_df.empty:
+            storage_weekly_change = float(stor_df.iloc[-1]["value"])
+            storage_date = stor_df.iloc[-1]["date"]
+
+        weather_demand_delta_bcfd = 0.0
+        weather_as_of = None
+        if weather is not None and weather.df is not None and not weather.df.empty:
+            wdf = weather.df.copy()
+            wdf["demand_delta_bcfd"] = pd.to_numeric(wdf["demand_delta_bcfd"], errors="coerce")
+            wdf = wdf.dropna(subset=["demand_delta_bcfd"])
+            if not wdf.empty:
+                weather_demand_delta_bcfd = float(wdf["demand_delta_bcfd"].mean())
+                weather_as_of = str(wdf.iloc[-1].get("as_of") or "").strip() or None
+
+        # Regime score: positive -> expanding/looser, negative -> tightening.
+        score = 0.0
+        if production_delta_pct > 0:
+            score += 1.0
+        elif production_delta_pct < 0:
+            score -= 1.0
+
+        if storage_weekly_change > 0:
+            score += 1.0
+        elif storage_weekly_change < 0:
+            score -= 1.0
+
+        # Positive weather-demand delta tightens balances; negative loosens.
+        if weather_demand_delta_bcfd > 0:
+            score -= 1.0
+        elif weather_demand_delta_bcfd < 0:
+            score += 1.0
+
+        if score >= 1.0:
+            regime = "expanding"
+        elif score <= -1.0:
+            regime = "tightening"
+        else:
+            regime = "mixed"
+
+        as_of_candidates = [d for d in [production_date, storage_date] if d is not None]
+        as_of = (
+            max(as_of_candidates).date().isoformat()
+            if as_of_candidates
+            else datetime.now(timezone.utc).date().isoformat()
+        )
+
+        out = pd.DataFrame(
+            [
+                {
+                    "date": as_of,
+                    "region": region,
+                    "regime": regime,
+                    "score": round(score, 3),
+                    "production_latest": production_latest,
+                    "production_delta_abs": round(production_delta_abs, 3),
+                    "production_delta_pct": round(production_delta_pct, 3),
+                    "storage_weekly_change": round(storage_weekly_change, 3),
+                    "weather_demand_delta_bcfd": round(weather_demand_delta_bcfd, 3),
+                    "weather_as_of": weather_as_of,
+                }
+            ]
+        )
+
+        return EIAResult(
+            df=out,
+            source=SourceRef(
+                source_type="eia_api",
+                label="U.S. Natural Gas Supply Balance Regime (Derived)",
+                reference="eia-ng-client:derived_natural_gas.supply_balance_regime",
+                parameters={
+                    "region": region,
+                    "start": start,
+                    "end": end,
+                    "production_reference": production.source.reference,
+                    "storage_change_reference": storage_change.source.reference,
+                    "weather_reference": (
+                        weather.source.reference if weather is not None else None
+                    ),
+                },
+            ),
+            meta={
+                "cache": {
+                    "production": (production.meta or {}).get("cache"),
+                    "storage_change": (storage_change.meta or {}).get("cache"),
+                    "weather": (weather.meta or {}).get("cache") if weather is not None else None,
+                },
+                "weather_error": weather_error,
+                "note": "Derived regime blends production trend, latest storage change, and weather-driven demand pressure.",
+            },
+        )
 
     def _eia_ng_exploration_reserves_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]

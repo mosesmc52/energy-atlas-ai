@@ -583,8 +583,8 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         5-year normals using the configured weather history and live forecast data.
         """
         canonical_region = self._canonical_weather_region(region)
-        if normal_years not in {1, 2, 3, 5}:
-            raise ValueError("normal_years must be one of: 1, 2, 3, 5")
+        if normal_years not in {1, 2, 3, 4, 5}:
+            raise ValueError("normal_years must be one of: 1, 2, 3, 4, 5")
         forecast_df, forecast_as_of = self._fetch_open_meteo_degree_day_forecast()
         if canonical_region != "lower_48":
             forecast_df = forecast_df.loc[

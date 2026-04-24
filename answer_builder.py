@@ -65,6 +65,7 @@ METRIC_UNITS = {
     "ng_consumption_lower48": "MMcf",
     "ng_consumption_by_sector": "MMcf",
     "ng_production_lower48": "MMcf",
+    "ng_supply_balance_regime": "index",
     "des_business_activity_index": "index",
     "des_company_outlook_index": "index",
     "des_outlook_uncertainty_index": "index",
@@ -354,7 +355,74 @@ def _suggested_alert_catalog_text() -> str:
     return "\n".join(lines)
 
 
-def _normalize_structured_response(payload: dict[str, Any]) -> StructuredAnswer:
+def _is_suggested_alert_relevant(*, signal_id: str, metric: str, query: str) -> bool:
+    q = (query or "").strip().lower()
+    if signal_id == "routed_metric_query":
+        return False
+
+    # Snapshot prompts should not propose monitoring-heavy alerts unless user asks
+    # for comparative or forward-looking context.
+    snapshot_prompt = any(token in q for token in ("right now", "current", "latest", "today"))
+
+    signal_query_terms = {
+        "storage_below_five_year_average_pct": (
+            "5-year",
+            "five-year",
+            "average",
+            "normal",
+            "deficit",
+            "below",
+            "tight",
+        ),
+        "storage_deficit_widening_wow": (
+            "widening",
+            "week-over-week",
+            "wow",
+            "trend",
+            "deficit",
+        ),
+        "hdd_above_normal_this_week": (
+            "hdd",
+            "heating degree",
+            "weather",
+            "colder",
+            "cold",
+            "normal",
+        ),
+        "production_below_30d_average": (
+            "production",
+            "output",
+            "supply",
+            "30d",
+            "30-day",
+            "average",
+        ),
+        "supply_constrained_regime": (
+            "supply",
+            "constrained",
+            "tight",
+            "balance",
+            "risk",
+        ),
+    }
+    terms = signal_query_terms.get(signal_id, ())
+    if terms and not any(term in q for term in terms):
+        return False
+
+    if signal_id.startswith("storage_"):
+        if metric not in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}:
+            return False
+        if snapshot_prompt and signal_id != "storage_below_five_year_average_pct":
+            return False
+    if signal_id == "hdd_above_normal_this_week" and metric != "weather_degree_days_forecast_vs_5y":
+        return False
+    if signal_id == "production_below_30d_average" and metric != "ng_production_lower48":
+        return False
+
+    return True
+
+
+def _normalize_structured_response(payload: dict[str, Any], *, metric: str, query: str) -> StructuredAnswer:
     signal = payload.get("signal") or {}
     forecast = payload.get("forecast") or {}
     suggested_alerts = []
@@ -363,6 +431,8 @@ def _normalize_structured_response(payload: dict[str, Any]) -> StructuredAnswer:
             continue
         signal_id = str(item.get("signal_id") or "").strip()
         if not is_builtin_signal_id(signal_id):
+            continue
+        if not _is_suggested_alert_relevant(signal_id=signal_id, metric=metric, query=query):
             continue
         title = _coerce_text(item.get("title"))
         reason = _coerce_text(item.get("reason"))
@@ -710,6 +780,22 @@ def _is_weather_degree_day_forecast_view(metric: str, df: pd.DataFrame | None) -
     )
 
 
+def _is_supply_balance_regime_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "ng_supply_balance_regime"
+        and df is not None
+        and not df.empty
+        and {
+            "regime",
+            "score",
+            "production_delta_pct",
+            "storage_weekly_change",
+            "weather_demand_delta_bcfd",
+            "date",
+        }.issubset(df.columns)
+    )
+
+
 def _weather_normal_years(df: pd.DataFrame) -> int:
     if "normal_years" not in df.columns or df.empty:
         return 5
@@ -720,7 +806,18 @@ def _weather_normal_years(df: pd.DataFrame) -> int:
         parsed = int(val.iloc[-1])
     except (TypeError, ValueError):
         return 5
-    return parsed if parsed in {1, 2, 3, 5} else 5
+    return parsed if parsed in {1, 2, 3, 4, 5} else 5
+
+
+def _format_as_of_date(raw_value: Any) -> str:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return "n/a"
+    parsed = pd.to_datetime(raw, errors="coerce", utc=True)
+    if pd.isna(parsed):
+        return raw
+    ts = parsed.to_pydatetime()
+    return f"{ts.strftime('%B')} {ts.day}, {ts.year}"
 
 
 def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
@@ -735,17 +832,24 @@ def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
     total_delta_cdd = float(pd.to_numeric(ordered["delta_cdd"], errors="coerce").sum())
     avg_demand_delta = float(pd.to_numeric(ordered["demand_delta_bcfd"], errors="coerce").mean())
     normal_years = _weather_normal_years(ordered)
-    as_of = str(ordered.iloc[-1].get("as_of") or "").strip() or "n/a"
+    as_of = _format_as_of_date(ordered.iloc[-1].get("as_of"))
     heating_direction = "above" if total_delta_hdd > 0 else "below" if total_delta_hdd < 0 else "near"
     cooling_direction = "above" if total_delta_cdd > 0 else "below" if total_delta_cdd < 0 else "near"
-    demand_direction = "higher" if avg_demand_delta > 0 else "lower" if avg_demand_delta < 0 else "about flat"
-    net_effect = "up" if avg_demand_delta > 0 else "down" if avg_demand_delta < 0 else "unchanged"
+    demand_direction = "higher" if avg_demand_delta > 0 else "lower" if avg_demand_delta < 0 else "about the same"
+    demand_move = "increase" if avg_demand_delta > 0 else "decrease" if avg_demand_delta < 0 else "little change"
+    weather_takeaway = (
+        "overall cooler than normal"
+        if total_delta_hdd > 0 and total_delta_cdd <= 0
+        else "overall warmer than normal"
+        if total_delta_hdd < 0 and total_delta_cdd >= 0
+        else "mixed versus normal"
+    )
     return (
-        f"As of {as_of}, compared with the rolling {normal_years}-year average for days 1-15, "
-        f"expected heating need is {abs(total_delta_hdd):.1f} degree-days {heating_direction} normal "
-        f"and expected cooling (A/C) need is {abs(total_delta_cdd):.1f} degree-days {cooling_direction} normal. "
-        f"In plain terms, weather is likely to push natural gas demand {net_effect} by about "
-        f"{abs(avg_demand_delta):.2f} Bcf/d versus normal ({demand_direction} than normal)."
+        f"As of {as_of}, the next 15 days look {weather_takeaway} versus the {normal_years}-year average. "
+        f"Heating need is {abs(total_delta_hdd):.1f} degree-days {heating_direction} normal, "
+        f"and cooling demand is {abs(total_delta_cdd):.1f} degree-days {cooling_direction} normal. "
+        f"For natural gas, this weather setup points to a {demand_move} of about {abs(avg_demand_delta):.2f} Bcf/d, "
+        f"so demand is expected to be {demand_direction} than normal."
     )
 
 
@@ -798,6 +902,91 @@ def _weather_degree_day_forecast_structured_answer(
         forecast=AnswerForecast(
             direction=direction,
             reasoning=f"Direction reflects average weather-driven demand delta versus a rolling {normal_years}-year normal across forecast buckets.",
+        ),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
+def _supply_balance_regime_answer(df: pd.DataFrame) -> str:
+    if not _is_supply_balance_regime_view("ng_supply_balance_regime", df):
+        return "No data was returned for the requested period."
+
+    row = df.iloc[-1]
+    as_of = _format_as_of_date(row.get("date"))
+    regime = str(row.get("regime") or "mixed").strip().lower()
+    if regime not in {"expanding", "tightening", "mixed"}:
+        regime = "mixed"
+    production_delta_pct = float(pd.to_numeric(row.get("production_delta_pct"), errors="coerce") or 0.0)
+    storage_weekly_change = float(pd.to_numeric(row.get("storage_weekly_change"), errors="coerce") or 0.0)
+    weather_demand_delta = float(pd.to_numeric(row.get("weather_demand_delta_bcfd"), errors="coerce") or 0.0)
+    direction_text = {
+        "expanding": "supply appears to be expanding overall",
+        "tightening": "supply appears to be tightening overall",
+        "mixed": "signals are mixed, so supply is not clearly expanding or tightening",
+    }[regime]
+
+    return (
+        f"As of {as_of}, {direction_text}. "
+        f"Production changed {production_delta_pct:+.2f}% versus the prior reading, "
+        f"latest weekly storage change was {storage_weekly_change:+.1f} Bcf, "
+        f"and weather-driven demand pressure is {weather_demand_delta:+.2f} Bcf/d versus normal."
+    )
+
+
+def _supply_balance_regime_structured_answer(
+    *,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _supply_balance_regime_answer(df)
+    if answer == "No data was returned for the requested period.":
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No supply-balance regime data was returned for the requested period.",
+            drivers=["The derived supply-balance pipeline did not return usable component metrics."],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no observations were returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    row = df.iloc[-1]
+    regime = str(row.get("regime") or "mixed").strip().lower()
+    score = float(pd.to_numeric(row.get("score"), errors="coerce") or 0.0)
+    production_delta_pct = float(pd.to_numeric(row.get("production_delta_pct"), errors="coerce") or 0.0)
+    storage_weekly_change = float(pd.to_numeric(row.get("storage_weekly_change"), errors="coerce") or 0.0)
+    weather_demand_delta = float(pd.to_numeric(row.get("weather_demand_delta_bcfd"), errors="coerce") or 0.0)
+
+    signal_status = "bullish" if regime == "tightening" else "bearish" if regime == "expanding" else "neutral"
+    confidence = max(0.55, min(0.9, 0.55 + (abs(score) * 0.1)))
+    direction = "up" if regime == "tightening" else "down" if regime == "expanding" else "flat"
+
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status=signal_status, confidence=round(confidence, 2)),
+        summary=answer,
+        drivers=[
+            "Production trend indicates whether upstream supply is growing or contracting.",
+            "Weekly storage change captures near-term inventory build or withdrawal pressure.",
+            "Weather demand delta approximates demand pull versus normal conditions.",
+        ],
+        data_points=[
+            AnswerDataPoint(metric="Regime Score", value=round(score, 3), unit="index"),
+            AnswerDataPoint(metric="Production Delta", value=round(production_delta_pct, 3), unit="%"),
+            AnswerDataPoint(metric="Latest Storage Change", value=round(storage_weekly_change, 3), unit="Bcf"),
+            AnswerDataPoint(metric="Weather Demand Delta", value=round(weather_demand_delta, 3), unit="Bcf/d"),
+        ],
+        forecast=AnswerForecast(
+            direction=direction,
+            reasoning="Direction reflects the combined production, storage, and weather-demand signals.",
         ),
         suggested_alerts=[],
         alerts=[],
@@ -1143,6 +1332,27 @@ def build_answer_with_openai(
         )
         return payload
 
+    if _is_supply_balance_regime_view(metric, df):
+        answer_text = _supply_balance_regime_answer(df)
+        chart_spec = None
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_supply_balance_regime_structured_answer(
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="supply_balance_regime_no_rag",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
     if df is not None and not df.empty and _is_text_metric(metric, df):
         if "date" in df.columns:
             df = df.sort_values("date").reset_index(drop=True)
@@ -1253,7 +1463,9 @@ def build_answer_with_openai(
 
         llm_payload = _extract_json_object(resp.output_text or "")
         if llm_payload is not None:
-            structured_response = _normalize_structured_response(llm_payload)
+            structured_response = _normalize_structured_response(
+                llm_payload, metric=metric, query=query
+            )
         answer_text = structured_response.answer or structured_response.summary
     else:
         answer_text = _deterministic_answer_text(
