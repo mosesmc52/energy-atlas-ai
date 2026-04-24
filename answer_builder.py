@@ -161,6 +161,23 @@ def _dedupe_report_sources(chunks: list[dict]) -> list[AnswerSourceSummary]:
     return sources
 
 
+def _is_report_narrative_query(query: str) -> bool:
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    cues = (
+        "report",
+        "tell us",
+        "what does",
+        "market balance",
+        "fundamentals",
+        "tightening",
+        "loosening",
+        "implication",
+    )
+    return any(cue in q for cue in cues)
+
+
 def _build_report_rag_context(
     query: str, *, top_k: int = 4
 ) -> tuple[str, list[AnswerSourceSummary], bool, str]:
@@ -488,6 +505,75 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
             for item in (payload.get("sources") or [])
             if isinstance(item, dict) and str(item.get("title") or "").strip()
         ],
+    )
+
+
+def _is_low_value_no_context_text(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    bad_phrases = (
+        "driver attribution not supported",
+        "no narrative",
+        "no fundamental context",
+        "context retrieved",
+        "cannot attribute",
+    )
+    return any(phrase in t for phrase in bad_phrases)
+
+
+def _data_only_driver(metric: str, facts: dict[str, Any]) -> str:
+    latest_value = facts.get("latest_value")
+    delta = facts.get("delta")
+    unit = METRIC_UNITS.get(metric, "")
+    latest_value_text = _format_number(latest_value)
+    delta_text = _format_delta(delta, unit)
+    unit_suffix = f" {unit}" if unit else ""
+    if latest_value is None:
+        return "No narrative report context was retrieved; this answer uses observed market data only."
+    if delta_text:
+        return f"Observed move only: latest value is {latest_value_text}{unit_suffix}, {delta_text}."
+    return f"Observed move only: latest value is {latest_value_text}{unit_suffix}."
+
+
+def _improve_no_context_language(
+    *,
+    structured_response: StructuredAnswer,
+    metric: str,
+    facts: dict[str, Any],
+    report_context_used: bool,
+) -> StructuredAnswer:
+    if report_context_used:
+        return structured_response
+
+    cleaned_drivers = [
+        d for d in structured_response.drivers if not _is_low_value_no_context_text(d)
+    ]
+    if not cleaned_drivers:
+        cleaned_drivers = [_data_only_driver(metric, facts)]
+    elif all(_is_low_value_no_context_text(d) for d in structured_response.drivers):
+        cleaned_drivers = [_data_only_driver(metric, facts)]
+
+    summary = structured_response.summary
+    if _is_low_value_no_context_text(summary):
+        summary = (
+            f"{_coerce_text(structured_response.answer)} "
+            "Narrative report context was not retrieved, so this is based on observed market data."
+        ).strip()
+
+    answer = structured_response.answer
+    if _is_low_value_no_context_text(answer):
+        answer = (
+            f"{_coerce_text(structured_response.summary)} "
+            "Narrative report context was not retrieved, so this is based on observed market data."
+        ).strip()
+
+    return structured_response.model_copy(
+        update={
+            "drivers": cleaned_drivers,
+            "summary": summary,
+            "answer": answer,
+        }
     )
 
 
@@ -1236,6 +1322,20 @@ def build_answer_with_openai(
     report_context_sources: list[AnswerSourceSummary] = []
     report_context_used = False
     report_context_reason = "llm_narration_disabled"
+    use_llm_narration = (
+        os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    prefer_report_narration = (
+        use_llm_narration
+        and _is_report_narrative_query(query)
+        and metric
+        in {
+            "working_gas_storage_lower48",
+            "working_gas_storage_change_weekly",
+            "ng_supply_balance_regime",
+        }
+    )
 
     if metric == "ng_consumption_by_sector":
         answer_text = _deterministic_sector_consumption_answer(query=query, df=df)
@@ -1261,7 +1361,7 @@ def build_answer_with_openai(
         )
         return payload
 
-    if _is_regional_storage_change_view(metric, df):
+    if _is_regional_storage_change_view(metric, df) and not prefer_report_narration:
         answer_text = _regional_storage_change_answer(df, query=query)
         if df is not None and "date" in df.columns:
             df = df.sort_values(["date", "region"]).reset_index(drop=True)
@@ -1285,7 +1385,7 @@ def build_answer_with_openai(
         )
         return payload
 
-    if _is_storage_level_and_change_view(metric, df):
+    if _is_storage_level_and_change_view(metric, df) and not prefer_report_narration:
         answer_text = _storage_level_and_change_answer(df, region_label=region_label)
         if df is not None and "date" in df.columns:
             df = df.sort_values("date").reset_index(drop=True)
@@ -1332,7 +1432,7 @@ def build_answer_with_openai(
         )
         return payload
 
-    if _is_supply_balance_regime_view(metric, df):
+    if _is_supply_balance_regime_view(metric, df) and not prefer_report_narration:
         answer_text = _supply_balance_regime_answer(df)
         chart_spec = None
         payload = AnswerPayload(
@@ -1415,11 +1515,6 @@ def build_answer_with_openai(
         }
 
     # 2) Prefer deterministic narration for routine latest/delta summaries.
-    use_llm_narration = (
-        os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
-
     structured_response = _build_structured_answer(
         metric=metric,
         query=query,
@@ -1465,6 +1560,12 @@ def build_answer_with_openai(
         if llm_payload is not None:
             structured_response = _normalize_structured_response(
                 llm_payload, metric=metric, query=query
+            )
+            structured_response = _improve_no_context_language(
+                structured_response=structured_response,
+                metric=metric,
+                facts=facts,
+                report_context_used=report_context_used,
             )
         answer_text = structured_response.answer or structured_response.summary
     else:

@@ -17,6 +17,9 @@ class TestReportRag(unittest.TestCase):
         self.assertTrue(
             should_use_report_rag("Why is the natural gas market tightening?")
         )
+        self.assertTrue(
+            should_use_report_rag("What drove henry hub price movement this week?")
+        )
         self.assertFalse(should_use_report_rag("What is current storage?"))
 
     def test_load_and_search_report_chunks(self) -> None:
