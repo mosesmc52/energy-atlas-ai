@@ -1,5 +1,8 @@
 import unittest
+from datetime import date
 from unittest.mock import patch
+
+import pandas as pd
 
 from agents.router import LLMRouteOutput
 from agents.router import route_query
@@ -131,6 +134,83 @@ class TestRouter(unittest.TestCase):
             result.filters,
             {"region": "east", "include_weekly_change": True},
         )
+
+    def test_degree_day_forecast_routes_to_weather_metric(self) -> None:
+        result = route_query(
+            "How do current cooling/heating degree day forecasts compare to the 5-year average, and what impact does this have on natural gas demand?"
+        )
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "lower48", "normal_years": 5})
+
+    def test_degree_day_forecast_routes_requested_normal_window(self) -> None:
+        result = route_query("How do HDD forecasts compare to the 3-year average?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "lower48", "normal_years": 3})
+
+    def test_degree_day_forecast_routes_four_year_normal_window(self) -> None:
+        result = route_query("How do HDD forecasts compare to the 4-year average?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertEqual(result.filters, {"region": "lower48", "normal_years": 4})
+
+    def test_supply_expanding_or_tightening_routes_to_supply_balance_metric(self) -> None:
+        result = route_query("Is U.S. gas supply expanding or tightening?")
+        self.assertEqual(result.primary_metric, "ng_supply_balance_regime")
+        self.assertEqual(result.filters, {"region": "united_states_total"})
+
+    def test_weather_demand_next_7_14_days_routes_to_weather_metric(self) -> None:
+        result = route_query("How will weather impact natural gas demand over the next 7-14 days?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+
+    def test_weather_regions_driving_routes_to_weather_metric(self) -> None:
+        result = route_query("Which regions are driving weather-related demand right now?")
+        self.assertEqual(result.primary_metric, "weather_regional_demand_drivers")
+
+    def test_weather_bullish_bearish_routes_to_weather_metric(self) -> None:
+        result = route_query("Is the weather forecast becoming more bullish or bearish compared to last week?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+
+    def test_weather_vs_seasonal_norms_routes_to_weather_metric(self) -> None:
+        result = route_query("How does the current weather forecast compare to seasonal norms?")
+        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+
+    def test_power_burn_vs_seasonal_norms_routes_to_ng_electricity(self) -> None:
+        result = route_query(
+            "What is current natural gas power burn, and how does it compare to seasonal norms?"
+        )
+        self.assertEqual(result.primary_metric, "ng_electricity")
+        expected_start = (pd.Timestamp(date.today()) - pd.DateOffset(years=5)).date().isoformat()
+        self.assertEqual(result.start, expected_start)
+        self.assertEqual(result.filters, {"normal_years": 5})
+
+    def test_percentage_generation_from_gas_routes_to_iso_gas_dependency(self) -> None:
+        result = route_query(
+            "What percentage of electricity generation is coming from natural gas, and how is that changing?"
+        )
+        self.assertEqual(result.primary_metric, "iso_gas_dependency")
+
+    def test_renewables_impact_on_power_sector_gas_demand_routes_to_iso_gas_dependency(self) -> None:
+        result = route_query(
+            "Are renewables increasing or decreasing natural gas demand in the power sector?"
+        )
+        self.assertEqual(result.primary_metric, "iso_gas_dependency")
+
+    def test_consumption_query_defaults_to_two_year_window_without_explicit_dates(self) -> None:
+        result = route_query("How is gas consumption in California?")
+        expected_start = (pd.Timestamp(date.today()) - pd.DateOffset(years=2)).date().isoformat()
+        self.assertEqual(result.primary_metric, "ng_consumption_lower48")
+        self.assertEqual(result.start, expected_start)
+
+    def test_consumption_query_honors_last_year_phrase(self) -> None:
+        result = route_query("How is gas consumption in California over the last year?")
+        expected_start = (pd.Timestamp(date.today()) - pd.DateOffset(years=1)).date().isoformat()
+        self.assertEqual(result.primary_metric, "ng_consumption_lower48")
+        self.assertEqual(result.start, expected_start)
+
+    def test_ng_electricity_query_defaults_to_two_year_window_without_explicit_dates(self) -> None:
+        result = route_query("What is current natural gas power burn?")
+        expected_start = (pd.Timestamp(date.today()) - pd.DateOffset(years=2)).date().isoformat()
+        self.assertEqual(result.primary_metric, "ng_electricity")
+        self.assertEqual(result.start, expected_start)
 
 
 if __name__ == "__main__":

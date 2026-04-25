@@ -30,6 +30,7 @@ DATABASE_URL=sqlite:///app/alerts.sqlite3
 
 STRIPE_TEST_SECRET_KEY=sk_test_...
 STRIPE_LIVE_MODE=false
+ATLAS_WEATHER_CSV_PATH=data/raw/noaa/regional/daily_region_weather.csv
 ```
 
 If you run Stripe webhooks locally with the Stripe CLI, you may also want:

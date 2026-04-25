@@ -178,6 +178,8 @@ remote "set -euo pipefail;
 
   \$DC -f docker/docker-compose.production.yml build
   \$DC -f docker/docker-compose.production.yml up -d
+  \$DC -f docker/docker-compose.production.yml run --rm scheduler \
+    python /workspace/scripts/noaa/download_and_aggregate_ghcnd.py --region all
   \$DC -f docker/docker-compose.production.yml ps"
 
 echo "==> Update complete: ${USER_NAME}@${HOST}:${REMOTE_DIR}"

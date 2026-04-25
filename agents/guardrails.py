@@ -32,6 +32,10 @@ NATURAL_GAS_CONTEXT_TERMS = {
     "des",
     "power plants",
     "electric power",
+    "weather",
+    "hdd",
+    "cdd",
+    "degree day",
 }
 
 OUT_OF_SCOPE_ENERGY_TERMS = {

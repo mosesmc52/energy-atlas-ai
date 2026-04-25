@@ -1,6 +1,7 @@
 # atlas/tools/gridstatus_adapter.py
 from __future__ import annotations
 
+import inspect
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -373,8 +374,12 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
         iso_obj = self._get_iso_client(iso)
 
         if which == "iso_fuel_mix":
-            # gridstatus API typically supports ISO.get_fuel_mix(start=..., end=...)
-            df = iso_obj.get_fuel_mix(start=start, end=end)
+            df = self._call_iso_timeseries_window(
+                iso_obj=iso_obj,
+                method_name="get_fuel_mix",
+                start=start,
+                end=end,
+            )
             return self._normalize_gridstatus_df(
                 df, time_col_candidates=("time", "timestamp", "interval_start", "date")
             )
@@ -382,7 +387,12 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
         if which == "iso_load":
             # gridstatus API varies; many ISOs provide get_load(...)
             # We normalize to ['date','value'] as MW load.
-            df = iso_obj.get_load(start=start, end=end)
+            df = self._call_iso_timeseries_window(
+                iso_obj=iso_obj,
+                method_name="get_load",
+                start=start,
+                end=end,
+            )
             df = self._normalize_gridstatus_df(
                 df, time_col_candidates=("time", "timestamp", "interval_start", "date")
             )
@@ -469,6 +479,57 @@ class GridStatusAdapter(CacheBackedTimeseriesAdapterBase):
         raise ValueError(
             f"Unsupported ISO '{iso}'. Add a mapping in GridStatusAdapter._get_iso_client()."
         )
+
+    def _call_iso_timeseries_window(
+        self,
+        *,
+        iso_obj: Any,
+        method_name: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame:
+        """
+        Call a GridStatus ISO method across a date window with signature fallbacks.
+
+        GridStatus method signatures vary across ISOs and versions:
+        - get_*(start=..., end=...)
+        - get_*(date=..., end=...)
+        - get_*(date=...) only
+        """
+        method = getattr(iso_obj, method_name)
+        sig = inspect.signature(method)
+        params = sig.parameters
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+
+        # Common case: explicit start/end keywords.
+        if "start" in params and "end" in params:
+            return method(start=start, end=end)
+
+        # Alternate API shape: date + end.
+        if "date" in params and "end" in params:
+            return method(date=start, end=end)
+
+        # Date-only shape (e.g., some ERCOT methods): fetch day-by-day and combine.
+        if "date" in params:
+            days = pd.date_range(start_ts.normalize(), end_ts.normalize(), freq="D")
+            frames: list[pd.DataFrame] = []
+            for day in days:
+                try:
+                    frame = method(date=day.date())
+                except TypeError:
+                    # Some implementations accept pandas Timestamp directly.
+                    frame = method(date=day)
+                if frame is None:
+                    continue
+                if isinstance(frame, pd.DataFrame) and not frame.empty:
+                    frames.append(frame)
+            if not frames:
+                return pd.DataFrame()
+            return pd.concat(frames, ignore_index=True)
+
+        # Last-resort no-arg call.
+        return method()
 
     def _normalize_gridstatus_df(
         self,

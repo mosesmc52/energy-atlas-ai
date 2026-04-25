@@ -70,6 +70,7 @@ METRICS: Final[tuple[str, ...]] = (
     "ng_production_lower48",
     "ng_exploration_reserves_lower48",
     "ng_pipeline",
+    "weather_degree_days_forecast_vs_5y",
 )
 
 ISO_FILTERS: Final[tuple[str, ...]] = (
@@ -87,6 +88,8 @@ REGION_FILTERS: Final[tuple[str, ...]] = (
     "south_central",
     "mountain",
     "pacific",
+    "south",
+    "west",
     "united_states_pipeline_total",
     "canada_compressed",
     "united_states_compressed_total",
@@ -273,6 +276,7 @@ METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
     "ng_production_lower48": "Dry natural gas production/supply; supports allowed state filters and united_states_total.",
     "ng_exploration_reserves_lower48": "Natural gas exploration/proved reserves; supports allowed state and resource_category filters.",
     "ng_pipeline": "Parquet-backed natural gas pipeline datasets such as projects, inflow/outflow by region or state, major pipeline summary, and state-to-state capacity; supports dataset filter.",
+    "weather_degree_days_forecast_vs_5y": "Weather degree-day forecast versus rolling 5-year normal (HDD/CDD) for 1-5, 6-10, and 11-15 day buckets, including estimated gas demand impact.",
 }
 
 _ALLOWED_INTENTS = set(INTENTS)
@@ -334,8 +338,20 @@ def _build_route_schema() -> Dict[str, Any]:
                                     {"type": "null"},
                                 ]
                             },
+                            "normal_years": {
+                                "anyOf": [
+                                    {"type": "integer", "enum": [1, 2, 3, 5]},
+                                    {"type": "null"},
+                                ]
+                            },
                         },
-                        "required": ["iso", "region", "resource_category", "dataset"],
+                        "required": [
+                            "iso",
+                            "region",
+                            "resource_category",
+                            "dataset",
+                            "normal_years",
+                        ],
                     },
                     {"type": "null"},
                 ]
@@ -455,10 +471,10 @@ def _clamp_confidence(value: Any) -> float:
     return max(0.0, min(1.0, parsed))
 
 
-def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
+def _normalize_filters(filters: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(filters, dict):
         return None
-    out: Dict[str, str] = {}
+    out: Dict[str, Any] = {}
     iso = filters.get("iso")
     region = filters.get("region")
     resource_category = filters.get("resource_category")
@@ -474,6 +490,9 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, str]]:
         out["resource_category"] = resource_category
     if isinstance(dataset, str) and dataset in DATASET_FILTERS:
         out["dataset"] = dataset
+    normal_years = filters.get("normal_years")
+    if isinstance(normal_years, int) and normal_years in {1, 2, 3, 5}:
+        out["normal_years"] = normal_years
     return out or None
 
 
