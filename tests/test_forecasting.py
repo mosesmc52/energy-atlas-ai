@@ -62,3 +62,22 @@ class TestForecasting(unittest.TestCase):
 
         self.assertIsNone(result.error_code)
         self.assertEqual(len(result.forecast_points), 7)
+
+    def test_forecast_supports_non_value_metric_columns(self) -> None:
+        dates = pd.date_range("2025-01-01", periods=30, freq="D")
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "gas_share": [0.30 + (idx * 0.001) for idx in range(30)],
+                "gas_generation": [1000 + idx for idx in range(30)],
+            }
+        )
+
+        result = forecast_linear_trend(
+            df,
+            metric="iso_gas_dependency",
+            horizon_days=7,
+        )
+
+        self.assertIsNone(result.error_code)
+        self.assertEqual(len(result.forecast_points), 7)

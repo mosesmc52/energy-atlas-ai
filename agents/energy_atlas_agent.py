@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Callable, Optional
 
 from agents.agent_policy import AgentPolicy, load_agent_policy
+from agents.metric_capabilities import get_metric_capability
 from agents.router import HybridRouteResult, route_query
 from executer import ExecuteRequest, MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
@@ -53,6 +54,41 @@ class EnergyAtlasAgent:
         self._route_fn = route_fn
         self._answer_builder_fn = answer_builder_fn
 
+    def _execute_with_fallback(self, *, route: HybridRouteResult) -> MetricResult:
+        req = ExecuteRequest(
+            metric=route.primary_metric or "",
+            start=route.start,
+            end=route.end,
+            filters=route.filters,
+        )
+        result = self.executor.execute(req)
+
+        metric = str(route.primary_metric or "")
+        capability = get_metric_capability(metric)
+        if (
+            capability.fallback_metric
+            and (result.df is None or len(result.df) == 0)
+        ):
+            proxy_req = ExecuteRequest(
+                metric=capability.fallback_metric,
+                start=route.start,
+                end=route.end,
+                filters={},
+            )
+            proxy_result = self.executor.execute(proxy_req)
+            if proxy_result.meta is None:
+                proxy_result.meta = {}
+            proxy_result.meta.update(
+                {
+                    "proxy_for_metric": metric,
+                    "proxy_note": capability.fallback_note
+                    or f"Primary metric '{metric}' unavailable; using '{capability.fallback_metric}' as proxy.",
+                }
+            )
+            return proxy_result
+
+        return result
+
     def run(
         self,
         *,
@@ -73,36 +109,11 @@ class EnergyAtlasAgent:
             )
 
         execute_started = perf_counter()
-        req = ExecuteRequest(
-            metric=route.primary_metric,
-            start=route.start,
-            end=route.end,
-            filters=route.filters,
-        )
-        result = self.executor.execute(req)
-
-        # Fallback: if ISO gas-share data is unavailable, use EIA power-burn trend as proxy.
-        if route.primary_metric == "iso_gas_dependency" and (result.df is None or len(result.df) == 0):
-            proxy_req = ExecuteRequest(
-                metric="ng_electricity",
-                start=route.start,
-                end=route.end,
-                filters={},
-            )
-            proxy_result = self.executor.execute(proxy_req)
-            if proxy_result.meta is None:
-                proxy_result.meta = {}
-            proxy_result.meta.update(
-                {
-                    "proxy_for_metric": "iso_gas_dependency",
-                    "proxy_note": "Direct ISO gas-share data unavailable; using natural gas power-burn trend as proxy.",
-                }
-            )
-            result = proxy_result
+        result = self._execute_with_fallback(route=route)
         execute_ms = (perf_counter() - execute_started) * 1000
 
         forecast = None
-        metric = str(route.primary_metric or "")
+        metric = str((result.meta or {}).get("metric") or route.primary_metric or "")
         forecast_requested = bool(route.include_forecast) or (
             metric in self.policy.force_forecast_metrics
         )
@@ -114,7 +125,7 @@ class EnergyAtlasAgent:
             horizon_days = max(1, min(int(requested_horizon), int(self.policy.max_forecast_horizon_days)))
             forecast = forecaster.forecast_dataframe(
                 result.df,
-                metric=route.primary_metric,
+                metric=metric,
                 horizon_days=horizon_days,
                 include_overlay=True,
                 source_reference=result.source.reference,
