@@ -97,6 +97,7 @@ METRIC_UNITS = {
     "managed_money_net_percentile_156w": "percentile",
     "open_interest": "contracts",
     "weather_degree_days_forecast_vs_5y": "degree-days",
+    "weather_regional_demand_drivers": "Bcf/d",
 }
 
 SECTOR_LABELS = {
@@ -866,6 +867,21 @@ def _is_weather_degree_day_forecast_view(metric: str, df: pd.DataFrame | None) -
     )
 
 
+def _is_weather_regional_demand_drivers_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "weather_regional_demand_drivers"
+        and df is not None
+        and not df.empty
+        and {
+            "region",
+            "demand_delta_bcfd",
+            "total_delta_hdd",
+            "total_delta_cdd",
+            "date",
+        }.issubset(df.columns)
+    )
+
+
 def _is_supply_balance_regime_view(metric: str, df: pd.DataFrame | None) -> bool:
     return bool(
         metric == "ng_supply_balance_regime"
@@ -906,7 +922,7 @@ def _format_as_of_date(raw_value: Any) -> str:
     return f"{ts.strftime('%B')} {ts.day}, {ts.year}"
 
 
-def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
+def _weather_degree_day_forecast_answer(df: pd.DataFrame, *, query: str = "") -> str:
     if not _is_weather_degree_day_forecast_view("weather_degree_days_forecast_vs_5y", df):
         return "No data was returned for the requested period."
     ordered = df.copy()
@@ -919,6 +935,7 @@ def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
     avg_demand_delta = float(pd.to_numeric(ordered["demand_delta_bcfd"], errors="coerce").mean())
     normal_years = _weather_normal_years(ordered)
     as_of = _format_as_of_date(ordered.iloc[-1].get("as_of"))
+    q = (query or "").strip().lower().replace("–", "-").replace("—", "-")
     heating_direction = "above" if total_delta_hdd > 0 else "below" if total_delta_hdd < 0 else "near"
     cooling_direction = "above" if total_delta_cdd > 0 else "below" if total_delta_cdd < 0 else "near"
     demand_direction = "higher" if avg_demand_delta > 0 else "lower" if avg_demand_delta < 0 else "about the same"
@@ -930,6 +947,42 @@ def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
         if total_delta_hdd < 0 and total_delta_cdd >= 0
         else "mixed versus normal"
     )
+    if ("which regions" in q and "driving" in q) or ("regions" in q and "weather-related demand" in q):
+        return (
+            f"As of {as_of}, this weather view is a Lower 48 aggregate and does not split demand impact by region. "
+            f"At the aggregate level, weather is {weather_takeaway} versus the {normal_years}-year normal, "
+            f"implying demand {demand_direction} than normal by about {abs(avg_demand_delta):.2f} Bcf/d. "
+            "For regional drivers, ask the same question by region (East, Midwest, South, or West)."
+        )
+
+    asks_7_14 = bool(re.search(r"\b7\s*-\s*14\b", q)) or ("7 to 14" in q)
+    if asks_7_14:
+        mid_range = ordered.loc[ordered["bucket_start_day"] >= 6].copy()
+        mid_range_delta = float(
+            pd.to_numeric(mid_range["demand_delta_bcfd"], errors="coerce").mean()
+        ) if not mid_range.empty else avg_demand_delta
+        mid_direction = (
+            "higher"
+            if mid_range_delta > 0
+            else "lower"
+            if mid_range_delta < 0
+            else "about the same"
+        )
+        return (
+            f"As of {as_of}, weather over roughly days 7-14 (proxied with forecast buckets days 6-15) "
+            f"is likely to keep natural gas demand {mid_direction} than normal by about "
+            f"{abs(mid_range_delta):.2f} Bcf/d."
+        )
+
+    asks_bull_bear = ("bullish" in q or "bearish" in q or "compared to last week" in q)
+    if asks_bull_bear:
+        stance = "bullish" if avg_demand_delta > 0 else "bearish" if avg_demand_delta < 0 else "neutral"
+        return (
+            f"As of {as_of}, the current weather signal is {stance} for gas demand "
+            f"({demand_direction} than normal by about {abs(avg_demand_delta):.2f} Bcf/d). "
+            "A strict week-over-week forecast comparison is not available from the current weather snapshot alone."
+        )
+
     return (
         f"As of {as_of}, the next 15 days look {weather_takeaway} versus the {normal_years}-year average. "
         f"Heating need is {abs(total_delta_hdd):.1f} degree-days {heating_direction} normal, "
@@ -942,10 +995,11 @@ def _weather_degree_day_forecast_answer(df: pd.DataFrame) -> str:
 def _weather_degree_day_forecast_structured_answer(
     *,
     df: pd.DataFrame,
+    query: str,
     source_label: str,
     source_date: Optional[str],
 ) -> StructuredAnswer:
-    answer = _weather_degree_day_forecast_answer(df)
+    answer = _weather_degree_day_forecast_answer(df, query=query)
     if answer == "No data was returned for the requested period.":
         return StructuredAnswer(
             answer=answer,
@@ -988,6 +1042,97 @@ def _weather_degree_day_forecast_structured_answer(
         forecast=AnswerForecast(
             direction=direction,
             reasoning=f"Direction reflects average weather-driven demand delta versus a rolling {normal_years}-year normal across forecast buckets.",
+        ),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
+def _weather_regional_demand_drivers_answer(df: pd.DataFrame) -> str:
+    if not _is_weather_regional_demand_drivers_view("weather_regional_demand_drivers", df):
+        return "No data was returned for the requested period."
+    ordered = df.copy()
+    ordered["demand_delta_bcfd"] = pd.to_numeric(ordered["demand_delta_bcfd"], errors="coerce")
+    ordered["total_delta_hdd"] = pd.to_numeric(ordered["total_delta_hdd"], errors="coerce")
+    ordered["total_delta_cdd"] = pd.to_numeric(ordered["total_delta_cdd"], errors="coerce")
+    ordered = ordered.dropna(subset=["demand_delta_bcfd"]).copy()
+    if ordered.empty:
+        return "No data was returned for the requested period."
+    ordered["abs_demand_delta_bcfd"] = ordered["demand_delta_bcfd"].abs()
+    ordered = ordered.sort_values("abs_demand_delta_bcfd", ascending=False)
+    top = ordered.iloc[0]
+    as_of = _format_as_of_date(top.get("date"))
+    top_region = str(top["region"]).replace("_", " ").title()
+    top_delta = float(top["demand_delta_bcfd"])
+    direction = "higher" if top_delta > 0 else "lower" if top_delta < 0 else "flat"
+
+    lines = []
+    for _, row in ordered.iterrows():
+        region = str(row["region"]).replace("_", " ").title()
+        delta = float(row["demand_delta_bcfd"])
+        region_dir = "up" if delta > 0 else "down" if delta < 0 else "flat"
+        lines.append(f"{region} ({region_dir} {abs(delta):.2f} Bcf/d)")
+
+    return (
+        f"As of {as_of}, {top_region} is the largest weather-driven demand driver "
+        f"({direction} by about {abs(top_delta):.2f} Bcf/d versus normal). "
+        f"Regional ranking: {', '.join(lines)}."
+    )
+
+
+def _weather_regional_demand_drivers_structured_answer(
+    *,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _weather_regional_demand_drivers_answer(df)
+    if answer == "No data was returned for the requested period.":
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No regional weather-demand driver data was returned for the requested period.",
+            drivers=["Regional weather-demand ranking could not be computed from the available forecast data."],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no regional weather-demand data was returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    ordered = df.copy()
+    ordered["demand_delta_bcfd"] = pd.to_numeric(ordered["demand_delta_bcfd"], errors="coerce")
+    ordered = ordered.dropna(subset=["demand_delta_bcfd"])
+    ordered["abs_demand_delta_bcfd"] = ordered["demand_delta_bcfd"].abs()
+    ordered = ordered.sort_values("abs_demand_delta_bcfd", ascending=False)
+    avg_delta = float(ordered["demand_delta_bcfd"].mean()) if not ordered.empty else 0.0
+    signal_status = "bullish" if avg_delta > 0 else "bearish" if avg_delta < 0 else "neutral"
+    direction = "up" if avg_delta > 0 else "down" if avg_delta < 0 else "flat"
+
+    data_points = [
+        AnswerDataPoint(
+            metric=str(row["region"]).replace("_", " ").title(),
+            value=round(float(row["demand_delta_bcfd"]), 3),
+            unit="Bcf/d",
+        )
+        for _, row in ordered.iterrows()
+    ]
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status=signal_status, confidence=0.8),
+        summary=answer,
+        drivers=[
+            "Ranking reflects average regional weather-demand delta versus normal across forecast buckets.",
+            "Positive values indicate weather that tends to raise gas demand; negative values indicate softer demand pressure.",
+        ],
+        data_points=data_points,
+        forecast=AnswerForecast(
+            direction=direction,
+            reasoning="Direction reflects the average of regional weather-demand deltas versus normal.",
         ),
         suggested_alerts=[],
         alerts=[],
@@ -1301,6 +1446,76 @@ def _deterministic_answer_text(
     )
 
 
+def _ng_electricity_seasonal_norm_summary(
+    *,
+    df: pd.DataFrame,
+    normal_years: int,
+) -> Optional[dict[str, Any]]:
+    if df is None or df.empty or "date" not in df.columns or "value" not in df.columns:
+        return None
+
+    ordered = df.copy()
+    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+    ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
+    if ordered.empty:
+        return None
+
+    latest = ordered.iloc[-1]
+    latest_date = pd.Timestamp(latest["date"])
+    latest_value = float(latest["value"])
+
+    hist = ordered[ordered["date"] < latest_date].copy()
+    if hist.empty:
+        return None
+
+    cutoff = latest_date - pd.DateOffset(years=max(1, int(normal_years)))
+    hist = hist[hist["date"] >= cutoff]
+    hist = hist[hist["date"].dt.month == latest_date.month]
+    if hist.empty:
+        return None
+
+    normal_value = float(hist["value"].mean())
+    delta_vs_normal = latest_value - normal_value
+    pct_vs_normal = None
+    if normal_value != 0:
+        pct_vs_normal = (delta_vs_normal / normal_value) * 100.0
+
+    samples = int(len(hist))
+    direction = "above" if delta_vs_normal > 0 else "below" if delta_vs_normal < 0 else "in line with"
+    month_label = latest_date.strftime("%B %Y")
+    normal_label = f"{max(1, int(normal_years))}-year seasonal norm"
+
+    if direction == "in line with":
+        text = (
+            f"As of {latest_date.date().isoformat()}, natural gas power burn was "
+            f"{_format_number(latest_value)} MMcf, essentially in line with its {normal_label} "
+            f"for {month_label} ({_format_number(normal_value)} MMcf)."
+        )
+    else:
+        pct_text = (
+            f" ({abs(pct_vs_normal):.1f}% {direction} normal)"
+            if pct_vs_normal is not None
+            else ""
+        )
+        text = (
+            f"As of {latest_date.date().isoformat()}, natural gas power burn was "
+            f"{_format_number(latest_value)} MMcf, {direction} the {normal_label} for {month_label} "
+            f"({_format_number(normal_value)} MMcf) by {_format_number(abs(delta_vs_normal))} MMcf{pct_text}."
+        )
+
+    return {
+        "text": text,
+        "latest_date": latest_date.date().isoformat(),
+        "latest_value": latest_value,
+        "normal_value": normal_value,
+        "delta_vs_normal": delta_vs_normal,
+        "pct_vs_normal": pct_vs_normal,
+        "normal_years": max(1, int(normal_years)),
+        "samples": samples,
+    }
+
+
 def build_answer_with_openai(
     *,
     query: str,
@@ -1312,6 +1527,8 @@ def build_answer_with_openai(
     src = result.source
 
     metric = result.meta.get("metric", "") if result.meta else ""
+    proxy_for_metric = str((result.meta or {}).get("proxy_for_metric") or "")
+    proxy_note = str((result.meta or {}).get("proxy_note") or "").strip()
     region_label = (
         str(((result.meta or {}).get("filters") or {}).get("region") or "Selected region")
         .replace("_", " ")
@@ -1333,7 +1550,6 @@ def build_answer_with_openai(
         in {
             "working_gas_storage_lower48",
             "working_gas_storage_change_weekly",
-            "ng_supply_balance_regime",
         }
     )
 
@@ -1410,7 +1626,7 @@ def build_answer_with_openai(
         return payload
 
     if _is_weather_degree_day_forecast_view(metric, df):
-        answer_text = _weather_degree_day_forecast_answer(df)
+        answer_text = _weather_degree_day_forecast_answer(df, query=query)
         if df is not None and "bucket_start_day" in df.columns:
             df = df.sort_values("bucket_start_day").reset_index(drop=True)
         chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
@@ -1420,11 +1636,33 @@ def build_answer_with_openai(
             answer_text=answer_text,
             structured_response=_weather_degree_day_forecast_structured_answer(
                 df=df,
+                query=query,
                 source_label=src.label,
                 source_date=source_date,
             ),
             report_context_used=False,
             report_context_reason="weather_degree_day_forecast_no_rag",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
+    if _is_weather_regional_demand_drivers_view(metric, df):
+        answer_text = _weather_regional_demand_drivers_answer(df)
+        chart_spec = None
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_weather_regional_demand_drivers_structured_answer(
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="weather_regional_demand_drivers_no_rag",
             report_context_sources=[],
             data_preview=_make_preview(df),
             chart_spec=chart_spec,
@@ -1523,6 +1761,16 @@ def build_answer_with_openai(
         source_label=src.label,
         source_date=source_date,
     )
+    seasonal_summary: Optional[dict[str, Any]] = None
+    if metric == "ng_electricity" and any(
+        term in (query or "").lower()
+        for term in ("seasonal norm", "seasonal norms", "seasonal normal", "seasonal normals", "vs normal", "versus normal")
+    ):
+        normal_years = int((((result.meta or {}).get("filters") or {}).get("normal_years") or 5))
+        seasonal_summary = _ng_electricity_seasonal_norm_summary(
+            df=df,
+            normal_years=normal_years,
+        )
 
     if use_llm_narration:
         (
@@ -1569,12 +1817,60 @@ def build_answer_with_openai(
             )
         answer_text = structured_response.answer or structured_response.summary
     else:
-        answer_text = _deterministic_answer_text(
-            metric=metric,
-            query=query,
-            facts=facts,
-            mode=mode,
+        answer_text = (
+            str(seasonal_summary["text"])
+            if seasonal_summary is not None
+            else _deterministic_answer_text(
+                metric=metric,
+                query=query,
+                facts=facts,
+                mode=mode,
+            )
         )
+
+    if seasonal_summary is not None and structured_response is not None:
+        delta_vs_normal = float(seasonal_summary["delta_vs_normal"])
+        normal_value = float(seasonal_summary["normal_value"])
+        latest_value = float(seasonal_summary["latest_value"])
+        direction = "above" if delta_vs_normal > 0 else "below" if delta_vs_normal < 0 else "in line with"
+        samples = int(seasonal_summary["samples"])
+        normal_years = int(seasonal_summary["normal_years"])
+        drivers = [
+            f"Seasonal baseline uses same-calendar-month history over {normal_years} years ({samples} historical observations).",
+            f"Latest power burn: {_format_number(latest_value)} MMcf vs seasonal norm {_format_number(normal_value)} MMcf.",
+            f"Current level is {direction} normal by {_format_number(abs(delta_vs_normal))} MMcf.",
+        ]
+        structured_response = structured_response.model_copy(
+            update={
+                "answer": answer_text,
+                "summary": answer_text,
+                "drivers": drivers,
+                "data_points": [
+                    AnswerDataPoint(metric="Natural Gas Power Burn", value=_json_safe(latest_value), unit="MMcf"),
+                    AnswerDataPoint(metric="Seasonal Norm", value=_json_safe(normal_value), unit="MMcf"),
+                    AnswerDataPoint(metric="Difference vs Norm", value=_json_safe(delta_vs_normal), unit="MMcf"),
+                ],
+            }
+        )
+
+    if proxy_for_metric == "iso_gas_dependency":
+        percent_like_query = any(
+            token in (query or "").lower()
+            for token in ("percentage", "percent", "share", "%")
+        )
+        proxy_prefix = (
+            "Direct ISO fuel-mix share data was unavailable, so this uses natural gas power-burn trend as a proxy. "
+            "An exact electricity-generation percentage from gas could not be computed from available sources."
+            if percent_like_query
+            else "Direct ISO fuel-mix share data was unavailable, so this uses natural gas power-burn trend as a proxy."
+        )
+        answer_text = f"{proxy_prefix} {answer_text}".strip()
+        if structured_response is not None:
+            proxy_driver = proxy_note or "Proxy mode: answered from EIA natural gas power-burn series."
+            updated_drivers = [proxy_driver] + list(structured_response.drivers or [])
+            structured_response = structured_response.model_copy(
+                update={"answer": answer_text, "summary": answer_text, "drivers": updated_drivers}
+            )
 
     # 3) Assemble AnswerPayload
     if df is not None and "date" in df.columns:

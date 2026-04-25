@@ -33,6 +33,13 @@ def _bar_datetime_label(series: pd.Series, aggregation: str | None) -> pd.Series
     return series.dt.strftime("%Y-%m-%d")
 
 
+def _bucket_label(series: pd.Series) -> pd.Series:
+    text = series.astype(str)
+    # days_11_15 -> days 11-15
+    text = text.str.replace(r"^days_(\d+)_(\d+)$", r"days \1-\2", regex=True)
+    return text.str.replace("_", " ", regex=False)
+
+
 def compute_storage_change_summary_metrics(
     df: pd.DataFrame,
     *,
@@ -411,10 +418,17 @@ def render_plotly(
 
     x_is_datetime = False
     if x_field in d.columns:
-        d[x_field] = pd.to_datetime(d[x_field], errors="coerce")
-        x_is_datetime = pd.api.types.is_datetime64_any_dtype(d[x_field])
-        if x_is_datetime:
-            d = d.dropna(subset=[x_field])
+        x_series = d[x_field]
+        should_parse_datetime = (
+            pd.api.types.is_datetime64_any_dtype(x_series)
+            or x_field == "date"
+            or str(x_field).endswith("_date")
+        )
+        if should_parse_datetime:
+            d[x_field] = pd.to_datetime(x_series, errors="coerce")
+            x_is_datetime = pd.api.types.is_datetime64_any_dtype(d[x_field])
+            if x_is_datetime:
+                d = d.dropna(subset=[x_field])
 
     chart_type = spec.chart_type
     template = "plotly_white"
@@ -461,6 +475,9 @@ def render_plotly(
             # distinct dates within the same month. Use explicit category labels.
             bar_x_field = "__bar_x_label"
             d[bar_x_field] = _bar_datetime_label(d[x_field], spec.aggregation)
+        elif x_field == "bucket":
+            bar_x_field = "__bar_x_label"
+            d[bar_x_field] = _bucket_label(d[x_field])
 
         fig = px.bar(d, x=bar_x_field, y=y_fields, title=spec.title, template=template)
         if x_is_datetime:

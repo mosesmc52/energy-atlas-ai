@@ -13,6 +13,23 @@ from tools.forecasting import forecast_linear_trend
 
 
 class TestPlotlyRenderer(unittest.TestCase):
+    def test_categorical_bar_keeps_bucket_axis(self) -> None:
+        df = pd.DataFrame(
+            {
+                "bucket": ["days_1_5", "days_6_10", "days_11_15"],
+                "demand_delta_bcfd": [0.4, -0.2, 0.1],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Weather-Driven Demand Impact by Forecast Window",
+            x="bucket",
+            y=["demand_delta_bcfd"],
+        )
+
+        fig = render_plotly(spec, df)
+        self.assertEqual(list(fig.data[0].x), ["days 1-5", "days 6-10", "days 11-15"])
+
     def test_datetime_bar_uses_category_labels(self) -> None:
         df = pd.DataFrame(
             {

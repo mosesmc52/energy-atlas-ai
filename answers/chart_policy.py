@@ -105,6 +105,7 @@ METRIC_TITLES = {
     "managed_money_net_percentile_156w": "CFTC Managed Money Net Percentile",
     "open_interest": "CFTC Open Interest",
     "weather_degree_days_forecast_vs_5y": "Forecast HDD/CDD vs 5-Year Average",
+    "weather_regional_demand_drivers": "Regional Weather-Driven Gas Demand",
 }
 
 METRIC_Y_LABELS = {
@@ -118,7 +119,8 @@ METRIC_Y_LABELS = {
     "managed_money_net": "Contracts",
     "managed_money_net_percentile_156w": "Percentile",
     "open_interest": "Contracts",
-    "weather_degree_days_forecast_vs_5y": "Degree-Days",
+    "weather_degree_days_forecast_vs_5y": "Bcf/d",
+    "weather_regional_demand_drivers": "Bcf/d",
 }
 
 
@@ -214,7 +216,8 @@ def _default_y(metric: str, df) -> list[str]:
         "managed_money_net": ["value"],
         "managed_money_net_percentile_156w": ["value"],
         "open_interest": ["value"],
-        "weather_degree_days_forecast_vs_5y": ["delta_hdd", "delta_cdd", "demand_delta_bcfd"],
+        "weather_degree_days_forecast_vs_5y": ["demand_delta_bcfd"],
+        "weather_regional_demand_drivers": ["demand_delta_bcfd"],
     }
     preferred = defaults.get(metric, ["value"])
     y = [c for c in preferred if c in df.columns]
@@ -262,7 +265,11 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
     )
 
     # Single-scalar asks should not auto-chart unless user clearly asks for trend/change.
-    if _has_any(q, SINGLE_VALUE_TERMS) and not explicit_chart_intent:
+    if (
+        _has_any(q, SINGLE_VALUE_TERMS)
+        and not explicit_chart_intent
+        and metric not in {"weather_degree_days_forecast_vs_5y", "weather_regional_demand_drivers"}
+    ):
         return None
 
     # Very small windows should not chart except a comparison bar.
@@ -293,6 +300,40 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
             x_label=nums[0].replace("_", " ").title(),
             y_label=nums[1].replace("_", " ").title(),
             notes="Scatter plot selected for variable relationship query.",
+        )
+
+    if metric == "weather_regional_demand_drivers":
+        if "region" in df.columns and "demand_delta_bcfd" in df.columns:
+            return ChartSpec(
+                chart_type="bar",
+                title=title,
+                x="region",
+                y=["demand_delta_bcfd"],
+                x_label="Region",
+                y_label="Demand Delta (Bcf/d)",
+            )
+        return None
+
+    if metric == "weather_degree_days_forecast_vs_5y":
+        if "bucket" in df.columns and "demand_delta_bcfd" in df.columns:
+            return ChartSpec(
+                chart_type="bar",
+                title="Weather-Driven Demand Impact by Forecast Window",
+                x="bucket",
+                y=["demand_delta_bcfd"],
+                x_label="Forecast Window",
+                y_label="Demand Delta (Bcf/d)",
+            )
+        y = _default_y(metric, df)
+        if not y:
+            return None
+        return ChartSpec(
+            chart_type="line",
+            title=title,
+            x="date",
+            y=y,
+            x_label="Date",
+            y_label="Demand Delta (Bcf/d)",
         )
 
     if has_volatility:

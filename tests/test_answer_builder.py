@@ -280,6 +280,36 @@ class TestAnswerBuilder(unittest.TestCase):
 
         self.assertIn("As of April 23, 2026", payload.answer_text)
 
+    def test_ng_electricity_seasonal_norms_answer_uses_seasonal_baseline(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 120000.0},
+                {"date": "2022-02-01", "value": 125000.0},
+                {"date": "2023-02-01", "value": 127000.0},
+                {"date": "2024-02-01", "value": 129000.0},
+                {"date": "2025-02-01", "value": 131000.0},
+                {"date": "2026-02-01", "value": 132089.232},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="EIA Natural Gas: Electricity",
+                reference="test",
+                retrieved_at=datetime(2026, 2, 3),
+            ),
+            meta={"metric": "ng_electricity", "filters": {"normal_years": 5}},
+        )
+
+        payload = build_answer_with_openai(
+            query="What is current natural gas power burn, and how does it compare to seasonal norms?",
+            result=result,
+        )
+
+        self.assertIn("seasonal norm", payload.answer_text.lower())
+        self.assertIn("Difference vs Norm", [dp.metric for dp in payload.structured_response.data_points])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,6 +60,7 @@ class MetricExecutor:
             "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
             "ng_pipeline": self._eia_ng_pipeline,
             "weather_degree_days_forecast_vs_5y": self._eia_weather_degree_days_forecast_vs_5y,
+            "weather_regional_demand_drivers": self._eia_weather_regional_demand_drivers,
             # --- Dallas Fed Energy Survey ---
             "des_business_activity_index": self._des_metric,
             "des_company_outlook_index": self._des_metric,
@@ -329,24 +330,51 @@ class MetricExecutor:
         stor_df["value"] = pd.to_numeric(stor_df["value"], errors="coerce")
         stor_df = stor_df.dropna(subset=["date", "value"]).sort_values("date")
 
-        production_delta_abs = 0.0
-        production_delta_pct = 0.0
-        production_latest = None
-        production_date = None
+        # Build monthly production trend.
         if not prod_df.empty:
-            production_latest = float(prod_df.iloc[-1]["value"])
-            production_date = prod_df.iloc[-1]["date"]
-            if len(prod_df) >= 2:
-                prior = float(prod_df.iloc[-2]["value"])
-                production_delta_abs = production_latest - prior
-                if prior != 0:
-                    production_delta_pct = (production_delta_abs / abs(prior)) * 100.0
+            prod_monthly = prod_df.copy()
+            prod_monthly["month"] = prod_monthly["date"].dt.to_period("M")
+            prod_monthly = (
+                prod_monthly.groupby("month", as_index=False)
+                .agg(date=("date", "max"), production_latest=("value", "last"))
+                .sort_values("date")
+            )
+            prod_monthly["production_delta_abs"] = (
+                prod_monthly["production_latest"].diff().fillna(0.0)
+            )
+            prior = prod_monthly["production_latest"].shift(1)
+            prod_monthly["production_delta_pct"] = (
+                (prod_monthly["production_delta_abs"] / prior.replace({0.0: pd.NA}))
+                * 100.0
+            ).fillna(0.0)
+            prod_monthly = prod_monthly[
+                ["month", "date", "production_latest", "production_delta_abs", "production_delta_pct"]
+            ]
+        else:
+            prod_monthly = pd.DataFrame(
+                columns=[
+                    "month",
+                    "date",
+                    "production_latest",
+                    "production_delta_abs",
+                    "production_delta_pct",
+                ]
+            )
 
-        storage_weekly_change = 0.0
-        storage_date = None
+        # Build monthly storage signal from weekly changes (sum across each month).
         if not stor_df.empty:
-            storage_weekly_change = float(stor_df.iloc[-1]["value"])
-            storage_date = stor_df.iloc[-1]["date"]
+            stor_monthly = stor_df.copy()
+            stor_monthly["month"] = stor_monthly["date"].dt.to_period("M")
+            stor_monthly = (
+                stor_monthly.groupby("month", as_index=False)
+                .agg(date=("date", "max"), storage_weekly_change=("value", "sum"))
+                .sort_values("date")
+            )
+            stor_monthly = stor_monthly[["month", "date", "storage_weekly_change"]]
+        else:
+            stor_monthly = pd.DataFrame(
+                columns=["month", "date", "storage_weekly_change"]
+            )
 
         weather_demand_delta_bcfd = 0.0
         weather_as_of = None
@@ -358,54 +386,87 @@ class MetricExecutor:
                 weather_demand_delta_bcfd = float(wdf["demand_delta_bcfd"].mean())
                 weather_as_of = str(wdf.iloc[-1].get("as_of") or "").strip() or None
 
-        # Regime score: positive -> expanding/looser, negative -> tightening.
-        score = 0.0
-        if production_delta_pct > 0:
-            score += 1.0
-        elif production_delta_pct < 0:
-            score -= 1.0
+        # Merge into a monthly regime time series.
+        monthly = pd.merge(
+            prod_monthly,
+            stor_monthly[["month", "storage_weekly_change"]] if not stor_monthly.empty else stor_monthly,
+            on="month",
+            how="outer",
+        )
+        if monthly.empty:
+            monthly = pd.DataFrame(
+                columns=[
+                    "month",
+                    "date",
+                    "production_latest",
+                    "production_delta_abs",
+                    "production_delta_pct",
+                    "storage_weekly_change",
+                ]
+            )
 
-        if storage_weekly_change > 0:
-            score += 1.0
-        elif storage_weekly_change < 0:
-            score -= 1.0
-
-        # Positive weather-demand delta tightens balances; negative loosens.
-        if weather_demand_delta_bcfd > 0:
-            score -= 1.0
-        elif weather_demand_delta_bcfd < 0:
-            score += 1.0
-
-        if score >= 1.0:
-            regime = "expanding"
-        elif score <= -1.0:
-            regime = "tightening"
+        monthly["date"] = pd.to_datetime(monthly.get("date"), errors="coerce")
+        if monthly["date"].isna().all() and "month" in monthly.columns:
+            monthly["date"] = monthly["month"].astype("period[M]").dt.to_timestamp("M")
         else:
-            regime = "mixed"
+            month_fill = monthly["month"].astype("period[M]").dt.to_timestamp("M")
+            monthly["date"] = monthly["date"].fillna(month_fill)
 
-        as_of_candidates = [d for d in [production_date, storage_date] if d is not None]
-        as_of = (
-            max(as_of_candidates).date().isoformat()
-            if as_of_candidates
-            else datetime.now(timezone.utc).date().isoformat()
+        for col in ("production_latest", "production_delta_abs", "production_delta_pct", "storage_weekly_change"):
+            monthly[col] = pd.to_numeric(monthly.get(col), errors="coerce")
+
+        monthly["production_delta_abs"] = monthly["production_delta_abs"].fillna(0.0)
+        monthly["production_delta_pct"] = monthly["production_delta_pct"].fillna(0.0)
+        monthly["storage_weekly_change"] = monthly["storage_weekly_change"].fillna(0.0)
+        monthly["weather_demand_delta_bcfd"] = 0.0
+        if not monthly.empty:
+            latest_idx = monthly["date"].idxmax()
+            monthly.loc[latest_idx, "weather_demand_delta_bcfd"] = weather_demand_delta_bcfd
+
+        # Regime score: positive -> expanding/looser, negative -> tightening.
+        score = (
+            monthly["production_delta_pct"].apply(lambda v: 1.0 if v > 0 else -1.0 if v < 0 else 0.0)
+            + monthly["storage_weekly_change"].apply(lambda v: 1.0 if v > 0 else -1.0 if v < 0 else 0.0)
+            + monthly["weather_demand_delta_bcfd"].apply(lambda v: -1.0 if v > 0 else 1.0 if v < 0 else 0.0)
         )
-
-        out = pd.DataFrame(
+        monthly["score"] = score
+        monthly["regime"] = monthly["score"].apply(
+            lambda v: "expanding" if v >= 1.0 else "tightening" if v <= -1.0 else "mixed"
+        )
+        monthly["region"] = region
+        monthly["weather_as_of"] = weather_as_of
+        out = monthly[
             [
-                {
-                    "date": as_of,
-                    "region": region,
-                    "regime": regime,
-                    "score": round(score, 3),
-                    "production_latest": production_latest,
-                    "production_delta_abs": round(production_delta_abs, 3),
-                    "production_delta_pct": round(production_delta_pct, 3),
-                    "storage_weekly_change": round(storage_weekly_change, 3),
-                    "weather_demand_delta_bcfd": round(weather_demand_delta_bcfd, 3),
-                    "weather_as_of": weather_as_of,
-                }
+                "date",
+                "region",
+                "regime",
+                "score",
+                "production_latest",
+                "production_delta_abs",
+                "production_delta_pct",
+                "storage_weekly_change",
+                "weather_demand_delta_bcfd",
+                "weather_as_of",
             ]
-        )
+        ].sort_values("date")
+
+        if out.empty:
+            out = pd.DataFrame(
+                [
+                    {
+                        "date": datetime.now(timezone.utc).date().isoformat(),
+                        "region": region,
+                        "regime": "mixed",
+                        "score": 0.0,
+                        "production_latest": None,
+                        "production_delta_abs": 0.0,
+                        "production_delta_pct": 0.0,
+                        "storage_weekly_change": 0.0,
+                        "weather_demand_delta_bcfd": round(weather_demand_delta_bcfd, 3),
+                        "weather_as_of": weather_as_of,
+                    }
+                ]
+            )
 
         return EIAResult(
             df=out,
@@ -467,6 +528,85 @@ class MetricExecutor:
             normal_years=normal_years,
         )
 
+    def _eia_weather_regional_demand_drivers(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        normal_years = int(filters.get("normal_years") or 5)
+        regions = ["east", "midwest", "south", "west"]
+
+        rows: list[dict[str, Any]] = []
+        source_refs: dict[str, str] = {}
+        region_meta: dict[str, Any] = {}
+        for region in regions:
+            regional = self.eia.weather_degree_days_forecast_vs_5y(
+                start=start,
+                end=end,
+                region=region,
+                normal_years=normal_years,
+            )
+            source_refs[region] = regional.source.reference
+            region_meta[region] = (regional.meta or {}).get("cache")
+            rdf = regional.df.copy()
+            if rdf is None or rdf.empty:
+                continue
+            rdf["demand_delta_bcfd"] = pd.to_numeric(rdf["demand_delta_bcfd"], errors="coerce")
+            rdf["delta_hdd"] = pd.to_numeric(rdf["delta_hdd"], errors="coerce")
+            rdf["delta_cdd"] = pd.to_numeric(rdf["delta_cdd"], errors="coerce")
+            rdf = rdf.dropna(subset=["demand_delta_bcfd"])
+            if rdf.empty:
+                continue
+            avg_demand_delta = float(rdf["demand_delta_bcfd"].mean())
+            total_hdd = float(pd.to_numeric(rdf["delta_hdd"], errors="coerce").sum())
+            total_cdd = float(pd.to_numeric(rdf["delta_cdd"], errors="coerce").sum())
+            as_of = str(rdf.iloc[-1].get("as_of") or "").strip() or None
+            rows.append(
+                {
+                    "date": as_of,
+                    "region": region,
+                    "demand_delta_bcfd": round(avg_demand_delta, 3),
+                    "total_delta_hdd": round(total_hdd, 3),
+                    "total_delta_cdd": round(total_cdd, 3),
+                    "normal_years": normal_years,
+                }
+            )
+
+        out = pd.DataFrame(
+            rows,
+            columns=[
+                "date",
+                "region",
+                "demand_delta_bcfd",
+                "total_delta_hdd",
+                "total_delta_cdd",
+                "normal_years",
+            ],
+        )
+
+        if not out.empty:
+            out["abs_demand_delta_bcfd"] = out["demand_delta_bcfd"].abs()
+            out = out.sort_values("abs_demand_delta_bcfd", ascending=False).reset_index(drop=True)
+            out = out.drop(columns=["abs_demand_delta_bcfd"])
+
+        return EIAResult(
+            df=out,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Weather Regional Demand Drivers (Derived)",
+                reference="open-meteo:degree_days.regional_drivers",
+                parameters={
+                    "regions": regions,
+                    "start": start,
+                    "end": end,
+                    "normal_years": normal_years,
+                    "source_references": source_refs,
+                },
+            ),
+            meta={
+                "cache": {"regions": region_meta},
+                "note": "Derived by ranking regional weather-demand deltas from East/Midwest/South/West.",
+            },
+        )
+
     def _des_metric(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> DESResult:
@@ -487,28 +627,100 @@ class MetricExecutor:
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> GridStatusResult:
         iso = str(filters.get("iso") or "ercot")
-        return self.grid.iso_fuel_mix(iso=iso, start=start, end=end)
+        try:
+            return self.grid.iso_fuel_mix(iso=iso, start=start, end=end)
+        except Exception as exc:  # noqa: BLE001
+            return self._gridstatus_error_result(
+                metric="iso_fuel_mix",
+                iso=iso,
+                start=start,
+                end=end,
+                error=exc,
+            )
 
     def _grid_iso_load(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> GridStatusResult:
         iso = str(filters.get("iso") or "ercot")
-        return self.grid.iso_load(iso=iso, start=start, end=end)
+        try:
+            return self.grid.iso_load(iso=iso, start=start, end=end)
+        except Exception as exc:  # noqa: BLE001
+            return self._gridstatus_error_result(
+                metric="iso_load",
+                iso=iso,
+                start=start,
+                end=end,
+                error=exc,
+            )
 
     def _grid_iso_gas_dependency(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> GridStatusResult:
         iso = str(filters.get("iso") or "ercot")
         heat_rate = float(filters.get("heat_rate_mmbtu_per_mwh", 7.5))
-        return self.grid.iso_gas_dependency(
-            iso=iso,
-            start=start,
-            end=end,
-            heat_rate_mmbtu_per_mwh=heat_rate,
-        )
+        try:
+            return self.grid.iso_gas_dependency(
+                iso=iso,
+                start=start,
+                end=end,
+                heat_rate_mmbtu_per_mwh=heat_rate,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self._gridstatus_error_result(
+                metric="iso_gas_dependency",
+                iso=iso,
+                start=start,
+                end=end,
+                error=exc,
+                extra={"heat_rate_mmbtu_per_mwh": heat_rate},
+            )
 
     def _grid_iso_renewables(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> GridStatusResult:
         iso = str(filters.get("iso") or "ercot")
-        return self.grid.iso_renewables(iso=iso, start=start, end=end)
+        try:
+            return self.grid.iso_renewables(iso=iso, start=start, end=end)
+        except Exception as exc:  # noqa: BLE001
+            return self._gridstatus_error_result(
+                metric="iso_renewables",
+                iso=iso,
+                start=start,
+                end=end,
+                error=exc,
+            )
+
+    def _gridstatus_error_result(
+        self,
+        *,
+        metric: str,
+        iso: str,
+        start: str,
+        end: str,
+        error: Exception,
+        extra: Dict[str, Any] | None = None,
+    ) -> GridStatusResult:
+        details = str(error).strip() or repr(error)
+        parameters: Dict[str, Any] = {
+            "metric": metric,
+            "iso": iso,
+            "start": start,
+            "end": end,
+            "error": details,
+        }
+        if extra:
+            parameters.update(extra)
+
+        return GridStatusResult(
+            df=pd.DataFrame(columns=["date", "value"]),
+            source=SourceRef(
+                source_type="gridstatus",
+                label=f"GridStatus {metric} unavailable",
+                reference=f"gridstatus:error_{metric}",
+                parameters=parameters,
+            ),
+            meta={
+                "error": details,
+                "fallback": "empty_dataframe",
+            },
+        )

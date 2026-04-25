@@ -39,7 +39,7 @@ django.setup()
 
 import chainlit as cl
 from django.conf import settings
-from agents.router import route_query
+from agents.energy_atlas_agent import EnergyAtlasAgent
 from agents.guardrails import (
     OUT_OF_SCOPE_MESSAGE,
     is_natural_gas_question,
@@ -50,7 +50,6 @@ from alerts.services import (
     is_builtin_signal_id,
     parse_signal_question,
 )
-from answer_builder import build_answer_with_openai
 from charts.plotly_renderer import (
     compute_timeseries_summary_metrics,
     compute_storage_change_summary_metrics,
@@ -58,7 +57,7 @@ from charts.plotly_renderer import (
     should_render_storage_change_summary_cards,
     should_render_timeseries_summary_cards,
 )
-from executer import ExecuteRequest, MetricExecutor
+from executer import MetricExecutor
 from schemas.answer import StructuredAnswer
 from tools.cftc_adapter import CFTCAdapter
 from tools.des_adapter import DallasEnergySurveyAdapter
@@ -393,9 +392,18 @@ def build_container():
     )
     signal_evaluator = build_signal_evaluator()
     forecaster = TrendForecaster(executor=executor)
+    policy_path = os.getenv("ATLAS_AGENT_POLICY_PATH") or str(
+        proj_root / "config" / "agent_policy.json"
+    )
+    agent = EnergyAtlasAgent(
+        executor=executor,
+        model=(os.getenv("OPENAI_MODEL", "").strip() or None),
+        policy_path=policy_path,
+    )
 
     return {
         "executor": executor,
+        "agent": agent,
         "signal_evaluator": signal_evaluator,
         "forecaster": forecaster,
     }
@@ -478,6 +486,7 @@ async def on_message(message: cl.Message):
     request_started = perf_counter() if DEBUG_ENABLED else 0.0
     deps = cl.user_session.get("deps") or {}
     executor: MetricExecutor = deps.get("executor")  # type: ignore[assignment]
+    agent: EnergyAtlasAgent = deps.get("agent")  # type: ignore[assignment]
     signal_evaluator = deps.get("signal_evaluator")
     forecaster: TrendForecaster | None = deps.get("forecaster")  # type: ignore[assignment]
 
@@ -522,12 +531,13 @@ async def on_message(message: cl.Message):
     qlog_elapsed_ms = (perf_counter() - qlog_started) * 1000 if DEBUG_ENABLED else 0.0
 
     try:
-        # (A) Route the query -> metric + params
-        route_started = perf_counter() if DEBUG_ENABLED else 0.0
-        route = route_query(user_query)
-        route_elapsed_ms = (
-            (perf_counter() - route_started) * 1000 if DEBUG_ENABLED else 0.0
-        )
+        # (A) Agent orchestration: route -> execute -> answer (+optional forecast)
+        outcome = agent.run(user_query=user_query, forecaster=forecaster)
+        route = outcome.route
+        route_elapsed_ms = outcome.timings.route_ms if DEBUG_ENABLED else 0.0
+        execute_elapsed_ms = outcome.timings.execute_ms if DEBUG_ENABLED else 0.0
+        answer_elapsed_ms = outcome.timings.answer_ms if DEBUG_ENABLED else 0.0
+
         if route.intent == "ambiguous":
             await cl.Message(
                 content=(
@@ -573,44 +583,17 @@ async def on_message(message: cl.Message):
             raise ValueError(f"Unable to determine a metric for intent: {route.intent}")
         cl.user_session.set("last_energy_question", user_query)
 
-        # (B) Execute -> fetch data (df + SourceRef)
-        req = ExecuteRequest(
-            metric=route.primary_metric,
-            start=route.start,
-            end=route.end,
-            filters=route.filters,
-        )
-        execute_started = perf_counter() if DEBUG_ENABLED else 0.0
-        result = executor.execute(req)
-        execute_elapsed_ms = (
-            (perf_counter() - execute_started) * 1000 if DEBUG_ENABLED else 0.0
-        )
+        result = outcome.result
+        payload = outcome.payload
+        forecast = outcome.forecast
+        if result is None or payload is None:
+            raise ValueError("Agent failed to produce a metric result and answer payload.")
+
         cache_meta = ((result.meta or {}).get("cache") or {}) if result.meta else {}
         cache_timings = cache_meta.get("timings_ms") or {}
         fetched_segments = cache_meta.get("fetched_segments") or []
         background_refresh_scheduled = bool(
             cache_meta.get("background_refresh_scheduled", False)
-        )
-        forecast = None
-        if route.include_forecast and forecaster is not None:
-            forecast = forecaster.forecast_dataframe(
-                result.df,
-                metric=route.primary_metric,
-                horizon_days=route.forecast_horizon_days or 7,
-                include_overlay=True,
-                source_reference=result.source.reference,
-            )
-
-        # (C) Build AnswerPayload (OpenAI writes narrative; you keep facts/sources)
-        answer_started = perf_counter() if DEBUG_ENABLED else 0.0
-        payload = build_answer_with_openai(
-            query=user_query,
-            result=result,
-            mode="observed",
-            model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
-        )
-        answer_elapsed_ms = (
-            (perf_counter() - answer_started) * 1000 if DEBUG_ENABLED else 0.0
         )
         if payload.report_context_used:
             logger.info(
@@ -751,7 +734,8 @@ async def on_message(message: cl.Message):
             )
 
         # Keep errors visible during development
-        await cl.Message(content=f"Error: {e}").send()
+        details = str(e).strip() or repr(e) or e.__class__.__name__
+        await cl.Message(content=f"Error: {details}").send()
 
 
 @cl.action_callback(SHARE_ACTION_NAME)

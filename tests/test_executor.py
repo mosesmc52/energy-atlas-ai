@@ -250,6 +250,55 @@ class TestMetricExecutor(unittest.TestCase):
             normal_years=2,
         )
 
+    def test_weather_regional_demand_drivers_builds_ranked_regions(self) -> None:
+        eia = Mock()
+        grid = Mock()
+
+        def make_regional_weather(*, region: str, **kwargs):  # noqa: ANN001
+            del kwargs
+            base = {"east": 0.6, "midwest": 0.2, "south": -0.4, "west": -0.1}[region]
+            return Mock(
+                df=__import__("pandas").DataFrame(
+                    [
+                        {
+                            "bucket": "days_1_5",
+                            "bucket_start_day": 1,
+                            "delta_hdd": 1.0,
+                            "delta_cdd": -0.5,
+                            "demand_delta_bcfd": base,
+                            "as_of": "2026-04-24T00:00:00Z",
+                        },
+                        {
+                            "bucket": "days_6_10",
+                            "bucket_start_day": 6,
+                            "delta_hdd": 0.5,
+                            "delta_cdd": -0.3,
+                            "demand_delta_bcfd": base * 0.9,
+                            "as_of": "2026-04-24T00:00:00Z",
+                        },
+                    ]
+                ),
+                source=Mock(reference=f"ref:weather:{region}"),
+                meta={"cache": {"hit": True}},
+            )
+
+        eia.weather_degree_days_forecast_vs_5y.side_effect = make_regional_weather
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="weather_regional_demand_drivers",
+                start="2026-04-01",
+                end="2026-04-24",
+                filters={"normal_years": 5},
+            )
+        )
+
+        self.assertEqual(eia.weather_degree_days_forecast_vs_5y.call_count, 4)
+        self.assertEqual(result.source.reference, "open-meteo:degree_days.regional_drivers")
+        self.assertEqual(set(result.df["region"].tolist()), {"east", "midwest", "south", "west"})
+        self.assertIn("demand_delta_bcfd", result.df.columns)
+
     def test_supply_balance_regime_metric_combines_component_signals(self) -> None:
         eia = Mock()
         grid = Mock()
@@ -295,8 +344,47 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(eia.storage_working_gas_change_weekly.call_count, 1)
         self.assertEqual(eia.weather_degree_days_forecast_vs_5y.call_count, 1)
         self.assertEqual(result.source.reference, "eia-ng-client:derived_natural_gas.supply_balance_regime")
+        self.assertGreater(len(result.df), 1)
         self.assertIn("regime", result.df.columns)
         self.assertEqual(result.df.iloc[-1]["regime"], "expanding")
+
+    def test_iso_gas_dependency_gracefully_falls_back_on_gridstatus_error(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        grid.iso_gas_dependency.side_effect = StopIteration()
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="iso_gas_dependency",
+                start="2026-01-01",
+                end="2026-01-31",
+                filters={"iso": "ercot"},
+            )
+        )
+
+        self.assertEqual(result.source.reference, "gridstatus:error_iso_gas_dependency")
+        self.assertEqual(len(result.df), 0)
+        self.assertIn("error", result.source.parameters)
+
+    def test_iso_renewables_gracefully_falls_back_on_gridstatus_error(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        grid.iso_renewables.side_effect = RuntimeError("service unavailable")
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="iso_renewables",
+                start="2026-01-01",
+                end="2026-01-31",
+                filters={"iso": "ercot"},
+            )
+        )
+
+        self.assertEqual(result.source.reference, "gridstatus:error_iso_renewables")
+        self.assertEqual(len(result.df), 0)
+        self.assertIn("service unavailable", str(result.source.parameters.get("error")))
 
 
 if __name__ == "__main__":

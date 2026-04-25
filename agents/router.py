@@ -524,6 +524,11 @@ ROUTE_MAP = {
     "iso_gas_dependency": [
         "gas share",
         "gas dependency",
+        "percentage of electricity generation",
+        "percent of electricity generation",
+        "what percentage of electricity generation",
+        "electricity generation from natural gas",
+        "share of electricity from natural gas",
         "grid gas",
         "gas burn",
         "gas-fired",
@@ -625,7 +630,14 @@ ROUTE_MAP = {
         "power sector",
         "which sector",
     ],
-    "ng_electricity": ["electricity", "power plants", "power generation"],
+    "ng_electricity": [
+        "electricity",
+        "power plants",
+        "power generation",
+        "power burn",
+        "natural gas power burn",
+        "gas power burn",
+    ],
     "ng_production_lower48": ["production", "output", "supply", "dry gas production"],
     "ng_supply_balance_regime": [
         "gas supply",
@@ -664,6 +676,15 @@ ROUTE_MAP = {
     "weather_degree_days_forecast_vs_5y": [
         "degree day",
         "degree days",
+        "weather forecast",
+        "weather-related demand",
+        "weather demand",
+        "seasonal norm",
+        "seasonal norms",
+        "seasonal normal",
+        "seasonal normals",
+        "bullish",
+        "bearish",
         "hdd",
         "cdd",
         "heating degree",
@@ -678,6 +699,13 @@ ROUTE_MAP = {
         "5-year average",
         "year average",
         "weather normal",
+    ],
+    "weather_regional_demand_drivers": [
+        "which regions are driving",
+        "regions driving weather-related demand",
+        "regional weather demand",
+        "weather demand by region",
+        "weather drivers by region",
     ],
 }
 
@@ -701,6 +729,7 @@ ALLOWED_WEATHER_NORMAL_YEARS = {1, 2, 3, 4, 5}
 # Normalization
 # ----------------------------
 NORMALIZE_PATTERNS: List[Tuple[str, str]] = [
+    (r"[–—]", "-"),
     (r"\blower forty[- ]?eight\b", "lower 48"),
     (r"\bnat gas\b", "natural gas"),
     (r"\bdraw\b", "withdrawal"),
@@ -760,7 +789,13 @@ BONUS_TERMS: Dict[str, List[str]] = {
         "electric power",
         "power",
     ],
-    "ng_electricity": ["power plants", "electricity", "power generation"],
+    "ng_electricity": [
+        "power plants",
+        "electricity",
+        "power generation",
+        "power burn",
+        "gas power burn",
+    ],
     "ng_production_lower48": ["production", "output", "supply"],
     "ng_supply_balance_regime": [
         "gas supply",
@@ -775,14 +810,33 @@ BONUS_TERMS: Dict[str, List[str]] = {
     "weather_degree_days_forecast_vs_5y": [
         "weather",
         "forecast",
+        "seasonal",
+        "norm",
+        "bullish",
+        "bearish",
+        "demand",
         "hdd",
         "cdd",
         "degree day",
         "5-year",
         "normal",
     ],
+    "weather_regional_demand_drivers": [
+        "regions",
+        "regional",
+        "driving",
+        "weather",
+        "demand",
+    ],
     "iso_load": ["load", "demand", "system demand"],
-    "iso_gas_dependency": ["gas share", "gas-fired", "gas-fired generation"],
+    "iso_gas_dependency": [
+        "gas share",
+        "gas-fired",
+        "gas-fired generation",
+        "percentage",
+        "percent",
+        "generation",
+    ],
     "iso_renewables": ["renewables", "wind", "solar"],
     "iso_fuel_mix": ["fuel mix", "by fuel", "generation mix"],
 }
@@ -918,6 +972,22 @@ def wants_storage_level_and_change(q: str) -> bool:
     q = q.lower()
     return "storage" in q and contains_any(STORAGE_COMPARE_TERMS, q) and any(
         term in q for term in ("together", "compare")
+    )
+
+
+def wants_seasonal_norm_comparison(q: str) -> bool:
+    q = q.lower()
+    return any(
+        phrase in q
+        for phrase in (
+            "seasonal norm",
+            "seasonal norms",
+            "seasonal normal",
+            "seasonal normals",
+            "versus normal",
+            "vs normal",
+            "compared to normal",
+        )
     )
 
 
@@ -1063,6 +1133,30 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         score -= 0.5
     if metric == "ng_consumption_by_sector" and "most" in q:
         score += 0.75
+    if metric == "ng_electricity" and "power burn" in q:
+        score += 2.0
+    if metric == "ng_electricity" and "seasonal" in q and any(
+        token in q for token in ("power", "electricity", "burn")
+    ):
+        score += 1.5
+    if metric == "iso_gas_dependency" and any(
+        phrase in q
+        for phrase in (
+            "percentage of electricity generation",
+            "percent of electricity generation",
+            "electricity generation from natural gas",
+            "share of electricity from natural gas",
+        )
+    ):
+        score += 2.5
+    if metric == "iso_gas_dependency" and "renewables" in q and any(
+        token in q for token in ("gas demand", "power sector", "electricity")
+    ):
+        score += 2.0
+    if metric == "iso_gas_dependency" and all(
+        token in q for token in ("renewables", "power sector", "demand")
+    ):
+        score += 2.5
     if metric == "ng_consumption_lower48" and route_consumption_state(q) and any(
         token in q for token in ("consumption", "usage")
     ):
@@ -1079,6 +1173,32 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         token in q for token in ("market balance", "fundamentals")
     ):
         score += 1.0
+    if metric == "weather_degree_days_forecast_vs_5y" and "weather" in q and any(
+        token in q
+        for token in (
+            "forecast",
+            "demand",
+            "normal",
+            "seasonal",
+            "bullish",
+            "bearish",
+            "region",
+        )
+    ):
+        score += 2.0
+    if metric == "weather_degree_days_forecast_vs_5y" and any(
+        phrase in q
+        for phrase in (
+            "power burn",
+            "electricity generation",
+            "power sector",
+        )
+    ):
+        score -= 2.0
+    if metric == "weather_regional_demand_drivers" and "weather" in q and any(
+        token in q for token in ("region", "regions", "driving", "driver")
+    ):
+        score += 2.5
     if metric == "ng_exploration_reserves_lower48" and (
         route_reserves_state(q) or route_reserves_resource_category(q)
     ):
@@ -1089,6 +1209,12 @@ def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
         score += 1.5
     if metric == "ng_electricity" and "share" in q:
         score -= 0.75
+    if metric == "ng_consumption_by_sector" and "renewables" in q and "power sector" in q:
+        score -= 2.0
+    if metric == "ng_consumption_by_sector" and all(
+        token in q for token in ("renewables", "power sector", "demand")
+    ):
+        score -= 2.0
     if metric == "working_gas_storage_change_weekly" and any(
         term in q for term in ("build", "injection", "withdrawal", "storage injection")
     ):
@@ -1196,6 +1322,14 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
             filters["region"] = state
         else:
             filters["region"] = "united_states_total"
+    elif metric == "ng_electricity":
+        if wants_seasonal_norm_comparison(q):
+            normal_years = route_weather_normal_years(q)
+            filters["normal_years"] = (
+                normal_years
+                if normal_years in ALLOWED_WEATHER_NORMAL_YEARS
+                else 5
+            )
     elif metric == "ng_supply_balance_regime":
         filters["region"] = "united_states_total"
 
@@ -1218,6 +1352,13 @@ def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, 
             filters["region"] = region
         else:
             filters["region"] = "lower48"
+        normal_years = route_weather_normal_years(q)
+        filters["normal_years"] = (
+            normal_years
+            if normal_years in ALLOWED_WEATHER_NORMAL_YEARS
+            else 5
+        )
+    elif metric == "weather_regional_demand_drivers":
         normal_years = route_weather_normal_years(q)
         filters["normal_years"] = (
             normal_years
@@ -1407,10 +1548,78 @@ def route_query(user_query: str) -> HybridRouteResult:
     intent = detect_intent(normalized)
     include_forecast = detect_forecast_request(normalized)
     forecast_horizon_days = detect_forecast_horizon_days(normalized)
+    current_like_only = any(token in normalized for token in ("current", "latest", "right now", "today")) and not re.search(
+        r"(20\d{2})-(\d{2})|(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+"
+        r"(day|days|week|weeks|month|months|year|years)|ytd|year to date|this year|last year|past year|last month|past month|last week|past week",
+        normalized,
+    )
 
     candidates = score_routes(normalized)
     confidence = candidate_confidence(candidates)
     ambiguous = is_ambiguous(candidates)
+
+    # Deterministic domain fast-paths for frequent electricity + gas asks.
+    if (
+        "power burn" in normalized
+        and "natural gas" in normalized
+        and any(term in normalized for term in ("seasonal norm", "seasonal norms", "seasonal"))
+    ):
+        metric = "ng_electricity"
+        seasonal_years = route_weather_normal_years(normalized)
+        if seasonal_years not in ALLOWED_WEATHER_NORMAL_YEARS:
+            seasonal_years = 5
+        fast_start = start
+        if not has_explicit_dates or current_like_only:
+            fast_start = (
+                pd.Timestamp(end) - pd.DateOffset(years=seasonal_years)
+            ).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=fast_start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for natural gas power burn seasonal comparison",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if (
+        any(
+            phrase in normalized
+            for phrase in (
+                "percentage of electricity generation",
+                "percent of electricity generation",
+                "what percentage of electricity generation",
+                "electricity generation from natural gas",
+                "share of electricity from natural gas",
+            )
+        )
+        or ("renewables" in normalized and "power sector" in normalized and "demand" in normalized)
+    ):
+        metric = "iso_gas_dependency"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for electricity generation gas-share dependency",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
 
     # No rule candidate -> LLM fallback
     if not candidates:
@@ -1422,7 +1631,16 @@ def route_query(user_query: str) -> HybridRouteResult:
     top = candidates[0]
     if not has_explicit_dates and top.metric == "ng_exploration_reserves_lower48":
         start = "2000-01-01"
-    if not has_explicit_dates and top.metric in {"ng_consumption_lower48", "ng_consumption_by_sector"}:
+    if (not has_explicit_dates or current_like_only) and top.metric == "ng_electricity" and wants_seasonal_norm_comparison(normalized):
+        normal_years = route_weather_normal_years(normalized)
+        if normal_years not in ALLOWED_WEATHER_NORMAL_YEARS:
+            normal_years = 5
+        start = (pd.Timestamp(end) - pd.DateOffset(years=normal_years)).date().isoformat()
+    if (not has_explicit_dates or current_like_only) and top.metric in {
+        "ng_consumption_lower48",
+        "ng_consumption_by_sector",
+        "ng_electricity",
+    }:
         start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
     filters = build_filters(top.metric, normalized, confidence)
 
@@ -1503,6 +1721,25 @@ def route_query(user_query: str) -> HybridRouteResult:
             candidates=candidates[:3],
             source="rule",
             reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    # If a non-single intent still has a very strong single top metric, keep rule routing.
+    if intent in {"compare", "derived", "explain"} and not ambiguous and confidence >= 0.8:
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=top.metric,
+            metrics=[top.metric],
+            start=start,
+            end=end,
+            filters=filters,
+            confidence=confidence,
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason=f"High-confidence rule match on {top.metric} for {intent} phrasing",
             normalized_query=normalized,
             include_forecast=include_forecast,
             forecast_horizon_days=forecast_horizon_days,
