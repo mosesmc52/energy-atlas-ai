@@ -13,6 +13,10 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 from answers.chart_policy import chart_policy
+from answers.features import (
+    ng_electricity_seasonal_norm_summary as compute_ng_electricity_seasonal_norm_summary,
+)
+from answers.features import should_compute_ng_electricity_seasonal_norm
 from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
 from openai import OpenAI
 from schemas.answer import (
@@ -1451,37 +1455,19 @@ def _ng_electricity_seasonal_norm_summary(
     df: pd.DataFrame,
     normal_years: int,
 ) -> Optional[dict[str, Any]]:
-    if df is None or df.empty or "date" not in df.columns or "value" not in df.columns:
+    summary = compute_ng_electricity_seasonal_norm_summary(
+        df=df,
+        normal_years=normal_years,
+    )
+    if summary is None:
         return None
 
-    ordered = df.copy()
-    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
-    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
-    ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
-    if ordered.empty:
-        return None
-
-    latest = ordered.iloc[-1]
-    latest_date = pd.Timestamp(latest["date"])
-    latest_value = float(latest["value"])
-
-    hist = ordered[ordered["date"] < latest_date].copy()
-    if hist.empty:
-        return None
-
-    cutoff = latest_date - pd.DateOffset(years=max(1, int(normal_years)))
-    hist = hist[hist["date"] >= cutoff]
-    hist = hist[hist["date"].dt.month == latest_date.month]
-    if hist.empty:
-        return None
-
-    normal_value = float(hist["value"].mean())
-    delta_vs_normal = latest_value - normal_value
-    pct_vs_normal = None
-    if normal_value != 0:
-        pct_vs_normal = (delta_vs_normal / normal_value) * 100.0
-
-    samples = int(len(hist))
+    latest_date = pd.Timestamp(summary["latest_date"])
+    latest_value = float(summary["latest_value"])
+    normal_value = float(summary["normal_value"])
+    delta_vs_normal = float(summary["delta_vs_normal"])
+    pct_vs_normal = summary.get("pct_vs_normal")
+    samples = int(summary["samples"])
     direction = "above" if delta_vs_normal > 0 else "below" if delta_vs_normal < 0 else "in line with"
     month_label = latest_date.strftime("%B %Y")
     normal_label = f"{max(1, int(normal_years))}-year seasonal norm"
@@ -1506,13 +1492,7 @@ def _ng_electricity_seasonal_norm_summary(
 
     return {
         "text": text,
-        "latest_date": latest_date.date().isoformat(),
-        "latest_value": latest_value,
-        "normal_value": normal_value,
-        "delta_vs_normal": delta_vs_normal,
-        "pct_vs_normal": pct_vs_normal,
-        "normal_years": max(1, int(normal_years)),
-        "samples": samples,
+        **summary,
     }
 
 
@@ -1762,10 +1742,7 @@ def build_answer_with_openai(
         source_date=source_date,
     )
     seasonal_summary: Optional[dict[str, Any]] = None
-    if metric == "ng_electricity" and any(
-        term in (query or "").lower()
-        for term in ("seasonal norm", "seasonal norms", "seasonal normal", "seasonal normals", "vs normal", "versus normal")
-    ):
+    if metric == "ng_electricity" and should_compute_ng_electricity_seasonal_norm(query):
         normal_years = int((((result.meta or {}).get("filters") or {}).get("normal_years") or 5))
         seasonal_summary = _ng_electricity_seasonal_norm_summary(
             df=df,

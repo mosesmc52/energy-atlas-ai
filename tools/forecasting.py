@@ -127,7 +127,7 @@ class TrendForecaster:
                 error_code=ForecastErrorCode.INVALID_HORIZON,
             )
         try:
-            cleaned = self._clean_timeseries(df)
+            cleaned = self._clean_timeseries(df, metric=metric)
             if len(cleaned) < min_observations:
                 return ForecastResult(
                     metric=metric,
@@ -195,12 +195,45 @@ class TrendForecaster:
             )
 
     @staticmethod
-    def _clean_timeseries(df: pd.DataFrame) -> pd.DataFrame:
+    def _clean_timeseries(df: pd.DataFrame, *, metric: str) -> pd.DataFrame:
         cleaned = df.copy()
+        if "date" not in cleaned.columns:
+            raise ValueError("Forecast input is missing required 'date' column.")
         cleaned["date"] = pd.to_datetime(cleaned["date"], errors="coerce")
-        cleaned["value"] = pd.to_numeric(cleaned["value"], errors="coerce")
+        value_col = TrendForecaster._pick_value_column(cleaned, metric=metric)
+        if value_col is None:
+            raise ValueError(
+                f"Forecast input for metric '{metric}' has no usable numeric value column."
+            )
+        cleaned["value"] = pd.to_numeric(cleaned[value_col], errors="coerce")
         cleaned = cleaned.dropna(subset=["date", "value"]).sort_values("date")
         return cleaned[["date", "value"]]
+
+    @staticmethod
+    def _pick_value_column(df: pd.DataFrame, *, metric: str) -> Optional[str]:
+        if "value" in df.columns:
+            return "value"
+
+        metric_defaults = {
+            "iso_gas_dependency": "gas_share",
+            "iso_fuel_mix": "total_generation_mw",
+            "iso_renewables": "renewable_generation",
+            "weather_degree_days_forecast_vs_5y": "demand_delta_bcfd",
+            "weather_regional_demand_drivers": "demand_delta_bcfd",
+        }
+        preferred = metric_defaults.get(metric)
+        if preferred and preferred in df.columns:
+            return preferred
+
+        numeric_cols: list[str] = []
+        for col in df.columns:
+            if col == "date":
+                continue
+            if pd.api.types.is_bool_dtype(df[col]):
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                numeric_cols.append(col)
+        return numeric_cols[0] if numeric_cols else None
 
     @staticmethod
     def _infer_spacing_days(df: pd.DataFrame) -> Optional[float]:

@@ -1,0 +1,397 @@
+from __future__ import annotations
+
+ISO_KEYWORDS = {
+    "ercot": ["ercot", "texas"],
+    "pjm": ["pjm", "mid-atlantic", "pennsylvania", "new jersey", "maryland", "dc"],
+    "isone": [
+        "isone",
+        "iso-ne",
+        "new england",
+        "massachusetts",
+        "connecticut",
+        "maine",
+        "nh",
+        "vermont",
+        "rhode island",
+    ],
+    "nyiso": ["nyiso", "new york iso", "new york"],
+    "caiso": ["caiso", "california iso", "california"],
+}
+
+STORAGE_REGION_KEYWORDS = {
+    "lower48": ["lower48", "lower 48"],
+    "east": ["east", "eastern"],
+    "midwest": ["midwest", "mid-west"],
+    "south_central": ["south_central", "south central", "south"],
+    "mountain": ["mountain"],
+    "pacific": ["pacific", "west coast"],
+}
+
+WEATHER_REGION_KEYWORDS = {
+    "lower48": ["lower 48", "lower48", "u.s.", "us", "national", "united states"],
+    "east": ["east", "eastern", "northeast"],
+    "midwest": ["midwest", "mid-west"],
+    "south": ["south", "southern", "southeast"],
+    "west": ["west", "western"],
+}
+
+TRADE_REGION_KEYWORDS = {
+    "united_states_pipeline_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "total pipeline",
+    ],
+    "canada_pipeline": ["canada_pipeline", "canada pipeline", "canadian pipeline"],
+    "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
+}
+
+IMPORT_REGION_KEYWORDS = {
+    "united_states_pipeline_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "total pipeline",
+    ],
+    "canada_compressed": ["canada_compressed", "canada compressed"],
+    "united_states_compressed_total": [
+        "united_states_compressed_total",
+        "united states compressed total",
+        "us compressed total",
+        "u.s. compressed total",
+    ],
+    "canada_pipeline": ["canada_pipeline", "canada pipeline", "canadian pipeline"],
+    "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
+    "algeria": ["algeria"],
+    "australia": ["australia"],
+    "brunei": ["brunei"],
+    "egypt": ["egypt"],
+    "equatorial_guinea": ["equatorial_guinea", "equatorial guinea"],
+    "france": ["france"],
+    "indonesia": ["indonesia"],
+    "jamaica": ["jamaica"],
+    "malaysia": ["malaysia"],
+    "nigeria": ["nigeria"],
+    "norway": ["norway"],
+    "oman": ["oman"],
+    "peru": ["peru"],
+    "qatar": ["qatar"],
+    "trinidad_and_tobago": ["trinidad_and_tobago", "trinidad and tobago"],
+    "united_arab_emirates": ["united_arab_emirates", "united arab emirates", "uae"],
+    "united_kingdom": ["united_kingdom", "united kingdom", "uk"],
+    "yemen": ["yemen"],
+}
+
+EXPORT_REGION_KEYWORDS = {
+    "united_states_lng_total": [
+        "united_states_lng_total",
+        "united states lng total",
+        "us lng total",
+        "u.s. lng total",
+    ],
+    "canada_truck": ["canada_truck", "canada truck"],
+    "mexico_truck": ["mexico_truck", "mexico truck"],
+    "united_states_truck_total": [
+        "united_states_truck_total",
+        "united states truck total",
+        "us truck total",
+        "u.s. truck total",
+    ],
+    "canada_compressed": ["canada_compressed", "canada compressed"],
+    "united_states_compressed_total": [
+        "united_states_compressed_total",
+        "united states compressed total",
+        "us compressed total",
+        "u.s. compressed total",
+    ],
+    "united_states_pipeline_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "total pipeline",
+    ],
+    "canada_pipeline": ["canada_pipeline", "canada pipeline", "canadian pipeline"],
+    "mexico_pipeline": ["mexico_pipeline", "mexico pipeline"],
+    "argentina": ["argentina"],
+    "australia": ["australia"],
+    "bahrain": ["bahrain"],
+    "bangladesh": ["bangladesh"],
+    "barbados": ["barbados"],
+    "belgium": ["belgium"],
+    "brazil": ["brazil"],
+    "chile": ["chile"],
+    "china": ["china"],
+    "colombia": ["colombia"],
+    "croatia": ["croatia"],
+    "dominican_republic": ["dominican_republic", "dominican republic"],
+    "egypt": ["egypt"],
+    "el_salvador": ["el_salvador", "el salvador"],
+    "finland": ["finland"],
+    "france": ["france"],
+    "germany": ["germany"],
+    "greece": ["greece"],
+    "haiti": ["haiti"],
+    "india": ["india"],
+    "indonesia": ["indonesia"],
+    "israel": ["israel"],
+    "italy": ["italy"],
+    "jamaica": ["jamaica"],
+    "japan": ["japan"],
+    "jordan": ["jordan"],
+    "kuwait": ["kuwait"],
+    "lithuania": ["lithuania"],
+    "malta": ["malta"],
+    "mauritania": ["mauritania"],
+    "mexico": ["mexico"],
+    "netherlands": ["netherlands"],
+    "nicaragua": ["nicaragua"],
+    "pakistan": ["pakistan"],
+    "panama": ["panama"],
+    "philippines": ["philippines"],
+    "poland": ["poland"],
+    "portugal": ["portugal"],
+    "russia": ["russia"],
+    "senegal": ["senegal"],
+    "singapore": ["singapore"],
+    "south_korea": ["south_korea", "south korea"],
+    "spain": ["spain"],
+    "taiwan": ["taiwan"],
+    "thailand": ["thailand"],
+    "turkiye": ["turkiye", "turkey"],
+    "united_arab_emirates": ["united_arab_emirates", "united arab emirates", "uae"],
+    "united_kingdom": ["united_kingdom", "united kingdom", "uk"],
+}
+
+REGIONAL_GROUP_TERMS = (
+    "by region",
+    "regional",
+    "across regions",
+    "all regions",
+)
+
+STORAGE_COMPARE_TERMS = (
+    "weekly change",
+    "storage change",
+    "change in storage",
+    "week over week storage",
+    "storage wow",
+)
+
+CONSUMPTION_STATE_KEYWORDS = {
+    "al": ["al", "alabama"],
+    "ak": ["ak", "alaska"],
+    "az": ["az", "arizona"],
+    "ar": ["ar", "arkansas"],
+    "ca": ["ca", "california"],
+    "co": ["co", "colorado"],
+    "ct": ["ct", "connecticut"],
+    "de": ["de", "delaware"],
+    "fl": ["fl", "florida"],
+    "ga": ["ga", "georgia"],
+    "hi": ["hi", "hawaii"],
+    "id": ["id", "idaho"],
+    "il": ["il", "illinois"],
+    "in": ["in", "indiana"],
+    "ia": ["ia", "iowa"],
+    "ks": ["ks", "kansas"],
+    "ky": ["ky", "kentucky"],
+    "la": ["la", "louisiana"],
+    "me": ["me", "maine"],
+    "md": ["md", "maryland"],
+    "ma": ["ma", "massachusetts"],
+    "mi": ["mi", "michigan"],
+    "mn": ["mn", "minnesota"],
+    "ms": ["ms", "mississippi"],
+    "mo": ["mo", "missouri"],
+    "mt": ["mt", "montana"],
+    "ne": ["ne", "nebraska"],
+    "nv": ["nv", "nevada"],
+    "nh": ["nh", "new hampshire"],
+    "nj": ["nj", "new jersey"],
+    "nm": ["nm", "new mexico"],
+    "ny": ["ny", "new york"],
+    "nc": ["nc", "north carolina"],
+    "nd": ["nd", "north dakota"],
+    "oh": ["oh", "ohio"],
+    "ok": ["ok", "oklahoma"],
+    "or": ["or", "oregon"],
+    "pa": ["pa", "pennsylvania"],
+    "ri": ["ri", "rhode island"],
+    "sc": ["sc", "south carolina"],
+    "sd": ["sd", "south dakota"],
+    "tn": ["tn", "tennessee"],
+    "tx": ["tx", "texas"],
+    "ut": ["ut", "utah"],
+    "vt": ["vt", "vermont"],
+    "va": ["va", "virginia"],
+    "wa": ["wa", "washington"],
+    "wv": ["wv", "west virginia"],
+    "wi": ["wi", "wisconsin"],
+    "wy": ["wy", "wyoming"],
+    "united_states_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "united_states_total",
+        "national total",
+    ],
+}
+
+PRODUCTION_STATE_KEYWORDS = {
+    "al": ["al", "alabama"],
+    "ak": ["ak", "alaska"],
+    "az": ["az", "arizona"],
+    "ar": ["ar", "arkansas"],
+    "ca": ["ca", "california"],
+    "co": ["co", "colorado"],
+    "fl": ["fl", "florida"],
+    "il": ["il", "illinois"],
+    "in": ["in", "indiana"],
+    "ks": ["ks", "kansas"],
+    "ky": ["ky", "kentucky"],
+    "la": ["la", "louisiana"],
+    "md": ["md", "maryland"],
+    "mi": ["mi", "michigan"],
+    "mo": ["mo", "missouri"],
+    "ms": ["ms", "mississippi"],
+    "mt": ["mt", "montana"],
+    "ne": ["ne", "nebraska"],
+    "nv": ["nv", "nevada"],
+    "nm": ["nm", "new mexico"],
+    "ny": ["ny", "new york"],
+    "nd": ["nd", "north dakota"],
+    "oh": ["oh", "ohio"],
+    "ok": ["ok", "oklahoma"],
+    "or": ["or", "oregon"],
+    "pa": ["pa", "pennsylvania"],
+    "sd": ["sd", "south dakota"],
+    "tn": ["tn", "tennessee"],
+    "tx": ["tx", "texas"],
+    "ut": ["ut", "utah"],
+    "va": ["va", "virginia"],
+    "wv": ["wv", "west virginia"],
+    "united_states_total": [
+        "us total",
+        "u.s. total",
+        "united states total",
+        "united_states_total",
+        "national total",
+    ],
+}
+
+RESERVES_STATE_KEYWORDS = {
+    "al": ["al", "alabama"],
+    "ak": ["ak", "alaska"],
+    "ar": ["ar", "arkansas"],
+    "ca": ["ca", "california"],
+    "co": ["co", "colorado"],
+    "fl": ["fl", "florida"],
+    "ks": ["ks", "kansas"],
+    "ky": ["ky", "kentucky"],
+    "la": ["la", "louisiana"],
+    "mi": ["mi", "michigan"],
+    "ms": ["ms", "mississippi"],
+    "mt": ["mt", "montana"],
+    "nd": ["nd", "north dakota"],
+    "nm": ["nm", "new mexico"],
+    "ny": ["ny", "new york"],
+    "oh": ["oh", "ohio"],
+    "ok": ["ok", "oklahoma"],
+    "pa": ["pa", "pennsylvania"],
+    "tx": ["tx", "texas"],
+    "ut": ["ut", "utah"],
+    "va": ["va", "virginia"],
+    "wv": ["wv", "west virginia"],
+    "wy": ["wy", "wyoming"],
+    "us": ["us", "u.s.", "united states"],
+    "all": ["all"],
+}
+
+RESERVES_RESOURCE_CATEGORY_KEYWORDS = {
+    "proved_associated_gas": [
+        "proved associated gas",
+        "associated gas",
+    ],
+    "proved_nonassociated_gas": [
+        "proved nonassociated gas",
+        "nonassociated gas",
+        "non-associated gas",
+    ],
+    "proved_ngl": [
+        "proved ngl",
+        "ngl",
+        "natural gas liquids",
+    ],
+    "expected_future_gas_production": [
+        "expected future gas production",
+        "future gas production",
+        "expected future production",
+    ],
+}
+
+PIPELINE_DATASET_KEYWORDS = {
+    "historical_projects": [
+        "historical projects",
+        "historical pipeline projects",
+        "pipeline project history",
+    ],
+    "inflow_by_region": [
+        "inflow by region",
+        "regional inflow",
+        "inflows by region",
+        "region inflow",
+    ],
+    "inflow_by_state": [
+        "inflow by state",
+        "state inflow",
+        "inflows by state",
+    ],
+    "inflow_single_year": [
+        "inflow single year",
+        "single year inflow",
+    ],
+    "major_pipeline_summary": [
+        "major pipeline summary",
+        "major pipelines",
+        "pipeline summary",
+    ],
+    "natural_gas_pipeline_projects": [
+        "pipeline projects",
+        "natural gas pipeline projects",
+        "project list",
+        "pipeline project",
+    ],
+    "outflow_by_region": [
+        "outflow by region",
+        "regional outflow",
+        "outflows by region",
+        "region outflow",
+    ],
+    "outflow_by_state": [
+        "outflow by state",
+        "state outflow",
+        "outflows by state",
+    ],
+    "pipeline_state2_state_capacity": [
+        "state to state capacity",
+        "state2state capacity",
+        "pipeline capacity",
+        "capacity by state pair",
+        "interstate capacity",
+    ],
+}
+
+ALLOWED_ISOS = set(ISO_KEYWORDS.keys())
+ALLOWED_STORAGE_REGIONS = set(STORAGE_REGION_KEYWORDS.keys())
+ALLOWED_TRADE_REGIONS = set(TRADE_REGION_KEYWORDS.keys())
+ALLOWED_PRODUCTION_STATES = set(PRODUCTION_STATE_KEYWORDS.keys())
+ALLOWED_CONSUMPTION_STATES = set(CONSUMPTION_STATE_KEYWORDS.keys())
+ALLOWED_IMPORT_REGIONS = set(IMPORT_REGION_KEYWORDS.keys())
+ALLOWED_EXPORT_REGIONS = set(EXPORT_REGION_KEYWORDS.keys())
+ALLOWED_RESERVES_STATES = set(RESERVES_STATE_KEYWORDS.keys())
+ALLOWED_RESERVES_RESOURCE_CATEGORIES = set(
+    RESERVES_RESOURCE_CATEGORY_KEYWORDS.keys()
+)
+ALLOWED_PIPELINE_DATASETS = set(PIPELINE_DATASET_KEYWORDS.keys())
+ALLOWED_WEATHER_REGIONS = set(WEATHER_REGION_KEYWORDS.keys())
+ALLOWED_WEATHER_NORMAL_YEARS = {1, 2, 3, 4, 5}
