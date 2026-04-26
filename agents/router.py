@@ -195,6 +195,9 @@ def is_weekly_energy_atlas_summary_query(q: str) -> bool:
     has_recap = any(cue in q for cue in recap_cues)
     if not has_recap and "energy atlas summary" in q and ("this week" in q or "weekly" in q):
         has_recap = True
+    has_energy_atlas = "energy atlas" in q
+    if has_recap and has_energy_atlas:
+        return True
     has_weather = "weather" in q
     has_storage = "storage" in q
     has_lng_or_supply = ("lng" in q) or ("supply" in q)
@@ -592,6 +595,68 @@ def route_query(user_query: str) -> HybridRouteResult:
     candidates = score_routes(normalized)
     confidence = candidate_confidence(candidates)
     ambiguous = is_ambiguous(candidates)
+
+    has_import = bool(re.search(r"\bimports?\b", normalized))
+    has_export = bool(re.search(r"\bexports?\b", normalized))
+    has_reserves = bool(re.search(r"\breserves?\b", normalized))
+
+    if has_reserves:
+        metric = "ng_exploration_reserves_lower48"
+        reserves_start = "2000-01-01" if not has_explicit_dates else start
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=reserves_start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for implied natural-gas reserves query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if has_import and not has_export:
+        metric = "lng_imports"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for implied natural-gas imports query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if has_export and not has_import:
+        metric = "lng_exports"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for implied natural-gas exports query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
 
     if is_weekly_energy_atlas_summary_query(normalized):
         summary_start = start

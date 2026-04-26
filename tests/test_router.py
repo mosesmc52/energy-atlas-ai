@@ -220,6 +220,18 @@ class TestRouter(unittest.TestCase):
         self.assertEqual(result.metrics, ["weekly_energy_atlas_summary"])
         self.assertEqual(result.source, "rule")
 
+    def test_implied_natural_gas_reserves_query_routes_to_reserves_metric(self) -> None:
+        result = route_query("Are reserves increasing or decreasing?")
+        self.assertEqual(result.primary_metric, "ng_exploration_reserves_lower48")
+
+    def test_implied_natural_gas_imports_query_routes_to_imports_metric(self) -> None:
+        result = route_query("Are imports rising or falling?")
+        self.assertEqual(result.primary_metric, "lng_imports")
+
+    def test_implied_natural_gas_exports_query_routes_to_exports_metric(self) -> None:
+        result = route_query("Are exports higher than last year?")
+        self.assertEqual(result.primary_metric, "lng_exports")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -443,7 +443,7 @@ async def set_starters():
         ),
         cl.Starter(
             label="Production",
-            message="Is production growing year over year?",
+            message="Is gas production growing year over year?",
             icon="/public/icons/gas-plant.svg",
         ),
         cl.Starter(
@@ -463,7 +463,7 @@ async def set_starters():
         ),
         cl.Starter(
             label="Exploration & Reserves",
-            message="Are reserves increasing or decreasing?",
+            message="Are gas reserves increasing or decreasing?",
             icon="/public/icons/reserves.svg",
         ),
         cl.Starter(

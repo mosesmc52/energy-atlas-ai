@@ -14,6 +14,8 @@ NATURAL_GAS_CONTEXT_TERMS = {
     "natural gas",
     "nat gas",
     "gas",
+    "production",
+    "reserves",
     "lng",
     "henry hub",
     "hh",
@@ -75,6 +77,13 @@ def looks_like_general_energy_question(question: str, previous_context: str = ""
 
 def is_natural_gas_question(question: str, previous_context: str = "") -> bool:
     normalized = question.lower()
+    weekly_energy_atlas_summary = (
+        "energy atlas" in normalized
+        and "summary" in normalized
+        and ("this week" in normalized or "weekly" in normalized)
+    )
+    if weekly_energy_atlas_summary:
+        return True
     if any(term in normalized for term in NATURAL_GAS_CONTEXT_TERMS):
         return True
     if previous_context and not any(term in normalized for term in OUT_OF_SCOPE_ENERGY_TERMS):
