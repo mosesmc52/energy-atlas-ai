@@ -5,11 +5,12 @@ import asyncio
 import logging
 import os
 import pathlib
-import requests
 import sys
 import tempfile
 import urllib.parse
 from time import perf_counter
+
+import requests
 
 cwd = pathlib.Path.cwd()
 if cwd.name == "notebooks":
@@ -25,7 +26,11 @@ if app_root.exists() and str(app_root) not in sys.path:
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
 os.environ.setdefault(
     "DJANGO_CONFIGURATION",
-    "Production" if os.getenv("DJANGO_DEBUG", "").strip().lower() == "false" else "Development",
+    (
+        "Production"
+        if os.getenv("DJANGO_DEBUG", "").strip().lower() == "false"
+        else "Development"
+    ),
 )
 
 from configurations.importer import install
@@ -38,7 +43,6 @@ from openai import OpenAI
 django.setup()
 
 import chainlit as cl
-from django.conf import settings
 from agents.energy_atlas_agent import EnergyAtlasAgent
 from agents.guardrails import (
     OUT_OF_SCOPE_MESSAGE,
@@ -51,18 +55,19 @@ from alerts.services import (
     parse_signal_question,
 )
 from charts.plotly_renderer import (
-    compute_timeseries_summary_metrics,
     compute_storage_change_summary_metrics,
+    compute_timeseries_summary_metrics,
     render_plotly,
     should_render_storage_change_summary_cards,
     should_render_timeseries_summary_cards,
 )
+from django.conf import settings
 from executer import MetricExecutor
 from schemas.answer import StructuredAnswer
 from tools.cftc_adapter import CFTCAdapter
 from tools.des_adapter import DallasEnergySurveyAdapter
-from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
+from tools.forecasting import TrendForecaster
 from tools.gridstatus_adapter import GridStatusAdapter
 from utils.sheets_logger import GoogleSheetsQuestionLogger
 
@@ -173,7 +178,7 @@ def _alert_create_url(signal_id: str, title: str) -> str:
 
 
 def _forecast_direction_from_result(forecast) -> str:
-    slope = ((forecast.metadata or {}).get("slope_per_day") if forecast else None)
+    slope = (forecast.metadata or {}).get("slope_per_day") if forecast else None
     try:
         slope_value = float(slope)
     except (TypeError, ValueError):
@@ -247,10 +252,14 @@ def format_response(data: StructuredAnswer | dict) -> str:
         sections.append(f"**Summary**\n{summary}")
 
     drivers_list = [
-        str(driver).strip() for driver in (data.get("drivers") or []) if str(driver).strip()
+        str(driver).strip()
+        for driver in (data.get("drivers") or [])
+        if str(driver).strip()
     ]
     if drivers_list:
-        sections.append("**Drivers**\n" + "\n".join(f"- {driver}" for driver in drivers_list))
+        sections.append(
+            "**Drivers**\n" + "\n".join(f"- {driver}" for driver in drivers_list)
+        )
 
     forecast = data.get("forecast") or {}
     forecast_direction = str(forecast.get("direction") or "").strip()
@@ -274,7 +283,7 @@ def format_response(data: StructuredAnswer | dict) -> str:
         )
 
     source_lines = []
-    for source in (data.get("sources") or []):
+    for source in data.get("sources") or []:
         if not isinstance(source, dict):
             continue
         title = str(source.get("title") or "").strip()
@@ -288,14 +297,16 @@ def format_response(data: StructuredAnswer | dict) -> str:
     return "\n\n".join(sections)
 
 
-def _validated_suggested_alerts(data: StructuredAnswer | dict | None) -> list[dict[str, str]]:
+def _validated_suggested_alerts(
+    data: StructuredAnswer | dict | None,
+) -> list[dict[str, str]]:
     if data is None:
         return []
     if hasattr(data, "model_dump"):
         data = data.model_dump()
 
     suggestions = []
-    for item in (data.get("suggested_alerts") or []):
+    for item in data.get("suggested_alerts") or []:
         if not isinstance(item, dict):
             continue
         signal_id = str(item.get("signal_id") or "").strip()
@@ -345,6 +356,7 @@ def _format_signal_evaluation(evaluation) -> str:
         sections.append("**Sources**\n- " + source_line)
     return "\n\n".join(sections)
 
+
 async def _append_question_async(qlog, *, question: str, session_id: str) -> None:
     try:
         await asyncio.to_thread(
@@ -372,7 +384,14 @@ def build_container():
     weather_csv_path = os.getenv("ATLAS_WEATHER_CSV_PATH")
     if not weather_csv_path:
         weather_csv_path = str(
-            (proj_root / "data" / "raw" / "noaa" / "regional" / "daily_region_weather.csv")
+            (
+                proj_root
+                / "data"
+                / "raw"
+                / "noaa"
+                / "regional"
+                / "daily_region_weather.csv"
+            )
         )
     eia_adapter = EIAAdapter(
         cache_dir=cache_root / "eia",
@@ -412,6 +431,11 @@ def build_container():
 @cl.set_starters
 async def set_starters():
     return [
+        cl.Starter(
+            label="Weekly Summary",
+            message="Give me this week’s Energy Atlas summary",
+            icon="/public/icons/summary.svg",
+        ),
         cl.Starter(
             label="Price of henry hub",
             message="What is the current Henry Hub price?",
@@ -587,7 +611,9 @@ async def on_message(message: cl.Message):
         payload = outcome.payload
         forecast = outcome.forecast
         if result is None or payload is None:
-            raise ValueError("Agent failed to produce a metric result and answer payload.")
+            raise ValueError(
+                "Agent failed to produce a metric result and answer payload."
+            )
 
         cache_meta = ((result.meta or {}).get("cache") or {}) if result.meta else {}
         cache_timings = cache_meta.get("timings_ms") or {}
@@ -609,12 +635,14 @@ async def on_message(message: cl.Message):
                 user_query,
             )
         if forecast is not None and payload.structured_response is not None:
-            payload.structured_response.forecast.direction = _forecast_direction_from_result(
-                forecast
+            payload.structured_response.forecast.direction = (
+                _forecast_direction_from_result(forecast)
             )
             payload.structured_response.forecast.reasoning = forecast.explanation
         elif forecast is not None:
-            payload.answer_text = f"{payload.answer_text}\n\nForecast: {forecast.explanation}"
+            payload.answer_text = (
+                f"{payload.answer_text}\n\nForecast: {forecast.explanation}"
+            )
 
         message_started = perf_counter() if DEBUG_ENABLED else 0.0
         rendered_content = (
@@ -646,9 +674,11 @@ async def on_message(message: cl.Message):
 
         if payload.report_context_used and payload.report_context_sources:
             rag_lines = [
-                f"- {source.title} ({source.date})"
-                if source.date
-                else f"- {source.title}"
+                (
+                    f"- {source.title} ({source.date})"
+                    if source.date
+                    else f"- {source.title}"
+                )
                 for source in payload.report_context_sources
             ]
             await cl.Message(
@@ -658,7 +688,9 @@ async def on_message(message: cl.Message):
         chart_elapsed_ms = 0.0
         if payload.chart_spec is not None:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
-            fig = render_plotly(payload.chart_spec, result.df, forecast_overlay=forecast)
+            fig = render_plotly(
+                payload.chart_spec, result.df, forecast_overlay=forecast
+            )
 
             summary_metrics = []
             if should_render_storage_change_summary_cards(payload.chart_spec):
@@ -742,7 +774,11 @@ async def on_message(message: cl.Message):
 async def share_structured_answer(action: cl.Action):
     message_id = str((action.payload or {}).get("message_id") or "").strip()
     shareable_answers = cl.user_session.get("shareable_answers") or {}
-    answer_payload = shareable_answers.get(message_id) if isinstance(shareable_answers, dict) else None
+    answer_payload = (
+        shareable_answers.get(message_id)
+        if isinstance(shareable_answers, dict)
+        else None
+    )
     if not answer_payload:
         await cl.Message(
             content="This answer is no longer available to share in the current session."
@@ -761,10 +797,7 @@ async def share_structured_answer(action: cl.Action):
         return
 
     await cl.Message(
-        content=(
-            "**Share Link**\n"
-            f"Unlisted link for this answer only: {share_url}"
-        )
+        content=("**Share Link**\n" f"Unlisted link for this answer only: {share_url}")
     ).send()
     await _track_chainlit_event(
         "shared_answer_created",

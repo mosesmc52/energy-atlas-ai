@@ -9,6 +9,16 @@ from tools.forecasting import ForecastResult
 CHART_BG = "#FFFFFF"
 
 
+def _sign(value: float | None) -> float:
+    if value is None:
+        return 0.0
+    if value > 0:
+        return 1.0
+    if value < 0:
+        return -1.0
+    return 0.0
+
+
 def _axis_field(
     axis: str | AxisSpec, default_label: str
 ) -> tuple[str, str, str | None]:
@@ -408,6 +418,108 @@ def render_plotly(
         return fig
 
     d = df.copy()
+
+    if (
+        spec.title == "Market Pressure Dashboard"
+        and {
+            "weather_demand_delta_bcfd",
+            "storage_surprise_bcf",
+            "lng_delta_mmcf",
+            "production_delta_mmcf",
+            "price_delta_usd_mmbtu",
+        }.issubset(d.columns)
+    ):
+        row = d.iloc[-1]
+        weather_delta = pd.to_numeric(row.get("weather_demand_delta_bcfd"), errors="coerce")
+        storage_surprise = pd.to_numeric(row.get("storage_surprise_bcf"), errors="coerce")
+        lng_delta = pd.to_numeric(row.get("lng_delta_mmcf"), errors="coerce")
+        production_delta = pd.to_numeric(row.get("production_delta_mmcf"), errors="coerce")
+        price_delta = pd.to_numeric(row.get("price_delta_usd_mmbtu"), errors="coerce")
+
+        components = pd.DataFrame(
+            [
+                {
+                    "component": "Weather",
+                    "score": _sign(None if pd.isna(weather_delta) else float(weather_delta)),
+                    "detail": (
+                        f"{float(weather_delta):+,.2f} Bcf/d"
+                        if not pd.isna(weather_delta)
+                        else "n/a"
+                    ),
+                },
+                {
+                    "component": "Storage",
+                    "score": _sign(None if pd.isna(storage_surprise) else -float(storage_surprise)),
+                    "detail": (
+                        f"{float(storage_surprise):+,.1f} Bcf surprise"
+                        if not pd.isna(storage_surprise)
+                        else "n/a"
+                    ),
+                },
+                {
+                    "component": "LNG / Supply",
+                    "score": _sign(
+                        None
+                        if pd.isna(lng_delta) and pd.isna(production_delta)
+                        else -float((0.0 if pd.isna(lng_delta) else lng_delta) + (0.0 if pd.isna(production_delta) else production_delta))
+                    ),
+                    "detail": (
+                        f"LNG {float(lng_delta):+,.0f}, Prod {float(production_delta):+,.0f} MMcf"
+                        if (not pd.isna(lng_delta) or not pd.isna(production_delta))
+                        else "n/a"
+                    ),
+                },
+                {
+                    "component": "Price",
+                    "score": _sign(None if pd.isna(price_delta) else float(price_delta)),
+                    "detail": (
+                        f"{float(price_delta):+,.2f} $/MMBtu"
+                        if not pd.isna(price_delta)
+                        else "n/a"
+                    ),
+                },
+            ]
+        )
+
+        components["color"] = components["score"].map(
+            lambda s: "#2ca02c" if s > 0 else "#d62728" if s < 0 else "#9ca3af"
+        )
+
+        fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=components["component"],
+                    y=components["score"],
+                    marker_color=components["color"],
+                    text=components["detail"],
+                    textposition="outside",
+                    hovertemplate="%{x}<br>Score: %{y:+.0f}<br>%{text}<extra></extra>",
+                )
+            ]
+        )
+        fig.update_layout(
+            template="plotly_white",
+            margin=dict(l=30, r=20, t=120, b=40),
+            height=500,
+            xaxis_title=spec.x_label or "Driver",
+            yaxis_title=spec.y_label or "Pressure Score",
+            title=dict(x=0.02, xanchor="left", font=dict(size=20), pad=dict(b=18)),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            showlegend=False,
+        )
+        fig.update_yaxes(
+            range=[-1.4, 1.4],
+            tickmode="array",
+            tickvals=[-1, 0, 1],
+            ticktext=["Bearish", "Neutral", "Bullish"],
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.08)",
+            zeroline=True,
+            zerolinecolor="rgba(0,0,0,0.35)",
+        )
+        fig.update_xaxes(showgrid=False)
+        return fig
 
     x_field, x_label, _ = _axis_field(spec.x, "Date")
     y_fields = [y for y in _y_fields(spec.y) if y in d.columns]

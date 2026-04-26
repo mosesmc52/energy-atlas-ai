@@ -179,6 +179,33 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertEqual(fig.data[0].name, "value")
         self.assertEqual(fig.data[1].name, "weekly_change")
 
+    def test_market_pressure_dashboard_renders_four_components(self) -> None:
+        df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-04-24",
+                    "weather_demand_delta_bcfd": -0.45,
+                    "storage_surprise_bcf": 20.0,
+                    "lng_delta_mmcf": 5.0,
+                    "production_delta_mmcf": 300.0,
+                    "price_delta_usd_mmbtu": 0.10,
+                }
+            ]
+        )
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Market Pressure Dashboard",
+            x="component",
+            y=["score"],
+            x_label="Driver",
+            y_label="Pressure Score (Bullish + / Bearish -)",
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(list(fig.data[0].x), ["Weather", "Storage", "LNG / Supply", "Price"])
+        self.assertEqual(len(fig.data[0].y), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -177,6 +177,31 @@ def wants_seasonal_norm_comparison(q: str) -> bool:
     return has_seasonal_norm_phrase(q)
 
 
+def is_weekly_energy_atlas_summary_query(q: str) -> bool:
+    q = q.lower().replace("’", "'")
+    direct_phrases = (
+        "week in energy atlas",
+        "energy atlas weekly summary",
+        "weekly energy atlas recap",
+        "weekly natural gas wrap-up",
+        "weekly natural gas wrap up",
+        "weekly wrap-up",
+        "weekly wrap up",
+    )
+    if any(phrase in q for phrase in direct_phrases):
+        return True
+
+    recap_cues = ("weekly summary", "weekly recap", "this week's summary")
+    has_recap = any(cue in q for cue in recap_cues)
+    if not has_recap and "energy atlas summary" in q and ("this week" in q or "weekly" in q):
+        has_recap = True
+    has_weather = "weather" in q
+    has_storage = "storage" in q
+    has_lng_or_supply = ("lng" in q) or ("supply" in q)
+    has_price = ("price" in q) or ("henry hub" in q)
+    return has_recap and has_weather and has_storage and has_lng_or_supply and has_price
+
+
 def route_trade_region(q: str) -> str | None:
     q = q.lower()
     for region, keys in TRADE_REGION_KEYWORDS.items():
@@ -567,6 +592,30 @@ def route_query(user_query: str) -> HybridRouteResult:
     candidates = score_routes(normalized)
     confidence = candidate_confidence(candidates)
     ambiguous = is_ambiguous(candidates)
+
+    if is_weekly_energy_atlas_summary_query(normalized):
+        summary_start = start
+        if not has_explicit_dates:
+            summary_start = (
+                pd.Timestamp(end) - pd.DateOffset(years=1)
+            ).date().isoformat()
+        metric = "weekly_energy_atlas_summary"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=summary_start,
+            end=end,
+            filters=None,
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for Energy Atlas weekly multi-factor summary",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
 
     # Deterministic domain fast-paths for frequent electricity + gas asks.
     if is_power_burn_seasonal_question(normalized):

@@ -386,6 +386,87 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(len(result.df), 0)
         self.assertIn("service unavailable", str(result.source.parameters.get("error")))
 
+    def test_weekly_energy_atlas_summary_combines_weather_storage_supply_and_price(self) -> None:
+        eia = Mock()
+        grid = Mock()
+        eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"delta_hdd": -4.0, "delta_cdd": 2.0, "demand_delta_bcfd": -0.5, "as_of": "2026-04-24T00:00:00Z"},
+                    {"delta_hdd": -3.0, "delta_cdd": 1.0, "demand_delta_bcfd": -0.4, "as_of": "2026-04-24T00:00:00Z"},
+                ]
+            ),
+            source=Mock(reference="ref:weather"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.storage_working_gas_change_weekly.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"date": "2026-03-20", "value": 20.0},
+                    {"date": "2026-03-27", "value": 25.0},
+                    {"date": "2026-04-03", "value": 30.0},
+                    {"date": "2026-04-10", "value": 35.0},
+                    {"date": "2026-04-17", "value": 40.0},
+                    {"date": "2026-04-24", "value": 50.0},
+                ]
+            ),
+            source=Mock(reference="ref:storage"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.lng_exports.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"date": "2026-03-01", "value": 120.0},
+                    {"date": "2026-04-01", "value": 125.0},
+                ]
+            ),
+            source=Mock(reference="ref:lng"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.ng_production_lower48.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"date": "2026-03-01", "value": 104000.0},
+                    {"date": "2026-04-01", "value": 104300.0},
+                ]
+            ),
+            source=Mock(reference="ref:prod"),
+            meta={"cache": {"hit": True}},
+        )
+        eia.henry_hub_spot.return_value = Mock(
+            df=__import__("pandas").DataFrame(
+                [
+                    {"date": "2026-04-17", "value": 2.71},
+                    {"date": "2026-04-24", "value": 2.81},
+                ]
+            ),
+            source=Mock(reference="ref:price"),
+            meta={"cache": {"hit": True}},
+        )
+        executor = MetricExecutor(eia=eia, grid=grid)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="weekly_energy_atlas_summary",
+                start="2025-04-24",
+                end="2026-04-24",
+                filters=None,
+            )
+        )
+
+        self.assertEqual(
+            result.source.reference,
+            "eia-ng-client:derived_natural_gas.weekly_energy_atlas_summary",
+        )
+        self.assertIn("weather_demand_delta_bcfd", result.df.columns)
+        self.assertIn("storage_surprise_bcf", result.df.columns)
+        self.assertIn("price_delta_usd_mmbtu", result.df.columns)
+        self.assertEqual(eia.weather_degree_days_forecast_vs_5y.call_count, 1)
+        self.assertEqual(eia.storage_working_gas_change_weekly.call_count, 1)
+        self.assertEqual(eia.lng_exports.call_count, 1)
+        self.assertEqual(eia.ng_production_lower48.call_count, 1)
+        self.assertEqual(eia.henry_hub_spot.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

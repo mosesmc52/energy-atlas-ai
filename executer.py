@@ -61,6 +61,7 @@ class MetricExecutor:
             "ng_pipeline": self._eia_ng_pipeline,
             "weather_degree_days_forecast_vs_5y": self._eia_weather_degree_days_forecast_vs_5y,
             "weather_regional_demand_drivers": self._eia_weather_regional_demand_drivers,
+            "weekly_energy_atlas_summary": self._eia_weekly_energy_atlas_summary,
             # --- Dallas Fed Energy Survey ---
             "des_business_activity_index": self._des_metric,
             "des_company_outlook_index": self._des_metric,
@@ -604,6 +605,151 @@ class MetricExecutor:
             meta={
                 "cache": {"regions": region_meta},
                 "note": "Derived by ranking regional weather-demand deltas from East/Midwest/South/West.",
+            },
+        )
+
+    @staticmethod
+    def _latest_with_delta(df: pd.DataFrame | None) -> tuple[Any, float | None, float | None]:
+        if df is None or df.empty or "date" not in df.columns or "value" not in df.columns:
+            return None, None, None
+        ordered = df.copy()
+        ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+        ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+        ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
+        if ordered.empty:
+            return None, None, None
+        latest_row = ordered.iloc[-1]
+        latest_date = latest_row["date"].date().isoformat()
+        latest_value = float(latest_row["value"])
+        if len(ordered) < 2:
+            return latest_date, latest_value, None
+        prior_value = float(ordered.iloc[-2]["value"])
+        return latest_date, latest_value, latest_value - prior_value
+
+    @staticmethod
+    def _storage_surprise_vs_recent_average(
+        df: pd.DataFrame | None, lookback_weeks: int = 5
+    ) -> tuple[float | None, float | None, float | None]:
+        if df is None or df.empty or "date" not in df.columns or "value" not in df.columns:
+            return None, None, None
+        ordered = df.copy()
+        ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+        ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+        ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
+        if ordered.empty:
+            return None, None, None
+        values = ordered["value"].tolist()
+        latest = float(values[-1])
+        if len(values) < 2:
+            return latest, None, None
+        recent_prior = values[-(lookback_weeks + 1) : -1]
+        if not recent_prior:
+            return latest, None, None
+        expected = float(pd.Series(recent_prior).mean())
+        return latest, expected, latest - expected
+
+    def _eia_weekly_energy_atlas_summary(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        del filters
+
+        weather = self.eia.weather_degree_days_forecast_vs_5y(
+            start=start,
+            end=end,
+            region="lower48",
+            normal_years=5,
+        )
+        storage_change = self.eia.storage_working_gas_change_weekly(
+            start=start,
+            end=end,
+            region="lower48",
+        )
+        lng_exports = self.eia.lng_exports(
+            start=start,
+            end=end,
+            region="united_states_pipeline_total",
+        )
+        production = self.eia.ng_production_lower48(
+            start=start,
+            end=end,
+            state="united_states_total",
+        )
+        price = self.eia.henry_hub_spot(start=start, end=end)
+
+        weather_df = weather.df.copy() if weather.df is not None else pd.DataFrame()
+        weather_demand_delta = None
+        weather_delta_hdd = None
+        weather_delta_cdd = None
+        weather_as_of = None
+        if not weather_df.empty:
+            weather_df["demand_delta_bcfd"] = pd.to_numeric(
+                weather_df.get("demand_delta_bcfd"), errors="coerce"
+            )
+            weather_df["delta_hdd"] = pd.to_numeric(weather_df.get("delta_hdd"), errors="coerce")
+            weather_df["delta_cdd"] = pd.to_numeric(weather_df.get("delta_cdd"), errors="coerce")
+            weather_demand_delta = float(weather_df["demand_delta_bcfd"].mean())
+            weather_delta_hdd = float(weather_df["delta_hdd"].sum())
+            weather_delta_cdd = float(weather_df["delta_cdd"].sum())
+            weather_as_of = str(weather_df.iloc[-1].get("as_of") or "").strip() or None
+
+        storage_latest, storage_expected, storage_surprise = (
+            self._storage_surprise_vs_recent_average(storage_change.df)
+        )
+        _, lng_latest, lng_delta = self._latest_with_delta(lng_exports.df)
+        _, production_latest, production_delta = self._latest_with_delta(production.df)
+        price_date, price_latest, price_delta = self._latest_with_delta(price.df)
+
+        summary_date = price_date or end
+        out = pd.DataFrame(
+            [
+                {
+                    "date": summary_date,
+                    "weather_as_of": weather_as_of,
+                    "weather_demand_delta_bcfd": weather_demand_delta,
+                    "weather_delta_hdd": weather_delta_hdd,
+                    "weather_delta_cdd": weather_delta_cdd,
+                    "storage_latest_bcf": storage_latest,
+                    "storage_expected_bcf": storage_expected,
+                    "storage_surprise_bcf": storage_surprise,
+                    "lng_latest_mmcf": lng_latest,
+                    "lng_delta_mmcf": lng_delta,
+                    "production_latest_mmcf": production_latest,
+                    "production_delta_mmcf": production_delta,
+                    "price_latest_usd_mmbtu": price_latest,
+                    "price_delta_usd_mmbtu": price_delta,
+                }
+            ]
+        )
+
+        return EIAResult(
+            df=out,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Energy Atlas Weekly Summary (Derived)",
+                reference="eia-ng-client:derived_natural_gas.weekly_energy_atlas_summary",
+                parameters={
+                    "start": start,
+                    "end": end,
+                    "weather_reference": weather.source.reference,
+                    "storage_change_reference": storage_change.source.reference,
+                    "lng_exports_reference": lng_exports.source.reference,
+                    "production_reference": production.source.reference,
+                    "price_reference": price.source.reference,
+                    "storage_expectation_proxy": "recent_5_week_average",
+                },
+            ),
+            meta={
+                "cache": {
+                    "weather": (weather.meta or {}).get("cache"),
+                    "storage_change": (storage_change.meta or {}).get("cache"),
+                    "lng_exports": (lng_exports.meta or {}).get("cache"),
+                    "production": (production.meta or {}).get("cache"),
+                    "price": (price.meta or {}).get("cache"),
+                },
+                "note": (
+                    "Derived weekly summary combining weather-driven demand impact, storage surprise vs "
+                    "recent average proxy, LNG/supply shifts, and Henry Hub price result."
+                ),
             },
         )
 

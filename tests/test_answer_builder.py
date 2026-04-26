@@ -310,6 +310,50 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertIn("seasonal norm", payload.answer_text.lower())
         self.assertIn("Difference vs Norm", [dp.metric for dp in payload.structured_response.data_points])
 
+    def test_weekly_energy_atlas_summary_answer_uses_four_block_format(self) -> None:
+        df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-04-24",
+                    "weather_as_of": "2026-04-24T00:00:00Z",
+                    "weather_demand_delta_bcfd": -0.45,
+                    "weather_delta_hdd": -7.0,
+                    "weather_delta_cdd": 3.0,
+                    "storage_latest_bcf": 50.0,
+                    "storage_expected_bcf": 30.0,
+                    "storage_surprise_bcf": 20.0,
+                    "lng_latest_mmcf": 125.0,
+                    "lng_delta_mmcf": 5.0,
+                    "production_latest_mmcf": 104300.0,
+                    "production_delta_mmcf": 300.0,
+                    "price_latest_usd_mmbtu": 2.81,
+                    "price_delta_usd_mmbtu": 0.10,
+                }
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Energy Atlas Weekly Summary (Derived)",
+                reference="test",
+                retrieved_at=datetime(2026, 4, 24),
+            ),
+            meta={"metric": "weekly_energy_atlas_summary"},
+        )
+
+        payload = build_answer_with_openai(
+            query="Give me this week's energy atlas summary.",
+            result=result,
+        )
+
+        self.assertIn("Weather:", payload.answer_text)
+        self.assertIn("Storage:", payload.answer_text)
+        self.assertIn("LNG / Supply:", payload.answer_text)
+        self.assertIn("Price:", payload.answer_text)
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.title, "Market Pressure Dashboard")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -314,6 +314,15 @@ ROUTE_MAP = {
         "weather demand by region",
         "weather drivers by region",
     ],
+    "weekly_energy_atlas_summary": [
+        "week in energy atlas",
+        "energy atlas weekly summary",
+        "weekly energy atlas recap",
+        "weekly natural gas wrap-up",
+        "weekly natural gas wrap up",
+        "weekly wrap-up",
+        "weekly wrap up",
+    ],
 }
 
 NORMALIZE_PATTERNS: List[Tuple[str, str]] = [
@@ -415,6 +424,16 @@ BONUS_TERMS: Dict[str, List[str]] = {
         "driving",
         "weather",
         "demand",
+    ],
+    "weekly_energy_atlas_summary": [
+        "week in energy atlas",
+        "weekly energy atlas",
+        "weekly summary",
+        "weekly recap",
+        "weather storage",
+        "lng supply",
+        "storage surprise",
+        "price result",
     ],
     "iso_load": ["load", "demand", "system demand"],
     "iso_gas_dependency": [

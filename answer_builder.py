@@ -30,6 +30,7 @@ from schemas.answer import (
     SuggestedAlert,
     StructuredAnswer,
 )
+from schemas.chart_spec import ChartSpec
 from scripts.eia.rag.prompt_context import format_report_context
 from scripts.eia.rag.retrieval import (
     load_report_chunks,
@@ -102,6 +103,7 @@ METRIC_UNITS = {
     "open_interest": "contracts",
     "weather_degree_days_forecast_vs_5y": "degree-days",
     "weather_regional_demand_drivers": "Bcf/d",
+    "weekly_energy_atlas_summary": "index",
 }
 
 SECTOR_LABELS = {
@@ -902,6 +904,23 @@ def _is_supply_balance_regime_view(metric: str, df: pd.DataFrame | None) -> bool
     )
 
 
+def _is_weekly_energy_atlas_summary_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "weekly_energy_atlas_summary"
+        and df is not None
+        and not df.empty
+        and {
+            "date",
+            "weather_demand_delta_bcfd",
+            "storage_surprise_bcf",
+            "lng_delta_mmcf",
+            "production_delta_mmcf",
+            "price_latest_usd_mmbtu",
+            "price_delta_usd_mmbtu",
+        }.issubset(df.columns)
+    )
+
+
 def _weather_normal_years(df: pd.DataFrame) -> int:
     if "normal_years" not in df.columns or df.empty:
         return 5
@@ -1222,6 +1241,138 @@ def _supply_balance_regime_structured_answer(
         forecast=AnswerForecast(
             direction=direction,
             reasoning="Direction reflects the combined production, storage, and weather-demand signals.",
+        ),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
+def _weekly_energy_atlas_summary_answer(df: pd.DataFrame) -> str:
+    if not _is_weekly_energy_atlas_summary_view("weekly_energy_atlas_summary", df):
+        return "No data was returned for the requested period."
+
+    row = df.iloc[-1]
+    as_of = _format_as_of_date(row.get("date"))
+    weather_delta = float(pd.to_numeric(row.get("weather_demand_delta_bcfd"), errors="coerce") or 0.0)
+    storage_latest = pd.to_numeric(row.get("storage_latest_bcf"), errors="coerce")
+    storage_expected = pd.to_numeric(row.get("storage_expected_bcf"), errors="coerce")
+    storage_surprise = pd.to_numeric(row.get("storage_surprise_bcf"), errors="coerce")
+    lng_delta = float(pd.to_numeric(row.get("lng_delta_mmcf"), errors="coerce") or 0.0)
+    production_delta = float(pd.to_numeric(row.get("production_delta_mmcf"), errors="coerce") or 0.0)
+    price_latest = pd.to_numeric(row.get("price_latest_usd_mmbtu"), errors="coerce")
+    price_delta = pd.to_numeric(row.get("price_delta_usd_mmbtu"), errors="coerce")
+
+    weather_direction = (
+        "higher"
+        if weather_delta > 0
+        else "lower"
+        if weather_delta < 0
+        else "about unchanged"
+    )
+    weather_line = (
+        f"**Weather:** Weather is pushing gas demand {weather_direction} than normal by about "
+        f"{abs(weather_delta):.2f} Bcf/d."
+    )
+
+    if pd.notna(storage_latest) and pd.notna(storage_expected) and pd.notna(storage_surprise):
+        storage_shape = (
+            "a larger-than-expected build"
+            if float(storage_surprise) > 0
+            else "a smaller-than-expected build / tighter read"
+            if float(storage_surprise) < 0
+            else "in line with recent expectations"
+        )
+        storage_line = (
+            f"**Storage:** Latest weekly change was {_format_number(float(storage_latest))} Bcf versus "
+            f"about {_format_number(float(storage_expected))} Bcf expected (recent 5-week average), "
+            f"a surprise of {_format_number(float(storage_surprise))} Bcf ({storage_shape})."
+        )
+    else:
+        storage_line = "**Storage:** Not enough recent history to estimate surprise versus expectations."
+
+    lng_dir = "up" if lng_delta > 0 else "down" if lng_delta < 0 else "flat"
+    prod_dir = "up" if production_delta > 0 else "down" if production_delta < 0 else "flat"
+    lng_supply_line = (
+        "**LNG / Supply:** LNG exports are "
+        f"{lng_dir} {_format_number(abs(lng_delta))} MMcf versus the prior point, and dry gas production is "
+        f"{prod_dir} {_format_number(abs(production_delta))} MMcf."
+    )
+
+    if pd.notna(price_latest) and pd.notna(price_delta):
+        price_line = (
+            f"**Price:** Henry Hub moved {_format_delta(float(price_delta), '$/MMBtu')} "
+            f"to ${float(price_latest):.2f}/MMBtu."
+        )
+    elif pd.notna(price_latest):
+        price_line = f"**Price:** Henry Hub is currently ${float(price_latest):.2f}/MMBtu."
+    else:
+        price_line = "**Price:** No latest Henry Hub price observation was available."
+
+    return f"As of {as_of}, weekly Energy Atlas summary:\n{weather_line}\n{storage_line}\n{lng_supply_line}\n{price_line}"
+
+
+def _weekly_energy_atlas_summary_structured_answer(
+    *,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _weekly_energy_atlas_summary_answer(df)
+    if answer == "No data was returned for the requested period.":
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary="No weekly recap data was returned for the requested period.",
+            drivers=["The weekly summary pipeline did not return usable component metrics."],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no observations were returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    row = df.iloc[-1]
+    weather_delta = float(pd.to_numeric(row.get("weather_demand_delta_bcfd"), errors="coerce") or 0.0)
+    storage_surprise = float(pd.to_numeric(row.get("storage_surprise_bcf"), errors="coerce") or 0.0)
+    production_delta = float(pd.to_numeric(row.get("production_delta_mmcf"), errors="coerce") or 0.0)
+    price_delta = float(pd.to_numeric(row.get("price_delta_usd_mmbtu"), errors="coerce") or 0.0)
+
+    pressure_score = 0.0
+    pressure_score += 1.0 if weather_delta > 0 else -1.0 if weather_delta < 0 else 0.0
+    pressure_score += 1.0 if storage_surprise < 0 else -1.0 if storage_surprise > 0 else 0.0
+    pressure_score += 1.0 if production_delta < 0 else -1.0 if production_delta > 0 else 0.0
+    pressure_score += 1.0 if price_delta > 0 else -1.0 if price_delta < 0 else 0.0
+    signal_status = "bullish" if pressure_score >= 1 else "bearish" if pressure_score <= -1 else "neutral"
+    direction = "up" if pressure_score >= 1 else "down" if pressure_score <= -1 else "flat"
+
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status=signal_status, confidence=0.76),
+        summary=answer,
+        drivers=[
+            "Weather contribution is the forecast demand shift versus normal (Bcf/d).",
+            "Storage surprise uses latest weekly change versus a recent 5-week average as an expectation proxy.",
+            "LNG/supply combines export and production moves versus prior observations.",
+            "Price result is the latest Henry Hub move versus prior point.",
+        ],
+        data_points=[
+            AnswerDataPoint(metric="Weather Demand Impact", value=round(weather_delta, 3), unit="Bcf/d"),
+            AnswerDataPoint(metric="Storage Surprise", value=round(storage_surprise, 3), unit="Bcf"),
+            AnswerDataPoint(
+                metric="LNG Export Change",
+                value=round(float(pd.to_numeric(row.get("lng_delta_mmcf"), errors="coerce") or 0.0), 3),
+                unit="MMcf",
+            ),
+            AnswerDataPoint(metric="Production Change", value=round(production_delta, 3), unit="MMcf"),
+            AnswerDataPoint(metric="Henry Hub Weekly Move", value=round(price_delta, 3), unit="$/MMBtu"),
+        ],
+        forecast=AnswerForecast(
+            direction=direction,
+            reasoning="Direction reflects the combined weekly pressure from weather demand, storage surprise, supply changes, and price action.",
         ),
         suggested_alerts=[],
         alerts=[],
@@ -1664,6 +1815,35 @@ def build_answer_with_openai(
             ),
             report_context_used=False,
             report_context_reason="supply_balance_regime_no_rag",
+            report_context_sources=[],
+            data_preview=_make_preview(df),
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
+    if _is_weekly_energy_atlas_summary_view(metric, df):
+        answer_text = _weekly_energy_atlas_summary_answer(df)
+        chart_spec = ChartSpec(
+            chart_type="bar",
+            title="Market Pressure Dashboard",
+            x="component",
+            y=["score"],
+            x_label="Driver",
+            y_label="Pressure Score (Bullish + / Bearish -)",
+            notes="Scorecard based on weekly direction of weather demand, storage surprise, LNG/supply, and price.",
+        )
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_weekly_energy_atlas_summary_structured_answer(
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="weekly_energy_atlas_summary_no_rag",
             report_context_sources=[],
             data_preview=_make_preview(df),
             chart_spec=chart_spec,

@@ -212,6 +212,14 @@ class TestRouter(unittest.TestCase):
         self.assertEqual(result.primary_metric, "ng_electricity")
         self.assertEqual(result.start, expected_start)
 
+    def test_weekly_energy_atlas_summary_routes_to_derived_weekly_metric(self) -> None:
+        result = route_query(
+            "Give me a week in energy atlas summary with weather, storage, LNG/supply, and price."
+        )
+        self.assertEqual(result.primary_metric, "weekly_energy_atlas_summary")
+        self.assertEqual(result.metrics, ["weekly_energy_atlas_summary"])
+        self.assertEqual(result.source, "rule")
+
 
 if __name__ == "__main__":
     unittest.main()

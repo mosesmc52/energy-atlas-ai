@@ -71,6 +71,7 @@ METRICS: Final[tuple[str, ...]] = (
     "ng_exploration_reserves_lower48",
     "ng_pipeline",
     "weather_degree_days_forecast_vs_5y",
+    "weekly_energy_atlas_summary",
 )
 
 ISO_FILTERS: Final[tuple[str, ...]] = (
@@ -277,6 +278,7 @@ METRIC_DESCRIPTIONS: Final[Dict[str, str]] = {
     "ng_exploration_reserves_lower48": "Natural gas exploration/proved reserves; supports allowed state and resource_category filters.",
     "ng_pipeline": "Parquet-backed natural gas pipeline datasets such as projects, inflow/outflow by region or state, major pipeline summary, and state-to-state capacity; supports dataset filter.",
     "weather_degree_days_forecast_vs_5y": "Weather degree-day forecast versus rolling 5-year normal (HDD/CDD) for 1-5, 6-10, and 11-15 day buckets, including estimated gas demand impact.",
+    "weekly_energy_atlas_summary": "Derived weekly Energy Atlas recap combining weather-demand impact, storage surprise versus recent expectation proxy, LNG/supply changes, and Henry Hub price result.",
 }
 
 _ALLOWED_INTENTS = set(INTENTS)
