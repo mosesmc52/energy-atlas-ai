@@ -1,0 +1,57 @@
+name: Run Test Suite
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-root
+
+      - name: Run All Tests
+        env:
+          PYTHONPATH: app:.
+          DJANGO_SETTINGS_MODULE: main.settings
+          DJANGO_CONFIGURATION: Development
+        run: |
+          poetry run python - <<'PY'
+          import os
+          import sys
+          import unittest
+
+          from configurations.importer import install
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
+          os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
+          install()
+
+          if "app" not in sys.path:
+            sys.path.insert(0, "app")
+          if "." not in sys.path:
+            sys.path.insert(0, ".")
+
+          suite = unittest.defaultTestLoader.discover("tests")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY

@@ -836,6 +836,93 @@ def _deterministic_sector_structured_answer(
     )
 
 
+def _power_sector_proxy_answer(df: pd.DataFrame) -> str:
+    if df is None or df.empty or not {"date", "value", "series"}.issubset(df.columns):
+        return "No data was returned for the requested period."
+    scoped = df.copy()
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+    scoped["series"] = scoped["series"].astype(str)
+    scoped = scoped.dropna(subset=["date", "value", "series"])
+    scoped = scoped.loc[scoped["series"].isin({"electric_power", "power"})].sort_values("date")
+    if scoped.empty:
+        return "No power-sector observations were returned for the requested period."
+
+    latest = scoped.iloc[-1]
+    latest_date = latest["date"]
+    latest_value = float(latest["value"])
+    month_label = latest_date.strftime("%B %Y")
+    return (
+        f"Power-sector natural gas use (proxy from sector consumption) was "
+        f"{_format_number(latest_value)} MMcf in {month_label}."
+    )
+
+
+def _power_sector_proxy_structured_answer(
+    *,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+    proxy_note: str,
+) -> StructuredAnswer:
+    answer = _power_sector_proxy_answer(df)
+    if answer in {
+        "No data was returned for the requested period.",
+        "No power-sector observations were returned for the requested period.",
+    }:
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary=answer,
+            drivers=[
+                proxy_note or "Proxy mode was requested, but no power-sector rows were available.",
+            ],
+            data_points=[],
+            forecast=AnswerForecast(
+                direction="flat",
+                reasoning="Forecast unavailable because no power-sector proxy observations were returned.",
+            ),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="No Data Returned", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    scoped = df.copy()
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+    scoped["series"] = scoped["series"].astype(str)
+    scoped = scoped.dropna(subset=["date", "value", "series"])
+    scoped = scoped.loc[scoped["series"].isin({"electric_power", "power"})].sort_values("date")
+    latest = scoped.iloc[-1]
+    prior_value = float(scoped.iloc[-2]["value"]) if len(scoped) >= 2 else None
+    latest_value = float(latest["value"])
+    delta = (latest_value - prior_value) if prior_value is not None else None
+
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(
+            status="bullish" if (delta or 0.0) > 0 else "bearish" if (delta or 0.0) < 0 else "neutral",
+            confidence=0.72,
+        ),
+        summary=answer,
+        drivers=[
+            proxy_note or "Used power-sector rows from consumption-by-sector as a proxy for ng_electricity.",
+            "Latest proxy value comes from the electric power sector series.",
+        ],
+        data_points=[
+            AnswerDataPoint(metric="Power-Sector Gas Use", value=_json_safe(latest_value), unit="MMcf"),
+            AnswerDataPoint(metric="Change vs Prior", value=_json_safe(delta), unit="MMcf"),
+        ],
+        forecast=AnswerForecast(
+            direction="up" if (delta or 0.0) > 0 else "down" if (delta or 0.0) < 0 else "flat",
+            reasoning="Direction reflects change in latest proxy observation versus prior month.",
+        ),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
 def _is_regional_storage_change_view(metric: str, df: pd.DataFrame | None) -> bool:
     return bool(
         metric == "working_gas_storage_change_weekly"
@@ -1685,6 +1772,28 @@ def build_answer_with_openai(
     )
 
     if metric == "ng_consumption_by_sector":
+        if proxy_for_metric == "ng_electricity":
+            answer_text = _power_sector_proxy_answer(df)
+            chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+            payload = AnswerPayload(
+                query=query,
+                mode=mode,
+                answer_text=answer_text,
+                structured_response=_power_sector_proxy_structured_answer(
+                    df=df,
+                    source_label=src.label,
+                    source_date=source_date,
+                    proxy_note=proxy_note,
+                ),
+                report_context_used=False,
+                report_context_reason="power_sector_proxy_no_rag",
+                report_context_sources=[],
+                data_preview=_make_preview(df),
+                chart_spec=chart_spec,
+                sources=[src],
+            )
+            return payload
+
         answer_text = _deterministic_sector_consumption_answer(query=query, df=df)
         if df is not None and "date" in df.columns:
             df = df.sort_values("date").reset_index(drop=True)

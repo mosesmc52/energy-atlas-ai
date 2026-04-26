@@ -24,6 +24,11 @@ _REGISTRY: dict[str, MetricCapability] = {
     ),
     "ng_electricity": MetricCapability(
         metric="ng_electricity",
+        fallback_metric="ng_consumption_by_sector",
+        fallback_note=(
+            "Direct ng_electricity observations unavailable; using power-sector rows from "
+            "consumption-by-sector as a proxy."
+        ),
         seasonal_norm_supported=True,
         default_normal_years=5,
         default_lookback_years=2,

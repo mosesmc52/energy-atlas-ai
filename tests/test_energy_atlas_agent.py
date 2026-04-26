@@ -232,6 +232,54 @@ class TestEnergyAtlasAgent(unittest.TestCase):
         self.assertEqual(proxy_used.meta.get("metric"), "ng_electricity")
         self.assertEqual(proxy_used.meta.get("proxy_for_metric"), "iso_gas_dependency")
 
+    def test_ng_electricity_falls_back_to_sector_consumption_when_empty(self) -> None:
+        executor = Mock()
+        empty_power_burn_result = Mock(
+            df=pd.DataFrame(columns=["date", "value"]),
+            source=Mock(reference="ref:ng_electricity"),
+            meta={"metric": "ng_electricity"},
+        )
+        proxy_result = Mock(
+            df=pd.DataFrame(
+                [
+                    {"date": "2026-02-01", "series": "electric_power", "value": 132089.232},
+                ]
+            ),
+            source=Mock(reference="ref:ng_sector"),
+            meta={"metric": "ng_consumption_by_sector"},
+        )
+        executor.execute.side_effect = [empty_power_burn_result, proxy_result]
+        route_fn = Mock(
+            return_value=HybridRouteResult(
+                intent="single_metric",
+                primary_metric="ng_electricity",
+                metrics=["ng_electricity"],
+                start="2026-01-01",
+                end="2026-03-01",
+                filters=None,
+                confidence=0.9,
+                ambiguous=False,
+                source="rule",
+            )
+        )
+        payload = Mock()
+        answer_builder_fn = Mock(return_value=payload)
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=answer_builder_fn,
+        )
+
+        outcome = agent.run(
+            user_query="How much natural gas did power plants use last month?"
+        )
+
+        self.assertIs(outcome.payload, payload)
+        self.assertEqual(executor.execute.call_count, 2)
+        proxy_used = answer_builder_fn.call_args.kwargs["result"]
+        self.assertEqual(proxy_used.meta.get("metric"), "ng_consumption_by_sector")
+        self.assertEqual(proxy_used.meta.get("proxy_for_metric"), "ng_electricity")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -354,6 +354,39 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertIsNotNone(payload.chart_spec)
         self.assertEqual(payload.chart_spec.title, "Market Pressure Dashboard")
 
+    def test_ng_electricity_proxy_uses_power_sector_plain_language(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-01", "series": "electric_power", "value": 129000.0},
+                {"date": "2026-02-01", "series": "electric_power", "value": 132089.232},
+                {"date": "2026-02-01", "series": "industrial", "value": 73000.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="EIA Natural Gas: Consumption by Sector",
+                reference="test",
+                retrieved_at=datetime(2026, 2, 3),
+            ),
+            meta={
+                "metric": "ng_consumption_by_sector",
+                "proxy_for_metric": "ng_electricity",
+                "proxy_note": "Direct ng_electricity observations unavailable; using power-sector rows from consumption-by-sector as a proxy.",
+            },
+        )
+
+        payload = build_answer_with_openai(
+            query="How much natural gas did power plants use last month?",
+            result=result,
+        )
+
+        self.assertIn("Power-sector natural gas use", payload.answer_text)
+        self.assertIn("proxy", payload.answer_text.lower())
+        self.assertIsNotNone(payload.structured_response)
+        self.assertEqual(payload.structured_response.data_points[0].metric, "Power-Sector Gas Use")
+
 
 if __name__ == "__main__":
     unittest.main()
