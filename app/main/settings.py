@@ -6,6 +6,7 @@ from pathlib import Path
 import dj_database_url
 from configurations import Configuration
 from dotenv import load_dotenv
+from main.sentry import init_sentry
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -184,3 +185,6 @@ class Production(Base):
     STRIPE_TEST_SECRET_KEY = os.environ.get("STRIPE_TEST_SECRET_KEY", "")
     STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     STRIPE_LIVE_MODE = _get_bool("STRIPE_LIVE_MODE", True)
+
+
+init_sentry(service_name="energy-atlas-django", use_django_integration=True)

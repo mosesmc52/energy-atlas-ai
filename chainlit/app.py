@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import pathlib
@@ -32,6 +33,9 @@ os.environ.setdefault(
         else "Development"
     ),
 )
+from main.sentry import init_sentry
+
+init_sentry(service_name="energy-atlas-chainlit", use_django_integration=False)
 
 from configurations.importer import install
 
@@ -233,8 +237,22 @@ def format_summary_cards(metrics: list[dict]) -> str:
 
 
 def format_response(data: StructuredAnswer | dict) -> str:
+    if isinstance(data, str):
+        raw = data.strip()
+        if not raw:
+            return ""
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return raw
+        if not isinstance(parsed, dict):
+            return raw
+        data = parsed
+
     if hasattr(data, "model_dump"):
         data = data.model_dump()
+    if not isinstance(data, dict):
+        return str(data)
 
     signal_map = {
         "bullish": "🟢 Bullish",
@@ -302,8 +320,18 @@ def _validated_suggested_alerts(
 ) -> list[dict[str, str]]:
     if data is None:
         return []
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+        except Exception:
+            return []
+        if not isinstance(parsed, dict):
+            return []
+        data = parsed
     if hasattr(data, "model_dump"):
         data = data.model_dump()
+    if not isinstance(data, dict):
+        return []
 
     suggestions = []
     for item in data.get("suggested_alerts") or []:

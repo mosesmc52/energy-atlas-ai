@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from agents.router import LLMRouteOutput
+from agents.router import RouteCandidate
 from agents.router import route_query
 
 
@@ -231,6 +232,112 @@ class TestRouter(unittest.TestCase):
     def test_implied_natural_gas_exports_query_routes_to_exports_metric(self) -> None:
         result = route_query("Are exports higher than last year?")
         self.assertEqual(result.primary_metric, "lng_exports")
+
+    def test_global_demand_for_us_natural_gas_routes_to_exports_metric(self) -> None:
+        result = route_query("How strong is global demand for U.S. natural gas right now?")
+        self.assertEqual(result.primary_metric, "lng_exports")
+        self.assertEqual(result.source, "rule")
+
+    def test_simple_show_lng_exports_routes_deterministically(self) -> None:
+        result = route_query("show LNG exports")
+        self.assertEqual(result.intent, "single_metric")
+        self.assertEqual(result.primary_metric, "lng_exports")
+        self.assertEqual(result.source, "rule")
+
+    def test_simple_show_lng_imports_routes_deterministically(self) -> None:
+        result = route_query("show LNG imports")
+        self.assertEqual(result.intent, "single_metric")
+        self.assertEqual(result.primary_metric, "lng_imports")
+        self.assertEqual(result.source, "rule")
+
+    def test_simple_natural_gas_storage_routes_deterministically(self) -> None:
+        result = route_query("natural gas storage")
+        self.assertEqual(result.intent, "single_metric")
+        self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+
+    def test_simple_texas_production_routes_deterministically(self) -> None:
+        result = route_query("Texas production")
+        self.assertEqual(result.intent, "single_metric")
+        self.assertEqual(result.primary_metric, "ng_production_lower48")
+        self.assertEqual(result.filters, {"region": "tx"})
+
+    def test_simple_gas_power_burn_routes_deterministically(self) -> None:
+        result = route_query("gas power burn")
+        self.assertEqual(result.primary_metric, "ng_electricity")
+
+    def test_compare_exports_vs_imports_routes_compare(self) -> None:
+        result = route_query("exports vs imports")
+        self.assertEqual(result.intent, "compare")
+        self.assertEqual(result.metrics, ["lng_exports", "lng_imports"])
+
+    def test_compare_storage_and_production_routes_compare(self) -> None:
+        result = route_query("compare storage and production")
+        self.assertEqual(result.intent, "compare")
+        self.assertEqual(result.metrics, ["working_gas_storage_lower48", "ng_production_lower48"])
+
+    def test_compare_production_versus_lng_exports_routes_compare(self) -> None:
+        result = route_query("production versus LNG exports")
+        self.assertEqual(result.intent, "compare")
+        self.assertEqual(result.metrics, ["ng_production_lower48", "lng_exports"])
+
+    def test_analytical_how_tight_is_market_routes_derived(self) -> None:
+        result = route_query("how tight is the gas market")
+        self.assertIn(result.intent, {"derived", "explain"})
+        self.assertTrue("ng_supply_balance_regime" in result.metrics)
+
+    def test_analytical_price_drivers_routes_explain_or_derived(self) -> None:
+        result = route_query("what is driving natural gas prices")
+        self.assertIn(result.intent, {"derived", "explain"})
+        self.assertGreaterEqual(len(result.metrics), 2)
+
+    def test_analytical_supply_balance_routes_derived(self) -> None:
+        result = route_query("what is the supply balance")
+        self.assertIn(result.intent, {"derived", "explain"})
+        self.assertTrue("ng_supply_balance_regime" in result.metrics)
+
+    def test_analytical_how_strong_is_demand_for_us_gas_routes_multi_metric(self) -> None:
+        result = route_query("how strong is demand for US natural gas")
+        self.assertIn(result.intent, {"derived", "explain"})
+        self.assertTrue("lng_exports" in result.metrics)
+
+    def test_analytical_oversupplied_undersupplied_routes_derived(self) -> None:
+        result = route_query("is the market oversupplied or undersupplied")
+        self.assertIn(result.intent, {"derived", "explain"})
+        self.assertTrue("ng_supply_balance_regime" in result.metrics)
+
+    @patch("agents.router.llm_route_structured")
+    def test_unsupported_query_can_return_unsupported_from_llm(self, mock_llm) -> None:
+        mock_llm.return_value = LLMRouteOutput(
+            intent="unsupported",
+            primary_metric=None,
+            metrics=[],
+            filters=None,
+            reason="Unsupported topic",
+            confidence=0.0,
+            ambiguous=False,
+        )
+        result = route_query("tell me a joke about penguins")
+        self.assertEqual(result.source, "llm")
+        self.assertEqual(result.intent, "unsupported")
+
+    @patch("agents.router.score_routes")
+    @patch("agents.router.llm_route_structured")
+    def test_ambiguous_low_score_query_triggers_llm_fallback(self, mock_llm, mock_score_routes) -> None:
+        mock_score_routes.return_value = [
+            RouteCandidate(metric="lng_exports", score=2.0, matched_terms=["gas"]),
+            RouteCandidate(metric="lng_imports", score=1.8, matched_terms=["gas"]),
+        ]
+        mock_llm.return_value = LLMRouteOutput(
+            intent="single_metric",
+            primary_metric="lng_exports",
+            metrics=["lng_exports"],
+            filters={"region": "united_states_pipeline_total"},
+            reason="Fallback route",
+            confidence=0.55,
+            ambiguous=True,
+        )
+        result = route_query("gas flow")
+        self.assertEqual(result.source, "llm")
 
 
 if __name__ == "__main__":

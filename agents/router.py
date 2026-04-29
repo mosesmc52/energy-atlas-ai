@@ -67,6 +67,34 @@ from utils.query_intents import (
 )
 
 ALLOWED_METRICS = set(ROUTE_MAP.keys())
+CONCEPT_TO_METRICS: Dict[str, List[str]] = {
+    "demand": ["lng_exports", "ng_consumption_lower48", "ng_electricity"],
+    "supply": ["ng_production_lower48"],
+    "trade_flows": ["lng_exports", "lng_imports"],
+    "storage_context": ["working_gas_storage_lower48", "working_gas_storage_change_weekly"],
+    "supply_balance": [
+        "ng_supply_balance_regime",
+        "ng_production_lower48",
+        "lng_exports",
+        "lng_imports",
+        "working_gas_storage_lower48",
+        "working_gas_storage_change_weekly",
+    ],
+    "market_tightness": [
+        "ng_supply_balance_regime",
+        "working_gas_storage_lower48",
+        "working_gas_storage_change_weekly",
+        "ng_production_lower48",
+        "lng_exports",
+    ],
+    "price_drivers": [
+        "working_gas_storage_lower48",
+        "working_gas_storage_change_weekly",
+        "weather_degree_days_forecast_vs_5y",
+        "ng_production_lower48",
+        "lng_exports",
+    ],
+}
 
 @dataclass(frozen=True)
 class RouteCandidate:
@@ -205,6 +233,20 @@ def is_weekly_energy_atlas_summary_query(q: str) -> bool:
     return has_recap and has_weather and has_storage and has_lng_or_supply and has_price
 
 
+def is_global_demand_for_us_gas_query(q: str) -> bool:
+    q = q.lower()
+    if "global demand" not in q:
+        return False
+    has_us_gas = (
+        "u.s. natural gas" in q
+        or "us natural gas" in q
+        or "u.s natural gas" in q
+        or "united states natural gas" in q
+        or "american natural gas" in q
+    )
+    return has_us_gas
+
+
 def route_trade_region(q: str) -> str | None:
     q = q.lower()
     for region, keys in TRADE_REGION_KEYWORDS.items():
@@ -314,6 +356,60 @@ def detect_intent(q: str) -> str:
     return "single_metric"
 
 
+def is_analytical_query(q: str) -> bool:
+    return any(
+        phrase in q
+        for phrase in (
+            "how strong",
+            "what is driving",
+            "why",
+            "regime",
+            "balance",
+            "tight",
+            "loose",
+            "outlook",
+            "pressure",
+            "supportive",
+            "bearish",
+            "bullish",
+            "oversupplied",
+            "undersupplied",
+        )
+    )
+
+
+def detect_concepts(q: str) -> set[str]:
+    concepts: set[str] = set()
+    if any(term in q for term in ("demand", "consumption", "usage", "power burn")):
+        concepts.add("demand")
+    if any(term in q for term in ("supply", "production", "output")):
+        concepts.add("supply")
+    if any(term in q for term in ("import", "export", "trade flow", "trade flows", "lng flow")):
+        concepts.add("trade_flows")
+    if any(term in q for term in ("storage", "injection", "withdrawal", "inventory")):
+        concepts.add("storage_context")
+    if any(term in q for term in ("balance", "oversupplied", "undersupplied", "supply-demand")):
+        concepts.add("supply_balance")
+    if any(term in q for term in ("tight", "tightness", "loose", "loosening", "constrained")):
+        concepts.add("market_tightness")
+    if any(term in q for term in ("driving", "drivers", "price", "pressure", "supportive", "bearish", "bullish")):
+        concepts.add("price_drivers")
+    return concepts
+
+
+def _primary_metric_from_concepts(
+    *,
+    concepts: set[str],
+    deduped_metrics: List[str],
+) -> str:
+    if "supply_balance" in concepts or "market_tightness" in concepts:
+        if "ng_supply_balance_regime" in deduped_metrics:
+            return "ng_supply_balance_regime"
+    if "trade_flows" in concepts and "lng_exports" in deduped_metrics:
+        return "lng_exports"
+    return deduped_metrics[0]
+
+
 def detect_forecast_request(q: str) -> bool:
     return any(re.search(pattern, q) for pattern in FORECAST_PATTERNS)
 
@@ -359,6 +455,35 @@ def score_routes(q: str) -> List[RouteCandidate]:
     candidates = [c for c in candidates if c.score > 0]
     candidates.sort(key=lambda x: x.score, reverse=True)
     return candidates
+
+
+def resolve_candidate_filters(
+    q: str,
+    candidates: List[RouteCandidate],
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    resolved: Dict[str, Optional[Dict[str, Any]]] = {}
+    for candidate in candidates:
+        resolved[candidate.metric] = build_filters(candidate.metric, q, 1.0)
+    return resolved
+
+
+def boost_candidates_from_filters(
+    candidates: List[RouteCandidate],
+    candidate_filters: Dict[str, Optional[Dict[str, Any]]],
+) -> List[RouteCandidate]:
+    boosted: List[RouteCandidate] = []
+    for candidate in candidates:
+        filters = candidate_filters.get(candidate.metric)
+        filter_bonus = 0.2 if filters else 0.0
+        boosted.append(
+            RouteCandidate(
+                metric=candidate.metric,
+                score=candidate.score + filter_bonus,
+                matched_terms=list(candidate.matched_terms),
+            )
+        )
+    boosted.sort(key=lambda x: x.score, reverse=True)
+    return boosted
 
 
 WINDOW_POLICY_DEPS = WindowPolicyDeps(
@@ -426,16 +551,12 @@ def is_ambiguous(candidates: List[RouteCandidate]) -> bool:
     if not candidates:
         return True
     if len(candidates) == 1:
-        # A lone metric hit should not require LLM fallback unless the match is
-        # extremely weak. Otherwise common single-term questions like
-        # "Is production growing year over year?" can be misrouted as unsupported.
         return candidates[0].score < 1.5
 
     top = candidates[0].score
     second = candidates[1].score
-
-    # ambiguous if the best and second-best are very close
-    return (top < 3.0) or ((top - second) <= 1.0)
+    ratio = second / max(top, 1e-6)
+    return (top < 3.0) or (ratio > 0.75)
 
 
 # ----------------------------
@@ -588,11 +709,16 @@ def route_query(user_query: str) -> HybridRouteResult:
     start, end = resolve_date_range(user_query)
     has_explicit_dates = has_explicit_date_reference(user_query)
     intent = detect_intent(normalized)
+    analytical_query = is_analytical_query(normalized)
+    concepts = detect_concepts(normalized)
+    has_balance_language = bool(concepts.intersection({"supply_balance", "market_tightness", "price_drivers"}))
     include_forecast = detect_forecast_request(normalized)
     forecast_horizon_days = detect_forecast_horizon_days(normalized)
     current_like_only = is_current_like_without_explicit_window(normalized)
 
     candidates = score_routes(normalized)
+    candidate_filters = resolve_candidate_filters(normalized, candidates)
+    candidates = boost_candidates_from_filters(candidates, candidate_filters)
     confidence = candidate_confidence(candidates)
     ambiguous = is_ambiguous(candidates)
 
@@ -600,7 +726,25 @@ def route_query(user_query: str) -> HybridRouteResult:
     has_export = bool(re.search(r"\bexports?\b", normalized))
     has_reserves = bool(re.search(r"\breserves?\b", normalized))
 
-    if has_reserves:
+    if has_import and has_export:
+        return HybridRouteResult(
+            intent="compare",
+            primary_metric="lng_exports",
+            metrics=["lng_exports", "lng_imports"],
+            start=start,
+            end=end,
+            filters=None,
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic compare route for imports versus exports query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if has_reserves and intent == "single_metric":
         metric = "ng_exploration_reserves_lower48"
         reserves_start = "2000-01-01" if not has_explicit_dates else start
         return HybridRouteResult(
@@ -620,7 +764,7 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=forecast_horizon_days,
         )
 
-    if has_import and not has_export:
+    if has_import and not has_export and intent == "single_metric":
         metric = "lng_imports"
         return HybridRouteResult(
             intent="single_metric",
@@ -639,7 +783,7 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=forecast_horizon_days,
         )
 
-    if has_export and not has_import:
+    if has_export and not has_import and intent == "single_metric":
         metric = "lng_exports"
         return HybridRouteResult(
             intent="single_metric",
@@ -653,6 +797,25 @@ def route_query(user_query: str) -> HybridRouteResult:
             candidates=candidates[:3],
             source="rule",
             reason="Deterministic route for implied natural-gas exports query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if is_global_demand_for_us_gas_query(normalized) and intent == "single_metric":
+        metric = "lng_exports"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for global demand proxy via U.S. natural-gas exports",
             normalized_query=normalized,
             include_forecast=include_forecast,
             forecast_horizon_days=forecast_horizon_days,
@@ -734,11 +897,76 @@ def route_query(user_query: str) -> HybridRouteResult:
         )
 
     # No rule candidate -> LLM fallback
+    if analytical_query and intent == "single_metric":
+        intent = "derived" if has_balance_language else "explain"
+
+    if intent in {"derived", "explain"} and concepts and not (
+        "weather" in normalized and ("forecast" in normalized or "hdd" in normalized or "cdd" in normalized)
+    ):
+        concept_metrics: List[str] = []
+        for concept in concepts:
+            concept_metrics.extend(CONCEPT_TO_METRICS.get(concept, []))
+        deduped = []
+        seen = set()
+        for metric in concept_metrics:
+            if metric in ALLOWED_METRICS and metric not in seen:
+                deduped.append(metric)
+                seen.add(metric)
+        if deduped:
+            primary_metric = _primary_metric_from_concepts(
+                concepts=concepts,
+                deduped_metrics=deduped,
+            )
+            return HybridRouteResult(
+                intent=intent,
+                primary_metric=primary_metric,
+                metrics=deduped,
+                start=start,
+                end=end,
+                filters=build_filters(primary_metric, normalized, confidence),
+                confidence=max(confidence, 0.75),
+                ambiguous=False,
+                candidates=candidates[:3],
+                source="rule",
+                reason=f"Concept route for {intent} query using {sorted(concepts)}",
+                normalized_query=normalized,
+                include_forecast=include_forecast,
+                forecast_horizon_days=forecast_horizon_days,
+            )
+
     if not candidates:
         llm = llm_route_structured(user_query=user_query, normalized_query=normalized)
         return validate_llm_route(
             llm, start=start, end=end, normalized_query=normalized
         )
+
+    if intent == "compare":
+        compare_metrics: List[str] = []
+        if has_import and has_export:
+            compare_metrics = ["lng_exports", "lng_imports"]
+        elif "storage" in normalized and "production" in normalized:
+            compare_metrics = ["working_gas_storage_lower48", "ng_production_lower48"]
+        elif "production" in normalized and "export" in normalized:
+            compare_metrics = ["ng_production_lower48", "lng_exports"]
+
+        if compare_metrics:
+            primary_metric = compare_metrics[0]
+            return HybridRouteResult(
+                intent="compare",
+                primary_metric=primary_metric,
+                metrics=compare_metrics,
+                start=start,
+                end=end,
+                filters=build_filters(primary_metric, normalized, confidence),
+                confidence=max(confidence, 0.75),
+                ambiguous=False,
+                candidates=candidates[:3],
+                source="rule",
+                reason=f"Deterministic compare route for {compare_metrics}",
+                normalized_query=normalized,
+                include_forecast=include_forecast,
+                forecast_horizon_days=forecast_horizon_days,
+            )
 
     top = candidates[0]
     if not has_explicit_dates and top.metric == "ng_exploration_reserves_lower48":
@@ -752,7 +980,7 @@ def route_query(user_query: str) -> HybridRouteResult:
     )
     if lookback_years is not None:
         start = (pd.Timestamp(end) - pd.DateOffset(years=lookback_years)).date().isoformat()
-    filters = build_filters(top.metric, normalized, confidence)
+    filters = candidate_filters.get(top.metric)
 
     if (
         top.metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}
@@ -837,7 +1065,7 @@ def route_query(user_query: str) -> HybridRouteResult:
         )
 
     # If a non-single intent still has a very strong single top metric, keep rule routing.
-    if intent in {"compare", "derived", "explain"} and not ambiguous and confidence >= 0.8:
+    if intent in {"compare", "derived", "explain"} and not ambiguous and confidence >= 0.8 and not analytical_query:
         return HybridRouteResult(
             intent="single_metric",
             primary_metric=top.metric,
