@@ -9,8 +9,10 @@ import pathlib
 import sys
 import tempfile
 import urllib.parse
+from datetime import date, timedelta
 from time import perf_counter
 
+import pandas as pd
 import requests
 
 cwd = pathlib.Path.cwd()
@@ -66,8 +68,9 @@ from charts.plotly_renderer import (
     should_render_timeseries_summary_cards,
 )
 from django.conf import settings
-from executer import MetricExecutor
+from executer import ExecuteRequest, MetricExecutor
 from schemas.answer import StructuredAnswer
+from schemas.chart_spec import ChartSpec
 from tools.cftc_adapter import CFTCAdapter
 from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.eia_adapter import EIAAdapter
@@ -714,7 +717,57 @@ async def on_message(message: cl.Message):
             ).send()
 
         chart_elapsed_ms = 0.0
-        if payload.chart_spec is not None:
+        rendered_custom_lng_trade_view = False
+        if route.primary_metric in {"lng_exports", "lng_imports"}:
+            chart_started = perf_counter() if DEBUG_ENABLED else 0.0
+            end_dt = date.today()
+            start_dt = end_dt - timedelta(days=365)
+            target_metric = route.primary_metric
+            metric_result = executor.execute(
+                ExecuteRequest(
+                    metric=target_metric,
+                    start=start_dt.isoformat(),
+                    end=end_dt.isoformat(),
+                    filters={"region": "united_states_pipeline_total"},
+                )
+            )
+            metric_df = metric_result.df.copy()
+            if (
+                metric_df is not None
+                and not metric_df.empty
+                and {"date", "value"}.issubset(metric_df.columns)
+            ):
+                metric_df = metric_df[["date", "value"]].sort_values("date")
+                metric_df["date"] = pd.to_datetime(metric_df["date"], errors="coerce")
+                metric_df["value"] = pd.to_numeric(metric_df["value"], errors="coerce")
+                metric_df = metric_df.dropna(subset=["date", "value"])
+
+                if not metric_df.empty:
+                    metric_label = "Exports" if target_metric == "lng_exports" else "Imports"
+                    spec = ChartSpec(
+                        chart_type="line",
+                        title=f"U.S. Natural Gas {metric_label} (Last 12 Months)",
+                        x="date",
+                        y=["value"],
+                        x_label="Date",
+                        y_label="MMcf",
+                    )
+                    fig = render_plotly(spec, metric_df)
+                    await cl.Plotly(name=spec.title, figure=fig).send(for_id=msg.id)
+
+                    metric_summary = compute_timeseries_summary_metrics(
+                        metric_result.df,
+                        unit="MMcf",
+                    )
+                    summary_cards = format_summary_cards(metric_summary)
+                    if summary_cards:
+                        await cl.Message(content=summary_cards).send()
+                    rendered_custom_lng_trade_view = True
+
+            if DEBUG_ENABLED:
+                chart_elapsed_ms = (perf_counter() - chart_started) * 1000
+
+        if payload.chart_spec is not None and not rendered_custom_lng_trade_view:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
             fig = render_plotly(
                 payload.chart_spec, result.df, forecast_overlay=forecast
