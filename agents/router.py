@@ -741,6 +741,7 @@ def route_query(user_query: str) -> HybridRouteResult:
     has_import = bool(re.search(r"\bimports?\b", normalized))
     has_export = bool(re.search(r"\bexports?\b", normalized))
     has_reserves = bool(re.search(r"\breserves?\b", normalized))
+    has_production = bool(re.search(r"\b(production|output)\b", normalized))
 
     if has_import and has_export:
         return HybridRouteResult(
@@ -755,6 +756,25 @@ def route_query(user_query: str) -> HybridRouteResult:
             candidates=candidates[:3],
             source="rule",
             reason="Deterministic compare route for imports versus exports query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if has_production and intent == "single_metric":
+        metric = "ng_production_lower48"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for implied natural-gas production query",
             normalized_query=normalized,
             include_forecast=include_forecast,
             forecast_horizon_days=forecast_horizon_days,

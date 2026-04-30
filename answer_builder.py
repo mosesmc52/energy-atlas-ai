@@ -448,9 +448,16 @@ def _is_suggested_alert_relevant(*, signal_id: str, metric: str, query: str) -> 
 
 def _normalize_structured_response(payload: dict[str, Any], *, metric: str, query: str) -> StructuredAnswer:
     signal = payload.get("signal") or {}
+    if not isinstance(signal, dict):
+        signal = {}
     forecast = payload.get("forecast") or {}
+    if not isinstance(forecast, dict):
+        forecast = {}
     suggested_alerts = []
-    for item in (payload.get("suggested_alerts") or []):
+    suggested_alert_items = payload.get("suggested_alerts")
+    if not isinstance(suggested_alert_items, list):
+        suggested_alert_items = []
+    for item in suggested_alert_items:
         if not isinstance(item, dict):
             continue
         signal_id = str(item.get("signal_id") or "").strip()
@@ -470,6 +477,20 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
                 priority=str(item.get("priority") or "medium").strip() or "medium",
             )
         )
+
+    drivers_items = payload.get("drivers")
+    if not isinstance(drivers_items, list):
+        drivers_items = []
+    data_point_items = payload.get("data_points")
+    if not isinstance(data_point_items, list):
+        data_point_items = []
+    alerts_items = payload.get("alerts")
+    if not isinstance(alerts_items, list):
+        alerts_items = []
+    source_items = payload.get("sources")
+    if not isinstance(source_items, list):
+        source_items = []
+
     return StructuredAnswer(
         answer=_coerce_text(payload.get("answer")),
         signal=SignalSummary(
@@ -479,7 +500,7 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
         summary=_coerce_text(payload.get("summary")),
         drivers=[
             _coerce_text(driver)
-            for driver in (payload.get("drivers") or [])
+            for driver in drivers_items
             if _coerce_text(driver)
         ],
         data_points=[
@@ -488,7 +509,7 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
                 value=item.get("value"),
                 unit=str(item.get("unit") or "").strip(),
             )
-            for item in (payload.get("data_points") or [])
+            for item in data_point_items
             if isinstance(item, dict)
         ],
         forecast=AnswerForecast(
@@ -501,7 +522,7 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
                 name=str(item.get("name") or "").strip(),
                 status=_coerce_bool(item.get("status")),
             )
-            for item in (payload.get("alerts") or [])
+            for item in alerts_items
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         ],
         sources=[
@@ -509,7 +530,7 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
                 title=str(item.get("title") or "").strip(),
                 date=str(item.get("date") or "").strip() or None,
             )
-            for item in (payload.get("sources") or [])
+            for item in source_items
             if isinstance(item, dict) and str(item.get("title") or "").strip()
         ],
     )

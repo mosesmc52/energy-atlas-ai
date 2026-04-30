@@ -14,6 +14,9 @@ from time import perf_counter
 
 import pandas as pd
 import requests
+from dotenv import find_dotenv, load_dotenv
+
+load_dotenv(find_dotenv())
 
 cwd = pathlib.Path.cwd()
 if cwd.name == "notebooks":
@@ -85,6 +88,9 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
+import pdb
+
+pdb.set_trace()
 SHARE_ACTION_NAME = "share_structured_answer"
 ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics"
 
@@ -264,6 +270,8 @@ def format_response(data: StructuredAnswer | dict) -> str:
     }
 
     signal_data = data.get("signal") or {}
+    if not isinstance(signal_data, dict):
+        signal_data = {}
     signal = signal_map.get(str(signal_data.get("status") or "").lower(), "⚪ Unknown")
     confidence = int(float(signal_data.get("confidence") or 0) * 100)
     sections = [f"**{signal}**", f"Confidence: {confidence}%"]
@@ -283,6 +291,8 @@ def format_response(data: StructuredAnswer | dict) -> str:
         )
 
     forecast = data.get("forecast") or {}
+    if not isinstance(forecast, dict):
+        forecast = {}
     forecast_direction = str(forecast.get("direction") or "").strip()
     forecast_reasoning = str(forecast.get("reasoning") or "").strip()
     if forecast_direction or forecast_reasoning:
@@ -592,6 +602,14 @@ async def on_message(message: cl.Message):
         route_elapsed_ms = outcome.timings.route_ms if DEBUG_ENABLED else 0.0
         execute_elapsed_ms = outcome.timings.execute_ms if DEBUG_ENABLED else 0.0
         answer_elapsed_ms = outcome.timings.answer_ms if DEBUG_ENABLED else 0.0
+        if DEBUG_ENABLED:
+            logger.info(
+                "on_message route intent=%s primary=%s source=%s ambiguous=%s",
+                route.intent,
+                route.primary_metric,
+                route.source,
+                route.ambiguous,
+            )
 
         if route.intent == "ambiguous":
             await cl.Message(
@@ -641,14 +659,30 @@ async def on_message(message: cl.Message):
         result = outcome.result
         payload = outcome.payload
         forecast = outcome.forecast
+        if DEBUG_ENABLED:
+            logger.info(
+                "on_message outcome result_none=%s payload_none=%s forecast_none=%s",
+                result is None,
+                payload is None,
+                forecast is None,
+            )
         if result is None or payload is None:
             raise ValueError(
                 "Agent failed to produce a metric result and answer payload."
             )
 
-        cache_meta = ((result.meta or {}).get("cache") or {}) if result.meta else {}
-        cache_timings = cache_meta.get("timings_ms") or {}
-        fetched_segments = cache_meta.get("fetched_segments") or []
+        meta_dict = result.meta if isinstance(result.meta, dict) else {}
+        cache_meta = (
+            meta_dict.get("cache") if isinstance(meta_dict.get("cache"), dict) else {}
+        )
+        cache_timings = (
+            cache_meta.get("timings_ms")
+            if isinstance(cache_meta.get("timings_ms"), dict)
+            else {}
+        )
+        fetched_segments = cache_meta.get("fetched_segments")
+        if not isinstance(fetched_segments, list):
+            fetched_segments = []
         background_refresh_scheduled = bool(
             cache_meta.get("background_refresh_scheduled", False)
         )
@@ -681,12 +715,30 @@ async def on_message(message: cl.Message):
             if payload.structured_response is not None
             else payload.answer_text
         )
+        if DEBUG_ENABLED:
+            logger.info(
+                "on_message render content_len=%s structured_type=%s",
+                len(str(rendered_content or "")),
+                (
+                    type(payload.structured_response).__name__
+                    if payload.structured_response is not None
+                    else "none"
+                ),
+            )
         msg = await cl.Message(content=rendered_content).send()
+        if DEBUG_ENABLED:
+            logger.info("on_message message_sent id=%s", msg.id)
         if payload.structured_response is not None:
+            if hasattr(payload.structured_response, "model_dump"):
+                response_json = payload.structured_response.model_dump(mode="json")
+            elif isinstance(payload.structured_response, dict):
+                response_json = payload.structured_response
+            else:
+                response_json = {}
             shareable_answers = dict(cl.user_session.get("shareable_answers") or {})
             shareable_answers[msg.id] = {
                 "question": user_query,
-                "response_json": payload.structured_response.model_dump(mode="json"),
+                "response_json": response_json,
             }
             cl.user_session.set("shareable_answers", shareable_answers)
             msg.actions = [
@@ -743,7 +795,9 @@ async def on_message(message: cl.Message):
                 metric_df = metric_df.dropna(subset=["date", "value"])
 
                 if not metric_df.empty:
-                    metric_label = "Exports" if target_metric == "lng_exports" else "Imports"
+                    metric_label = (
+                        "Exports" if target_metric == "lng_exports" else "Imports"
+                    )
                     spec = ChartSpec(
                         chart_type="line",
                         title=f"U.S. Natural Gas {metric_label} (Last 12 Months)",
