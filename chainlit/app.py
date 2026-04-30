@@ -88,9 +88,7 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
-import pdb
 
-pdb.set_trace()
 SHARE_ACTION_NAME = "share_structured_answer"
 ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics"
 
