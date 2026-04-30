@@ -8,9 +8,9 @@ import pandas as pd
 
 from agents.filter_resolvers import FilterResolverDeps
 from agents.filter_resolvers import build_filters as build_metric_filters
-from agents.llm_router import LLMRouterError
-from agents.llm_router import llm_route_structured as llm_route_structured_impl
+from agents.llm_query_parser import LLMQueryParserError, llm_parse_query
 from agents.metric_capabilities import get_metric_capability
+from agents.source_planner import build_source_plan
 from agents.router_data import (
     BONUS_TERMS,
     COMPARE_PATTERNS,
@@ -576,10 +576,26 @@ class LLMRouteOutput:
 def llm_route_structured(user_query: str, normalized_query: str) -> LLMRouteOutput:
 
     try:
-        return llm_route_structured_impl(
-            user_query=user_query, normalized_query=normalized_query
+        parsed = llm_parse_query(
+            user_query=user_query,
+            normalized_query=normalized_query,
         )
-    except LLMRouterError as err:
+        plan = build_source_plan(parsed)
+        primary_metric = plan.calls[0].metric if plan.calls else None
+        metrics = [call.metric for call in plan.calls]
+        if plan.intent == "unsupported":
+            primary_metric = None
+            metrics = []
+        return LLMRouteOutput(
+            intent=plan.intent,
+            primary_metric=primary_metric,
+            metrics=metrics,
+            filters=plan.calls[0].filters if plan.calls else None,
+            reason=plan.reason,
+            confidence=parsed.confidence,
+            ambiguous=plan.ambiguous,
+        )
+    except LLMQueryParserError as err:
         return LLMRouteOutput(
             intent="unsupported",
             primary_metric=None,

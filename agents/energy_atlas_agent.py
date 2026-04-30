@@ -6,8 +6,10 @@ from time import perf_counter
 from typing import Callable, Optional
 
 from agents.agent_policy import AgentPolicy, load_agent_policy
+from agents.llm_query_parser import llm_parse_query
 from agents.metric_capabilities import get_metric_capability
 from agents.router import HybridRouteResult, route_query
+from agents.source_planner import build_source_plan
 from executer import ExecuteRequest, MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
 
@@ -109,8 +111,29 @@ class EnergyAtlasAgent:
             )
 
         execute_started = perf_counter()
-        result = self._execute_with_fallback(route=route)
+        result: MetricResult
+        used_plan_execution = False
+        try:
+            parsed = llm_parse_query(
+                user_query=user_query,
+                normalized_query=(route.normalized_query or user_query).strip().lower(),
+            )
+            plan = build_source_plan(parsed)
+            plan_results = self.executor.execute_plan(plan, start=route.start, end=route.end)
+            route_metric = str(route.primary_metric or "")
+            if route_metric and route_metric in plan_results:
+                result = plan_results[route_metric]
+                used_plan_execution = True
+            elif plan.calls:
+                result = plan_results[plan.calls[0].metric]
+                used_plan_execution = True
+            else:
+                result = self._execute_with_fallback(route=route)
+        except Exception:
+            result = self._execute_with_fallback(route=route)
         execute_ms = (perf_counter() - execute_started) * 1000
+        if used_plan_execution and result.meta is not None:
+            result.meta["execution_mode"] = "source_plan"
 
         forecast = None
         metric = str((result.meta or {}).get("metric") or route.primary_metric or "")

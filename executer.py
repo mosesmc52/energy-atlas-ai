@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 from schemas.answer import SourceRef
+from agents.source_planner import SourcePlan
 from tools.cftc_adapter import CFTCAdapter, CFTCResult
 from tools.des_adapter import DESResult, DallasEnergySurveyAdapter
 from tools.eia_adapter import EIAAdapter, EIAResult
@@ -144,6 +145,18 @@ class MetricExecutor:
         )
 
         return result
+
+    def execute_plan(self, plan: SourcePlan, *, start: str, end: str) -> Dict[str, MetricResult]:
+        results: Dict[str, MetricResult] = {}
+        for call in plan.calls:
+            req = ExecuteRequest(
+                metric=call.metric,
+                start=start,
+                end=end,
+                filters=call.filters or {},
+            )
+            results[call.metric] = self.execute(req)
+        return results
 
     def _to_metric_result(self, res: Any) -> MetricResult:
         """
