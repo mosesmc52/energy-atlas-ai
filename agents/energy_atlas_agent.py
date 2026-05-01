@@ -1,15 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from time import perf_counter
 from typing import Callable, Optional
 
 from agents.agent_policy import AgentPolicy, load_agent_policy
+from agents.llm_query_parser import llm_parse_query
 from agents.metric_capabilities import get_metric_capability
 from agents.router import HybridRouteResult, route_query
+from agents.source_planner import build_source_plan
 from executer import ExecuteRequest, MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
+
+logger = logging.getLogger(__name__)
+DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 @dataclass(frozen=True)
@@ -98,6 +109,15 @@ class EnergyAtlasAgent:
         route_started = perf_counter()
         route = self._route_fn(user_query)
         route_ms = (perf_counter() - route_started) * 1000
+        if DEBUG_ENABLED:
+            logger.info(
+                "agent_run route intent=%s primary=%s start=%s end=%s source=%s",
+                route.intent,
+                route.primary_metric,
+                route.start,
+                route.end,
+                route.source,
+            )
 
         if route.intent in {"ambiguous", "unsupported"} or route.primary_metric is None:
             return AgentOutcome(
@@ -109,8 +129,55 @@ class EnergyAtlasAgent:
             )
 
         execute_started = perf_counter()
-        result = self._execute_with_fallback(route=route)
+        result: MetricResult
+        used_plan_execution = False
+        try:
+            parsed = llm_parse_query(
+                user_query=user_query,
+                normalized_query=(route.normalized_query or user_query).strip().lower(),
+            )
+            if DEBUG_ENABLED:
+                logger.info(
+                    "agent_run parser intent=%s primary=%s metrics=%s ambiguous=%s conf=%.3f",
+                    parsed.intent,
+                    parsed.primary_metric,
+                    parsed.metrics,
+                    parsed.ambiguous,
+                    parsed.confidence,
+                )
+            plan = build_source_plan(parsed)
+            if DEBUG_ENABLED:
+                logger.info(
+                    "agent_run plan intent=%s calls=%s multi=%s ambiguous=%s",
+                    plan.intent,
+                    [c.metric for c in plan.calls],
+                    plan.requires_multiple_sources,
+                    plan.ambiguous,
+                )
+            plan_results = self.executor.execute_plan(plan, start=route.start, end=route.end)
+            route_metric = str(route.primary_metric or "")
+            if route_metric and route_metric in plan_results:
+                result = plan_results[route_metric]
+                used_plan_execution = True
+            elif plan.calls:
+                result = plan_results[plan.calls[0].metric]
+                used_plan_execution = True
+            else:
+                result = self._execute_with_fallback(route=route)
+        except Exception as exc:
+            if DEBUG_ENABLED:
+                logger.exception("agent_run plan execution failed; falling back: %s", exc)
+            result = self._execute_with_fallback(route=route)
         execute_ms = (perf_counter() - execute_started) * 1000
+        if DEBUG_ENABLED:
+            logger.info(
+                "agent_run execute done mode=%s rows=%s metric=%s",
+                "source_plan" if used_plan_execution else "fallback",
+                0 if result.df is None else len(result.df),
+                str((result.meta or {}).get("metric") or route.primary_metric or ""),
+            )
+        if used_plan_execution and result.meta is not None:
+            result.meta["execution_mode"] = "source_plan"
 
         forecast = None
         metric = str((result.meta or {}).get("metric") or route.primary_metric or "")
@@ -139,6 +206,12 @@ class EnergyAtlasAgent:
             model=self.model,
         )
         answer_ms = (perf_counter() - answer_started) * 1000
+        if DEBUG_ENABLED:
+            logger.info(
+                "agent_run answer built structured=%s answer_len=%s",
+                payload.structured_response is not None,
+                len(str(payload.answer_text or "")),
+            )
 
         return AgentOutcome(
             route=route,

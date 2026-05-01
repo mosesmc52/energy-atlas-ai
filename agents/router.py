@@ -8,9 +8,9 @@ import pandas as pd
 
 from agents.filter_resolvers import FilterResolverDeps
 from agents.filter_resolvers import build_filters as build_metric_filters
-from agents.llm_router import LLMRouterError
-from agents.llm_router import llm_route_structured as llm_route_structured_impl
+from agents.llm_query_parser import LLMQueryParserError, llm_parse_query
 from agents.metric_capabilities import get_metric_capability
+from agents.source_planner import build_source_plan
 from agents.router_data import (
     BONUS_TERMS,
     COMPARE_PATTERNS,
@@ -576,10 +576,26 @@ class LLMRouteOutput:
 def llm_route_structured(user_query: str, normalized_query: str) -> LLMRouteOutput:
 
     try:
-        return llm_route_structured_impl(
-            user_query=user_query, normalized_query=normalized_query
+        parsed = llm_parse_query(
+            user_query=user_query,
+            normalized_query=normalized_query,
         )
-    except LLMRouterError as err:
+        plan = build_source_plan(parsed)
+        primary_metric = plan.calls[0].metric if plan.calls else None
+        metrics = [call.metric for call in plan.calls]
+        if plan.intent == "unsupported":
+            primary_metric = None
+            metrics = []
+        return LLMRouteOutput(
+            intent=plan.intent,
+            primary_metric=primary_metric,
+            metrics=metrics,
+            filters=plan.calls[0].filters if plan.calls else None,
+            reason=plan.reason,
+            confidence=parsed.confidence,
+            ambiguous=plan.ambiguous,
+        )
+    except LLMQueryParserError as err:
         return LLMRouteOutput(
             intent="unsupported",
             primary_metric=None,
@@ -725,6 +741,7 @@ def route_query(user_query: str) -> HybridRouteResult:
     has_import = bool(re.search(r"\bimports?\b", normalized))
     has_export = bool(re.search(r"\bexports?\b", normalized))
     has_reserves = bool(re.search(r"\breserves?\b", normalized))
+    has_production = bool(re.search(r"\b(production|output)\b", normalized))
 
     if has_import and has_export:
         return HybridRouteResult(
@@ -739,6 +756,25 @@ def route_query(user_query: str) -> HybridRouteResult:
             candidates=candidates[:3],
             source="rule",
             reason="Deterministic compare route for imports versus exports query",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if has_production and intent == "single_metric":
+        metric = "ng_production_lower48"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for implied natural-gas production query",
             normalized_query=normalized,
             include_forecast=include_forecast,
             forecast_horizon_days=forecast_horizon_days,

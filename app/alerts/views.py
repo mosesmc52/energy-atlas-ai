@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from types import SimpleNamespace
+from typing import Any
 
 from django.conf import settings
 from django.contrib import messages
@@ -117,6 +118,82 @@ def _coerce_bool(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _chart_field_name(field: Any, fallback: str) -> str:
+    if isinstance(field, str) and field.strip():
+        return field.strip()
+    if isinstance(field, dict):
+        value = str(field.get("field") or "").strip()
+        if value:
+            return value
+    return fallback
+
+
+def _shared_chart_payload(response: dict[str, Any]) -> dict | None:
+    chart_spec = response.get("chart_spec")
+    data_preview = response.get("data_preview")
+    if not isinstance(chart_spec, dict) or not isinstance(data_preview, dict):
+        return None
+
+    columns = data_preview.get("columns")
+    rows = data_preview.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return None
+
+    x_field = _chart_field_name(chart_spec.get("x"), "date")
+    y_field_raw = chart_spec.get("y")
+    if isinstance(y_field_raw, list):
+        y_fields = [str(item).strip() for item in y_field_raw if str(item).strip()]
+    else:
+        y_fields = [_chart_field_name(y_field_raw, "value")]
+    if not y_fields:
+        return None
+
+    points = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) != len(columns):
+            continue
+        points.append(dict(zip(columns, row)))
+    if not points:
+        return None
+
+    units = data_preview.get("units") if isinstance(data_preview.get("units"), dict) else {}
+    chart_type = str(chart_spec.get("chart_type") or "line").strip().lower() or "line"
+    mode = "lines" if chart_type in {"line", "area", "stacked_area"} else "markers"
+    if chart_type == "bar":
+        trace_type = "bar"
+    else:
+        trace_type = "scatter"
+    fill = "tozeroy" if chart_type in {"area", "stacked_area"} else None
+
+    x_values = [point.get(x_field) for point in points]
+    series = []
+    for y_field in y_fields:
+        y_values = [point.get(y_field) for point in points]
+        if not any(value not in (None, "") for value in y_values):
+            continue
+        unit_text = str(units.get(y_field) or "").strip()
+        series.append(
+            {
+                "name": y_field.replace("_", " ").title(),
+                "x": x_values,
+                "y": y_values,
+                "type": trace_type,
+                "mode": mode,
+                "fill": fill,
+                "unit": unit_text,
+            }
+        )
+
+    if not series:
+        return None
+    return {
+        "title": str(chart_spec.get("title") or "").strip() or "Chart",
+        "x_label": str(chart_spec.get("x_label") or "").strip() or x_field.replace("_", " ").title(),
+        "y_label": str(chart_spec.get("y_label") or "").strip(),
+        "series": series,
+    }
+
+
 def _shared_answer_context(shared_answer: SharedAnswer) -> dict:
     response = (
         shared_answer.response_json if isinstance(shared_answer.response_json, dict) else {}
@@ -171,6 +248,7 @@ def _shared_answer_context(shared_answer: SharedAnswer) -> dict:
         )
 
     forecast = response.get("forecast") if isinstance(response.get("forecast"), dict) else {}
+    chart_payload = _shared_chart_payload(response)
     return {
         "shared_answer": shared_answer,
         "signal_label": signal_labels.get(status, "Insight"),
@@ -182,6 +260,7 @@ def _shared_answer_context(shared_answer: SharedAnswer) -> dict:
         "forecast_reasoning": str(forecast.get("reasoning") or "").strip(),
         "sources": sources,
         "datapoints": datapoints,
+        "chart_payload": chart_payload,
     }
 
 
@@ -984,9 +1063,15 @@ def create_shared_answer_view(request):
         )
         return JsonResponse({"error": "response_json is invalid"}, status=400)
 
+    persisted_response = structured_response.model_dump(mode="json")
+    for optional_key in ("chart_spec", "data_preview"):
+        optional_value = response_json.get(optional_key)
+        if isinstance(optional_value, dict):
+            persisted_response[optional_key] = optional_value
+
     shared_answer = SharedAnswer.objects.create(
         question=question,
-        response_json=structured_response.model_dump(mode="json"),
+        response_json=persisted_response,
     )
     share_path = reverse("shared-answer-detail", args=[shared_answer.share_id])
     app_url = str(getattr(settings, "APP_URL", "") or "").strip().rstrip("/")

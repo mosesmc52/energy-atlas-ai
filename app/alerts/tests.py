@@ -449,3 +449,41 @@ class SharedAnswerTests(TestCase):
         self.assertTrue(payload["url"].endswith(payload["path"]))
         self.assertEqual(shared_answer.question, "Are exports higher than last year?")
         self.assertEqual(shared_answer.response_json["signal"]["status"], "bullish")
+
+    def test_create_shared_answer_persists_chart_payload(self):
+        response = self.client.post(
+            reverse("create-shared-answer"),
+            data=json.dumps(
+                {
+                    "question": "Show me the trend",
+                    "response_json": {
+                        "answer": "Trend is up.",
+                        "signal": {"status": "bullish", "confidence": 0.74},
+                        "summary": "Trend is up.",
+                        "drivers": ["Demand increased."],
+                        "data_points": [],
+                        "forecast": {"direction": "up", "reasoning": "Momentum is positive."},
+                        "suggested_alerts": [],
+                        "alerts": [],
+                        "sources": [],
+                        "chart_spec": {
+                            "chart_type": "line",
+                            "title": "Sample Trend",
+                            "x": "date",
+                            "y": ["value"],
+                        },
+                        "data_preview": {
+                            "columns": ["date", "value"],
+                            "rows": [["2026-01-01", 10], ["2026-01-08", 11]],
+                        },
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = json.loads(response.content)
+        shared_answer = SharedAnswer.objects.get(share_id=payload["share_id"])
+        self.assertIn("chart_spec", shared_answer.response_json)
+        self.assertIn("data_preview", shared_answer.response_json)

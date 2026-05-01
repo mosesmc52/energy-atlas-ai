@@ -25,6 +25,13 @@
       <img src="{% static 'img/logo-w-title.png' %}" alt="Energy Atlas" class="h-10 w-auto sm:h-11">
     </a>
     <article class="space-y-4">
+      {% if shared_answer.question %}
+        <section class="rounded-2xl border border-zinc-200 bg-white p-6">
+          <h2 class="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-zinc-500">Original Question</h2>
+          <p class="mt-3 text-[1.1rem] leading-7 text-zinc-800">{{ shared_answer.question }}</p>
+        </section>
+      {% endif %}
+
       <section class="rounded-2xl border border-zinc-200 bg-white p-6">
         <div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
           <p class="text-[1.2rem] font-medium leading-7 text-zinc-800">
@@ -36,6 +43,14 @@
           </div>
         </div>
       </section>
+
+      {% if chart_payload %}
+        <section class="rounded-2xl border border-zinc-200 bg-white p-6">
+          <h2 class="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-zinc-500">Chart</h2>
+          <div id="shared-answer-chart" class="mt-4 h-[360px] w-full"></div>
+        </section>
+        {{ chart_payload|json_script:"shared-chart-payload" }}
+      {% endif %}
 
       <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,0.9fr)]">
         <div class="space-y-4">
@@ -105,4 +120,50 @@
       </div>
     </article>
   </section>
+  {% if chart_payload %}
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script>
+      (function () {
+        const target = document.getElementById("shared-answer-chart");
+        const payloadEl = document.getElementById("shared-chart-payload");
+        if (!target || !payloadEl || typeof Plotly === "undefined") return;
+        let payload = null;
+        try {
+          payload = JSON.parse(payloadEl.textContent || "{}");
+        } catch (_err) {
+          return;
+        }
+        if (!payload || !Array.isArray(payload.series) || !payload.series.length) return;
+
+        const traces = payload.series.map((series) => {
+          const trace = {
+            name: series.name || "Series",
+            x: Array.isArray(series.x) ? series.x : [],
+            y: Array.isArray(series.y) ? series.y : [],
+            type: series.type || "scatter"
+          };
+          if (trace.type === "scatter") {
+            trace.mode = series.mode || "lines";
+          }
+          if (series.fill) {
+            trace.fill = series.fill;
+          }
+          return trace;
+        });
+
+        Plotly.newPlot(target, traces, {
+          title: payload.title || "",
+          margin: { t: 48, r: 16, b: 48, l: 56 },
+          xaxis: { title: payload.x_label || "" },
+          yaxis: { title: payload.y_label || "" },
+          legend: { orientation: "h" },
+          paper_bgcolor: "white",
+          plot_bgcolor: "white"
+        }, {
+          displayModeBar: false,
+          responsive: true
+        });
+      })();
+    </script>
+  {% endif %}
 {% endblock %}
