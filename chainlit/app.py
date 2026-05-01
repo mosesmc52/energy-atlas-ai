@@ -733,6 +733,10 @@ async def on_message(message: cl.Message):
                 response_json = payload.structured_response
             else:
                 response_json = {}
+            if payload.chart_spec is not None and hasattr(payload.chart_spec, "model_dump"):
+                response_json["chart_spec"] = payload.chart_spec.model_dump(mode="json")
+            if payload.data_preview is not None and hasattr(payload.data_preview, "model_dump"):
+                response_json["data_preview"] = payload.data_preview.model_dump(mode="json")
             shareable_answers = dict(cl.user_session.get("shareable_answers") or {})
             shareable_answers[msg.id] = {
                 "question": user_query,
