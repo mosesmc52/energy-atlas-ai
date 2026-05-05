@@ -267,6 +267,22 @@ def _make_preview(df: pd.DataFrame, n: int = 10) -> DataPreview:
     )
 
 
+def _should_include_data_preview() -> bool:
+    explicit = os.getenv("ATLAS_INCLUDE_DATA_PREVIEW", "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+    response_mode = os.getenv("ATLAS_RESPONSE_MODE", "fast").strip().lower()
+    return response_mode in {"analysis", "detailed"}
+
+
+def _maybe_data_preview(df: pd.DataFrame | None) -> DataPreview | None:
+    if df is None or not _should_include_data_preview():
+        return None
+    return _make_preview(df)
+
+
 def _safe_float(x) -> Optional[float]:
     try:
         if x is None or (isinstance(x, float) and pd.isna(x)):
@@ -1818,7 +1834,7 @@ def build_answer_with_openai(
                 report_context_used=False,
                 report_context_reason="power_sector_proxy_no_rag",
                 report_context_sources=[],
-                data_preview=_make_preview(df),
+                data_preview=_maybe_data_preview(df),
                 chart_spec=chart_spec,
                 sources=[src],
             )
@@ -1841,7 +1857,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="ranking_response_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1865,7 +1881,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="regional_storage_change_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1889,7 +1905,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="storage_level_and_change_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1913,7 +1929,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="weather_degree_day_forecast_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1934,7 +1950,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="weather_regional_demand_drivers_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1955,7 +1971,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="supply_balance_regime_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1984,7 +2000,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="weekly_energy_atlas_summary_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -2011,7 +2027,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="des_text_metric",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=None,
             sources=[src],
         )
@@ -2180,7 +2196,7 @@ def build_answer_with_openai(
         report_context_used=report_context_used,
         report_context_reason=report_context_reason,
         report_context_sources=report_context_sources,
-        data_preview=_make_preview(df) if df is not None else None,
+        data_preview=_maybe_data_preview(df),
         chart_spec=chart_spec,
         sources=[src],
         warnings=None,

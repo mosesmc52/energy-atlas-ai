@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Final, Optional, Tuple
 
+from openai import OpenAI
+
 from agents.llm_router import (
     DATASET_FILTERS,
     ISO_FILTERS,
@@ -17,6 +19,7 @@ from agents.llm_router import (
 )
 
 logger = logging.getLogger(__name__)
+OPENAI_CLIENT = OpenAI()
 
 TIME_WINDOWS: Final[tuple[str, ...]] = (
     "latest",
@@ -217,9 +220,7 @@ def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
 
 
 def _get_openai_client() -> Any:
-    from openai import OpenAI
-
-    return OpenAI()
+    return OPENAI_CLIENT
 
 
 def _extract_json_text(response: Any) -> str:

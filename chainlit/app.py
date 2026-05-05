@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import pathlib
 import sys
 import tempfile
+import threading
+import time
 import urllib.parse
 from time import perf_counter
 
@@ -51,12 +54,13 @@ from openai import OpenAI
 django.setup()
 
 import chainlit as cl
-from agents.energy_atlas_agent import EnergyAtlasAgent
+from agents.energy_atlas_agent import AgentOutcome, EnergyAtlasAgent
 from agents.guardrails import (
     OUT_OF_SCOPE_MESSAGE,
     is_natural_gas_question,
     looks_like_general_energy_question,
 )
+from agents.router import normalize_query
 from alerts.services import (
     build_signal_evaluator,
     is_builtin_signal_id,
@@ -78,6 +82,7 @@ from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.eia_adapter import EIAAdapter
 from tools.forecasting import TrendForecaster
 from tools.gridstatus_adapter import GridStatusAdapter
+from utils.dates import resolve_date_range
 from utils.sheets_logger import GoogleSheetsQuestionLogger
 
 logger = logging.getLogger(__name__)
@@ -90,6 +95,10 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
 
 SHARE_ACTION_NAME = "share_structured_answer"
 ANALYTICS_MESSAGE_TYPE = "energy_atlas_analytics"
+OPENAI_CLIENT = OpenAI()
+_GLOBAL_DEPS: dict[str, object] | None = None
+_RESPONSE_CACHE_LOCK = threading.Lock()
+_RESPONSE_CACHE: dict[str, tuple[float, AgentOutcome]] = {}
 
 
 async def _track_chainlit_event(event: str, **params: object) -> None:
@@ -106,14 +115,13 @@ async def _track_chainlit_event(event: str, **params: object) -> None:
 
 
 def _general_energy_answer(question: str, previous_context: str = "") -> str:
-    client = OpenAI()
     user_content = question
     if previous_context:
         user_content = (
             f"Previous energy question context: {previous_context}\n"
             f"Current user question: {question}"
         )
-    response = client.responses.create(
+    response = OPENAI_CLIENT.responses.create(
         model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
         input=[
             {
@@ -466,6 +474,101 @@ def build_container():
     }
 
 
+def get_global_container() -> dict[str, object]:
+    global _GLOBAL_DEPS
+    if _GLOBAL_DEPS is None:
+        _GLOBAL_DEPS = build_container()
+    return _GLOBAL_DEPS
+
+
+def _build_share_response_json(answer_payload: dict) -> dict:
+    structured_response = answer_payload.get("structured_response")
+    chart_spec = answer_payload.get("chart_spec")
+    data_preview = answer_payload.get("data_preview")
+
+    if hasattr(structured_response, "model_dump"):
+        response_json = structured_response.model_dump(mode="json")
+    elif isinstance(structured_response, dict):
+        response_json = dict(structured_response)
+    else:
+        response_json = {}
+
+    if chart_spec is not None and hasattr(chart_spec, "model_dump"):
+        response_json["chart_spec"] = chart_spec.model_dump(mode="json")
+    if data_preview is not None and hasattr(data_preview, "model_dump"):
+        response_json["data_preview"] = data_preview.model_dump(mode="json")
+
+    return response_json
+
+
+def _response_cache_ttl_seconds() -> int:
+    try:
+        return max(0, int(os.getenv("ATLAS_RESPONSE_CACHE_TTL_SECONDS", "90")))
+    except ValueError:
+        return 90
+
+
+def _response_cache_max_entries() -> int:
+    try:
+        return max(1, int(os.getenv("ATLAS_RESPONSE_CACHE_MAX_ENTRIES", "256")))
+    except ValueError:
+        return 256
+
+
+def _response_cache_key(user_query: str) -> str:
+    normalized = normalize_query(user_query)
+    start, end = resolve_date_range(user_query)
+    response_mode = os.getenv("ATLAS_RESPONSE_MODE", "fast").strip().lower()
+    narration_enabled = os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
+    include_preview = os.getenv("ATLAS_INCLUDE_DATA_PREVIEW", "").strip().lower()
+    model = os.getenv("OPENAI_MODEL", "gpt-5.2").strip().lower()
+    parser_model = os.getenv("ATLAS_QUERY_PARSER_MODEL", "").strip().lower()
+    return "|".join(
+        [
+            f"q={normalized}",
+            f"start={start}",
+            f"end={end}",
+            f"mode={response_mode}",
+            f"narration={narration_enabled}",
+            f"preview={include_preview}",
+            f"model={model}",
+            f"parser={parser_model}",
+        ]
+    )
+
+
+def _response_cache_get(cache_key: str) -> AgentOutcome | None:
+    ttl = _response_cache_ttl_seconds()
+    if ttl <= 0:
+        return None
+    now = time.time()
+    with _RESPONSE_CACHE_LOCK:
+        cached = _RESPONSE_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        created_at, outcome = cached
+        if now - created_at > ttl:
+            _RESPONSE_CACHE.pop(cache_key, None)
+            return None
+        return copy.deepcopy(outcome)
+
+
+def _response_cache_set(cache_key: str, outcome: AgentOutcome) -> None:
+    ttl = _response_cache_ttl_seconds()
+    if ttl <= 0:
+        return
+    max_entries = _response_cache_max_entries()
+    now = time.time()
+    with _RESPONSE_CACHE_LOCK:
+        _RESPONSE_CACHE[cache_key] = (now, copy.deepcopy(outcome))
+        if len(_RESPONSE_CACHE) <= max_entries:
+            return
+        for key, _ in sorted(_RESPONSE_CACHE.items(), key=lambda item: item[1][0])[
+            : len(_RESPONSE_CACHE) - max_entries
+        ]:
+            _RESPONSE_CACHE.pop(key, None)
+
+
 @cl.set_starters
 async def set_starters():
     return [
@@ -521,7 +624,7 @@ async def set_starters():
 @cl.on_chat_start
 async def on_chat_start():
     # Core deps
-    cl.user_session.set("deps", build_container())
+    cl.user_session.set("deps", get_global_container())
     cl.user_session.set("shareable_answers", {})
     await _track_chainlit_event(
         "chat_started",
@@ -592,12 +695,18 @@ async def on_message(message: cl.Message):
     qlog_elapsed_ms = (perf_counter() - qlog_started) * 1000 if DEBUG_ENABLED else 0.0
 
     try:
+        cache_key = _response_cache_key(user_query)
+        cached_outcome = _response_cache_get(cache_key)
+        cache_hit = cached_outcome is not None
         # (A) Agent orchestration: route -> execute -> answer (+optional forecast)
-        outcome = await asyncio.to_thread(
-            agent.run,
-            user_query=user_query,
-            forecaster=forecaster,
-        )
+        if cached_outcome is not None:
+            outcome = cached_outcome
+        else:
+            outcome = await asyncio.to_thread(
+                agent.run,
+                user_query=user_query,
+                forecaster=forecaster,
+            )
         route = outcome.route
         route_elapsed_ms = outcome.timings.route_ms if DEBUG_ENABLED else 0.0
         execute_elapsed_ms = outcome.timings.execute_ms if DEBUG_ENABLED else 0.0
@@ -670,6 +779,8 @@ async def on_message(message: cl.Message):
             raise ValueError(
                 "Agent failed to produce a metric result and answer payload."
             )
+        if not cache_hit:
+            _response_cache_set(cache_key, outcome)
 
         meta_dict = result.meta if isinstance(result.meta, dict) else {}
         cache_meta = (
@@ -729,20 +840,12 @@ async def on_message(message: cl.Message):
         if DEBUG_ENABLED:
             logger.info("on_message message_sent id=%s", msg.id)
         if payload.structured_response is not None:
-            if hasattr(payload.structured_response, "model_dump"):
-                response_json = payload.structured_response.model_dump(mode="json")
-            elif isinstance(payload.structured_response, dict):
-                response_json = payload.structured_response
-            else:
-                response_json = {}
-            if payload.chart_spec is not None and hasattr(payload.chart_spec, "model_dump"):
-                response_json["chart_spec"] = payload.chart_spec.model_dump(mode="json")
-            if payload.data_preview is not None and hasattr(payload.data_preview, "model_dump"):
-                response_json["data_preview"] = payload.data_preview.model_dump(mode="json")
             shareable_answers = dict(cl.user_session.get("shareable_answers") or {})
             shareable_answers[msg.id] = {
                 "question": user_query,
-                "response_json": response_json,
+                "structured_response": payload.structured_response,
+                "chart_spec": payload.chart_spec,
+                "data_preview": payload.data_preview,
             }
             cl.user_session.set("shareable_answers", shareable_answers)
             msg.actions = [
@@ -883,6 +986,7 @@ async def on_message(message: cl.Message):
                 route.source,
                 user_query,
             )
+            logger.info("response_cache hit=%s key=%s", cache_hit, cache_key)
 
     except Exception as e:
         if DEBUG_ENABLED:
@@ -915,10 +1019,11 @@ async def share_structured_answer(action: cl.Action):
         return
 
     try:
+        response_json = _build_share_response_json(dict(answer_payload))
         share_url = await asyncio.to_thread(
             _create_shared_answer,
             str(answer_payload.get("question") or ""),
-            dict(answer_payload.get("response_json") or {}),
+            response_json,
         )
     except Exception as e:
         logger.warning("Share link creation failed: %s", e)
