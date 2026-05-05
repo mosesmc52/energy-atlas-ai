@@ -2,6 +2,7 @@
 # atlas/answer_builder.py (or wherever _make_preview lives)
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import logging
 import os
@@ -193,7 +194,7 @@ def _build_report_rag_context(
         return "", [], False, "heuristic_not_triggered"
 
     report_chunks_path = _resolve_report_chunks_path()
-    chunks = load_report_chunks(str(report_chunks_path))
+    chunks = _cached_report_chunks(str(report_chunks_path))
     if not chunks:
         logger.info(
             "report_rag used=false reason=missing_or_empty path=%s query=%r",
@@ -218,6 +219,12 @@ def _build_report_rag_context(
         [source.title for source in sources[:3]],
     )
     return format_report_context(matches), sources, True, "retrieval_matches_found"
+
+
+@lru_cache(maxsize=4)
+def _cached_report_chunks(report_chunks_path: str) -> tuple[dict, ...]:
+    chunks = load_report_chunks(report_chunks_path)
+    return tuple(chunks)
 
 
 def _json_safe(v: Any) -> Any:
@@ -1778,10 +1785,12 @@ def build_answer_with_openai(
     report_context_sources: list[AnswerSourceSummary] = []
     report_context_used = False
     report_context_reason = "llm_narration_disabled"
-    use_llm_narration = (
+    response_mode = os.getenv("ATLAS_RESPONSE_MODE", "fast").strip().lower()
+    narration_enabled = (
         os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
+    use_llm_narration = narration_enabled and response_mode in {"analysis", "detailed"}
     prefer_report_narration = (
         use_llm_narration
         and _is_report_narrative_query(query)

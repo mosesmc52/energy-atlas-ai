@@ -9,7 +9,6 @@ import pathlib
 import sys
 import tempfile
 import urllib.parse
-from datetime import date, timedelta
 from time import perf_counter
 
 import pandas as pd
@@ -71,7 +70,7 @@ from charts.plotly_renderer import (
     should_render_timeseries_summary_cards,
 )
 from django.conf import settings
-from executer import ExecuteRequest, MetricExecutor
+from executer import MetricExecutor
 from schemas.answer import StructuredAnswer
 from schemas.chart_spec import ChartSpec
 from tools.cftc_adapter import CFTCAdapter
@@ -548,7 +547,6 @@ async def on_chat_start():
 async def on_message(message: cl.Message):
     request_started = perf_counter() if DEBUG_ENABLED else 0.0
     deps = cl.user_session.get("deps") or {}
-    executor: MetricExecutor = deps.get("executor")  # type: ignore[assignment]
     agent: EnergyAtlasAgent = deps.get("agent")  # type: ignore[assignment]
     signal_evaluator = deps.get("signal_evaluator")
     forecaster: TrendForecaster | None = deps.get("forecaster")  # type: ignore[assignment]
@@ -595,7 +593,11 @@ async def on_message(message: cl.Message):
 
     try:
         # (A) Agent orchestration: route -> execute -> answer (+optional forecast)
-        outcome = agent.run(user_query=user_query, forecaster=forecaster)
+        outcome = await asyncio.to_thread(
+            agent.run,
+            user_query=user_query,
+            forecaster=forecaster,
+        )
         route = outcome.route
         route_elapsed_ms = outcome.timings.route_ms if DEBUG_ENABLED else 0.0
         execute_elapsed_ms = outcome.timings.execute_ms if DEBUG_ENABLED else 0.0
@@ -774,18 +776,8 @@ async def on_message(message: cl.Message):
         rendered_custom_lng_trade_view = False
         if route.primary_metric in {"lng_exports", "lng_imports"}:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
-            end_dt = date.today()
-            start_dt = end_dt - timedelta(days=365)
             target_metric = route.primary_metric
-            metric_result = executor.execute(
-                ExecuteRequest(
-                    metric=target_metric,
-                    start=start_dt.isoformat(),
-                    end=end_dt.isoformat(),
-                    filters={"region": "united_states_pipeline_total"},
-                )
-            )
-            metric_df = metric_result.df.copy()
+            metric_df = result.df.copy()
             if (
                 metric_df is not None
                 and not metric_df.empty
@@ -812,7 +804,7 @@ async def on_message(message: cl.Message):
                     await cl.Plotly(name=spec.title, figure=fig).send(for_id=msg.id)
 
                     metric_summary = compute_timeseries_summary_metrics(
-                        metric_result.df,
+                        result.df,
                         unit="MMcf",
                     )
                     summary_cards = format_summary_cards(metric_summary)

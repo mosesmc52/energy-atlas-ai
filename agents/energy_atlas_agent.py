@@ -10,7 +10,7 @@ from agents.agent_policy import AgentPolicy, load_agent_policy
 from agents.llm_query_parser import llm_parse_query
 from agents.metric_capabilities import get_metric_capability
 from agents.router import HybridRouteResult, route_query
-from agents.source_planner import build_source_plan
+from agents.source_planner import SourceCall, SourcePlan, build_source_plan
 from executer import ExecuteRequest, MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
 
@@ -64,6 +64,30 @@ class EnergyAtlasAgent:
         self.model = model or resolved_policy.answer_model
         self._route_fn = route_fn
         self._answer_builder_fn = answer_builder_fn
+
+    def _route_to_source_plan(self, route: HybridRouteResult) -> SourcePlan:
+        calls: list[SourceCall] = []
+        metrics = list(route.metrics or [])
+        if route.primary_metric and route.primary_metric not in metrics:
+            metrics.insert(0, route.primary_metric)
+        for metric in metrics:
+            calls.append(
+                SourceCall(
+                    adapter="route",
+                    metric=metric,
+                    filters=dict(route.filters or {}),
+                    calculation=None,
+                )
+            )
+        return SourcePlan(
+            intent=route.intent,
+            calls=calls,
+            comparison=None,
+            time_window=None,
+            requires_multiple_sources=len(calls) > 1,
+            ambiguous=route.ambiguous,
+            reason=route.reason,
+        )
 
     def _execute_with_fallback(self, *, route: HybridRouteResult) -> MetricResult:
         req = ExecuteRequest(
@@ -132,20 +156,23 @@ class EnergyAtlasAgent:
         result: MetricResult
         used_plan_execution = False
         try:
-            parsed = llm_parse_query(
-                user_query=user_query,
-                normalized_query=(route.normalized_query or user_query).strip().lower(),
-            )
-            if DEBUG_ENABLED:
-                logger.info(
-                    "agent_run parser intent=%s primary=%s metrics=%s ambiguous=%s conf=%.3f",
-                    parsed.intent,
-                    parsed.primary_metric,
-                    parsed.metrics,
-                    parsed.ambiguous,
-                    parsed.confidence,
+            if route.source == "llm":
+                plan = self._route_to_source_plan(route)
+            else:
+                parsed = llm_parse_query(
+                    user_query=user_query,
+                    normalized_query=(route.normalized_query or user_query).strip().lower(),
                 )
-            plan = build_source_plan(parsed)
+                if DEBUG_ENABLED:
+                    logger.info(
+                        "agent_run parser intent=%s primary=%s metrics=%s ambiguous=%s conf=%.3f",
+                        parsed.intent,
+                        parsed.primary_metric,
+                        parsed.metrics,
+                        parsed.ambiguous,
+                        parsed.confidence,
+                    )
+                plan = build_source_plan(parsed)
             if DEBUG_ENABLED:
                 logger.info(
                     "agent_run plan intent=%s calls=%s multi=%s ambiguous=%s",
