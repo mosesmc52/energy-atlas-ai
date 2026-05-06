@@ -2,6 +2,7 @@
 # atlas/answer_builder.py (or wherever _make_preview lives)
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import logging
 import os
@@ -193,7 +194,7 @@ def _build_report_rag_context(
         return "", [], False, "heuristic_not_triggered"
 
     report_chunks_path = _resolve_report_chunks_path()
-    chunks = load_report_chunks(str(report_chunks_path))
+    chunks = _cached_report_chunks(str(report_chunks_path))
     if not chunks:
         logger.info(
             "report_rag used=false reason=missing_or_empty path=%s query=%r",
@@ -218,6 +219,12 @@ def _build_report_rag_context(
         [source.title for source in sources[:3]],
     )
     return format_report_context(matches), sources, True, "retrieval_matches_found"
+
+
+@lru_cache(maxsize=4)
+def _cached_report_chunks(report_chunks_path: str) -> tuple[dict, ...]:
+    chunks = load_report_chunks(report_chunks_path)
+    return tuple(chunks)
 
 
 def _json_safe(v: Any) -> Any:
@@ -258,6 +265,22 @@ def _make_preview(df: pd.DataFrame, n: int = 10) -> DataPreview:
         rows=rows,
         units=None,
     )
+
+
+def _should_include_data_preview() -> bool:
+    explicit = os.getenv("ATLAS_INCLUDE_DATA_PREVIEW", "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+    response_mode = os.getenv("ATLAS_RESPONSE_MODE", "fast").strip().lower()
+    return response_mode in {"analysis", "detailed"}
+
+
+def _maybe_data_preview(df: pd.DataFrame | None) -> DataPreview | None:
+    if df is None or not _should_include_data_preview():
+        return None
+    return _make_preview(df)
 
 
 def _safe_float(x) -> Optional[float]:
@@ -1778,10 +1801,12 @@ def build_answer_with_openai(
     report_context_sources: list[AnswerSourceSummary] = []
     report_context_used = False
     report_context_reason = "llm_narration_disabled"
-    use_llm_narration = (
+    response_mode = os.getenv("ATLAS_RESPONSE_MODE", "fast").strip().lower()
+    narration_enabled = (
         os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
+    use_llm_narration = narration_enabled and response_mode in {"analysis", "detailed"}
     prefer_report_narration = (
         use_llm_narration
         and _is_report_narrative_query(query)
@@ -1809,7 +1834,7 @@ def build_answer_with_openai(
                 report_context_used=False,
                 report_context_reason="power_sector_proxy_no_rag",
                 report_context_sources=[],
-                data_preview=_make_preview(df),
+                data_preview=_maybe_data_preview(df),
                 chart_spec=chart_spec,
                 sources=[src],
             )
@@ -1832,7 +1857,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="ranking_response_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1856,7 +1881,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="regional_storage_change_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1880,7 +1905,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="storage_level_and_change_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1904,7 +1929,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="weather_degree_day_forecast_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1925,7 +1950,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="weather_regional_demand_drivers_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1946,7 +1971,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="supply_balance_regime_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -1975,7 +2000,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="weekly_energy_atlas_summary_no_rag",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -2002,7 +2027,7 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="des_text_metric",
             report_context_sources=[],
-            data_preview=_make_preview(df),
+            data_preview=_maybe_data_preview(df),
             chart_spec=None,
             sources=[src],
         )
@@ -2171,7 +2196,7 @@ def build_answer_with_openai(
         report_context_used=report_context_used,
         report_context_reason=report_context_reason,
         report_context_sources=report_context_sources,
-        data_preview=_make_preview(df) if df is not None else None,
+        data_preview=_maybe_data_preview(df),
         chart_spec=chart_spec,
         sources=[src],
         warnings=None,

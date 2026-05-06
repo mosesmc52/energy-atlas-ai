@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Final, Optional, Tuple
 
+from openai import OpenAI
+
 from agents.llm_router import (
     DATASET_FILTERS,
     ISO_FILTERS,
@@ -17,6 +19,7 @@ from agents.llm_router import (
 )
 
 logger = logging.getLogger(__name__)
+OPENAI_CLIENT = OpenAI()
 
 TIME_WINDOWS: Final[tuple[str, ...]] = (
     "latest",
@@ -217,9 +220,7 @@ def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
 
 
 def _get_openai_client() -> Any:
-    from openai import OpenAI
-
-    return OpenAI()
+    return OPENAI_CLIENT
 
 
 def _extract_json_text(response: Any) -> str:
@@ -382,9 +383,15 @@ def _is_transient_error(error: Exception) -> bool:
 
 
 def llm_parse_query(user_query: str, normalized_query: str) -> LLMQueryParseOutput:
-    model = os.getenv("ATLAS_QUERY_PARSER_MODEL", os.getenv("ATLAS_ROUTER_MODEL", "gpt-5"))
-    max_attempts = 3
-    backoff_seconds = (0.25, 0.75)
+    model = os.getenv(
+        "ATLAS_QUERY_PARSER_MODEL",
+        os.getenv("ATLAS_ROUTER_MODEL", "gpt-5.2"),
+    )
+    try:
+        max_attempts = max(1, int(os.getenv("ATLAS_QUERY_PARSER_MAX_ATTEMPTS", "2")))
+    except ValueError:
+        max_attempts = 2
+    backoff_seconds = (0.15, 0.35)
 
     last_error: Optional[Exception] = None
 

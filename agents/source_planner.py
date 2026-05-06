@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Optional
 
 from agents.llm_query_parser import LLMQueryParseOutput
 from agents.llm_router import METRICS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -90,13 +93,26 @@ def build_source_plan(parsed: LLMQueryParseOutput) -> SourcePlan:
         )
 
     topics = {t.lower().strip() for t in (parsed.question_topics or []) if t and t.strip()}
+    confidence = float(parsed.confidence or 0.0)
+    high_confidence = confidence >= 0.75
+    explicit_multi_source = bool(parsed.requires_multiple_sources)
+    allow_expansion = explicit_multi_source or high_confidence
+    if not allow_expansion and topics:
+        logger.debug(
+            "source_plan expansion skipped: confidence=%.3f intent=%s topics=%s metrics=%s explicit_multi=%s",
+            confidence,
+            parsed.intent,
+            sorted(topics),
+            metrics,
+            explicit_multi_source,
+        )
 
     # Multi-source expansion rules
-    if "ng_electricity" in metrics and parsed.intent in {"derived", "explain"}:
+    if allow_expansion and "ng_electricity" in metrics and parsed.intent in {"derived", "explain"}:
         _append_call(calls, metric="iso_load", filters=dict(parsed.filters or {}), calculation="summary")
         _append_call(calls, metric="weather_degree_days_forecast_vs_5y", filters=dict(parsed.filters or {}), calculation="summary")
 
-    if "weekly_energy_atlas_summary" in metrics:
+    if allow_expansion and "weekly_energy_atlas_summary" in metrics:
         for metric in (
             "weather_degree_days_forecast_vs_5y",
             "working_gas_storage_change_weekly",
@@ -106,11 +122,11 @@ def build_source_plan(parsed: LLMQueryParseOutput) -> SourcePlan:
         ):
             _append_call(calls, metric=metric, filters=dict(parsed.filters or {}), calculation="summary")
 
-    if "price" in topics and "storage" in topics:
+    if allow_expansion and "price" in topics and "storage" in topics:
         _append_call(calls, metric="henry_hub_spot", filters=dict(parsed.filters or {}), calculation="change")
         _append_call(calls, metric="working_gas_storage_lower48", filters=dict(parsed.filters or {}), calculation="change")
 
-    if "supply" in topics:
+    if allow_expansion and "supply" in topics:
         _append_call(calls, metric="ng_production_lower48", filters=dict(parsed.filters or {}), calculation="summary")
         _append_call(calls, metric="lng_imports", filters=dict(parsed.filters or {}), calculation="summary")
         _append_call(calls, metric="ng_pipeline", filters=dict(parsed.filters or {}), calculation="summary")

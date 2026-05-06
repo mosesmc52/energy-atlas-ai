@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -148,7 +149,12 @@ class MetricExecutor:
 
     def execute_plan(self, plan: SourcePlan, *, start: str, end: str) -> Dict[str, MetricResult]:
         results: Dict[str, MetricResult] = {}
-        for call in plan.calls:
+        calls = list(plan.calls or [])
+        if not calls:
+            return results
+
+        if len(calls) == 1:
+            call = calls[0]
             req = ExecuteRequest(
                 metric=call.metric,
                 start=start,
@@ -156,6 +162,25 @@ class MetricExecutor:
                 filters=call.filters or {},
             )
             results[call.metric] = self.execute(req)
+            return results
+
+        max_workers = min(4, len(calls))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_metric = {}
+            for call in calls:
+                req = ExecuteRequest(
+                    metric=call.metric,
+                    start=start,
+                    end=end,
+                    filters=call.filters or {},
+                )
+                future = pool.submit(self.execute, req)
+                future_to_metric[future] = call.metric
+
+            for future in as_completed(future_to_metric):
+                metric = future_to_metric[future]
+                results[metric] = future.result()
+
         return results
 
     def _to_metric_result(self, res: Any) -> MetricResult:
