@@ -58,7 +58,8 @@ def _resolve_lng_export_filters(metric: str, q: str, confidence: float, deps: Fi
     if region:
         filters["region"] = region
     elif confidence >= 0.85:
-        filters["region"] = "united_states_pipeline_total"
+        # For LNG export questions, default to LNG totals unless user specifies a different region.
+        filters["region"] = "united_states_lng_total"
     return filters
 
 

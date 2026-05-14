@@ -734,7 +734,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         return EIAResult(df=df, source=src, meta=meta)
 
     def lng_exports(
-        self, start: str, end: str, region: str = "united_states_pipeline_total"
+        self, start: str, end: str, region: str = "united_states_lng_total"
     ) -> EIAResult:
         """
         Natural gas exports (canonical series), optionally by trade region.
@@ -1633,7 +1633,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "lng_exports":
-            region = kwargs.get("region", "united_states_pipeline_total")
+            region = kwargs.get("region", "united_states_lng_total")
             rows = self.client.natural_gas.exports(start=start, end=end, country=region)
             if DEBUG_ENABLED:
                 print(

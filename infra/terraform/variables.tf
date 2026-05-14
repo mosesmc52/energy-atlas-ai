@@ -44,11 +44,6 @@ variable "enable_ipv6" {
   default = true
 }
 
-variable "volume_size_gb" {
-  type    = number
-  default = 100
-}
-
 variable "timezone" {
   type    = string
   default = "America/New_York"
@@ -58,11 +53,6 @@ variable "timezone" {
 variable "repo_root" {
   type    = string
   default = "/opt"
-}
-
-variable "create_volume" {
-  type    = bool
-  default = true
 }
 
 variable "zilla_pubkey_path" {

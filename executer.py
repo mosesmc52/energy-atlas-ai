@@ -307,7 +307,8 @@ class MetricExecutor:
     def _eia_lng_exports(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        region = str(filters.get("region") or "united_states_pipeline_total")
+        # Default LNG exports to LNG totals when no region is explicitly requested.
+        region = str(filters.get("region") or "united_states_lng_total")
         return self.eia.lng_exports(start=start, end=end, region=region)
 
     def _eia_lng_imports(
@@ -705,7 +706,7 @@ class MetricExecutor:
         lng_exports = self.eia.lng_exports(
             start=start,
             end=end,
-            region="united_states_pipeline_total",
+            region="united_states_lng_total",
         )
         production = self.eia.ng_production_lower48(
             start=start,
