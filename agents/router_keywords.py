@@ -167,6 +167,8 @@ REGIONAL_GROUP_TERMS = (
     "regional",
     "across regions",
     "all regions",
+    "which region",
+    "what region",
 )
 
 STORAGE_COMPARE_TERMS = (

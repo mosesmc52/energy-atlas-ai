@@ -247,6 +247,21 @@ def is_global_demand_for_us_gas_query(q: str) -> bool:
     return has_us_gas
 
 
+def storage_comparison_lookback_years(q: str) -> int | None:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    if ("five-year" in lowered or "5-year" in lowered) and (
+        "average" in lowered or "range" in lowered
+    ):
+        return 6
+    if (
+        "same week last year" in lowered
+        or "year over year" in lowered
+        or "yoy" in lowered
+    ):
+        return 2
+    return None
+
+
 def route_trade_region(q: str) -> str | None:
     q = q.lower()
     for region, keys in TRADE_REGION_KEYWORDS.items():
@@ -1014,6 +1029,11 @@ def route_query(user_query: str) -> HybridRouteResult:
         current_like_only=current_like_only,
         deps=WINDOW_POLICY_DEPS,
     )
+    if (
+        lookback_years is None
+        and top.metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}
+    ):
+        lookback_years = storage_comparison_lookback_years(normalized)
     if lookback_years is not None:
         start = (pd.Timestamp(end) - pd.DateOffset(years=lookback_years)).date().isoformat()
     filters = candidate_filters.get(top.metric)

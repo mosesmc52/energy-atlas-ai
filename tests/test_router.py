@@ -128,6 +128,11 @@ class TestRouter(unittest.TestCase):
         self.assertEqual(result.primary_metric, "working_gas_storage_change_weekly")
         self.assertEqual(result.filters, {"group_by": "region"})
 
+    def test_largest_weekly_storage_change_by_region_routes_to_regional_storage_change(self) -> None:
+        result = route_query("Which region had the largest weekly storage change?")
+        self.assertEqual(result.primary_metric, "working_gas_storage_change_weekly")
+        self.assertEqual(result.filters, {"group_by": "region"})
+
     def test_compare_storage_and_weekly_change_together_routes_to_combined_storage_view(self) -> None:
         result = route_query("Compare East storage and weekly change together.")
         self.assertEqual(result.primary_metric, "working_gas_storage_lower48")

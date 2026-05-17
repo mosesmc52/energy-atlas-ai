@@ -218,6 +218,84 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertIn("East storage was 850 Bcf", payload.answer_text)
         self.assertEqual(payload.chart_spec.title, "Working Gas in Storage and Weekly Change")
 
+    def test_storage_same_week_last_year_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2025-01-09", "value": 2700.0, "weekly_change": 90.0},
+                {"date": "2026-01-08", "value": 2850.0, "weekly_change": 80.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Lower 48 Storage Combined",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "lower48"}},
+        )
+        payload = build_answer_with_openai(
+            query="How does current storage compare to the same week last year?",
+            result=result,
+        )
+        self.assertIn("same ISO week last year", payload.answer_text)
+        self.assertIn("a change of 150 Bcf", payload.answer_text)
+
+    def test_storage_vs_five_year_average_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-01-07", "value": 3300.0, "weekly_change": 70.0},
+                {"date": "2022-01-06", "value": 3200.0, "weekly_change": 60.0},
+                {"date": "2023-01-05", "value": 3100.0, "weekly_change": 55.0},
+                {"date": "2024-01-04", "value": 3000.0, "weekly_change": 50.0},
+                {"date": "2025-01-09", "value": 2900.0, "weekly_change": 45.0},
+                {"date": "2026-01-08", "value": 2800.0, "weekly_change": 40.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Lower 48 Storage Combined",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "lower48"}},
+        )
+        payload = build_answer_with_openai(
+            query="How does current storage compare to the five-year average?",
+            result=result,
+        )
+        self.assertIn("five-year same-week average", payload.answer_text)
+
+    def test_storage_tight_loose_neutral_vs_five_year_range_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-01-07", "value": 3300.0, "weekly_change": 70.0},
+                {"date": "2022-01-06", "value": 3200.0, "weekly_change": 60.0},
+                {"date": "2023-01-05", "value": 3100.0, "weekly_change": 55.0},
+                {"date": "2024-01-04", "value": 3000.0, "weekly_change": 50.0},
+                {"date": "2025-01-09", "value": 2900.0, "weekly_change": 45.0},
+                {"date": "2026-01-08", "value": 2800.0, "weekly_change": 40.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Lower 48 Storage Combined",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "lower48"}},
+        )
+        payload = build_answer_with_openai(
+            query="Are inventories currently tight, loose, or neutral versus the five-year range?",
+            result=result,
+        )
+        self.assertIn("inventories are tight", payload.answer_text)
+
     def test_weather_answer_formats_as_of_date_human_readable(self) -> None:
         df = pd.DataFrame(
             [

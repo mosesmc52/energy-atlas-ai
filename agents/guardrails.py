@@ -20,6 +20,8 @@ NATURAL_GAS_CONTEXT_TERMS = {
     "henry hub",
     "hh",
     "storage",
+    "inventory",
+    "inventories",
     "working gas",
     "injection",
     "withdrawal",

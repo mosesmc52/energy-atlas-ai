@@ -1524,7 +1524,8 @@ def _regional_storage_change_answer(df: pd.DataFrame, query: str = "") -> str:
 
     latest_date = ordered["date"].max()
     latest_rows = ordered.loc[ordered["date"] == latest_date].copy()
-    rank_withdrawals = "withdrawal" in (query or "").lower() or "fastest" in (query or "").lower()
+    lowered_query = (query or "").lower()
+    rank_withdrawals = "withdrawal" in lowered_query or "fastest" in lowered_query
     latest_rows = latest_rows.sort_values("value", ascending=rank_withdrawals)
     if latest_rows.empty:
         return "No data was returned for the requested period."
@@ -1536,6 +1537,12 @@ def _regional_storage_change_answer(df: pd.DataFrame, query: str = "") -> str:
         f"{str(row['region']).replace('_', ' ').title()} ({_format_number(float(row['value']))} Bcf)"
         for _, row in latest_rows.iterrows()
     )
+    if "largest weekly storage change" in lowered_query:
+        descriptor = "the largest weekly storage change"
+        return (
+            f"As of {latest_date.date().isoformat()}, {leader_region} had {descriptor} "
+            f"at {_format_number(leader_value)} Bcf. Ranking: {ranking}."
+        )
     if rank_withdrawals:
         descriptor = "the fastest storage withdrawal"
     else:
@@ -1613,7 +1620,7 @@ def _regional_storage_change_structured_answer(
 
 
 def _storage_level_and_change_answer(
-    df: pd.DataFrame, *, region_label: str = "Selected region"
+    df: pd.DataFrame, *, region_label: str = "Selected region", query: str = ""
 ) -> str:
     if not _is_storage_level_and_change_view("working_gas_storage_lower48", df):
         return "No data was returned for the requested period."
@@ -1627,8 +1634,90 @@ def _storage_level_and_change_answer(
         return "No data was returned for the requested period."
 
     latest = ordered.iloc[-1]
+    lowered_query = (query or "").lower().replace("–", "-").replace("—", "-")
     latest_date = latest["date"].date().isoformat()
-    storage_text = _format_number(float(latest["value"]))
+    latest_value = float(latest["value"])
+    storage_text = _format_number(latest_value)
+
+    ordered["iso_year"] = ordered["date"].dt.isocalendar().year.astype(int)
+    ordered["iso_week"] = ordered["date"].dt.isocalendar().week.astype(int)
+    latest_iso = latest["date"].isocalendar()
+    latest_iso_year = int(latest_iso.year)
+    latest_iso_week = int(latest_iso.week)
+    same_week_history = ordered.loc[
+        (ordered["iso_week"] == latest_iso_week)
+        & (ordered["iso_year"] >= (latest_iso_year - 5))
+        & (ordered["iso_year"] < latest_iso_year)
+    ].copy()
+
+    if (
+        "same week last year" in lowered_query
+        or "year over year" in lowered_query
+        or "yoy" in lowered_query
+    ):
+        last_year_week = same_week_history.loc[
+            same_week_history["iso_year"] == (latest_iso_year - 1)
+        ].sort_values("date")
+        if last_year_week.empty:
+            return (
+                f"As of {latest_date}, {region_label} storage was {storage_text} Bcf. "
+                "I could not find a matching same-week observation from last year in the returned history."
+            )
+        prior = last_year_week.iloc[-1]
+        prior_value = float(prior["value"])
+        delta = latest_value - prior_value
+        pct = (delta / prior_value * 100.0) if prior_value != 0 else None
+        pct_text = f" ({pct:+.1f}%)" if pct is not None else ""
+        return (
+            f"As of {latest_date}, {region_label} storage was {storage_text} Bcf, "
+            f"vs {_format_number(prior_value)} Bcf in the same ISO week last year "
+            f"({prior['date'].date().isoformat()}), a change of {_format_number(delta)} Bcf{pct_text}."
+        )
+
+    asks_five_year_average = ("five-year" in lowered_query or "5-year" in lowered_query) and "average" in lowered_query
+    asks_five_year_range = ("five-year" in lowered_query or "5-year" in lowered_query) and "range" in lowered_query
+    asks_tight_loose = any(term in lowered_query for term in ("tight", "loose", "neutral")) and (
+        "five-year range" in lowered_query or "5-year range" in lowered_query
+    )
+
+    if asks_five_year_average or asks_five_year_range or asks_tight_loose:
+        if same_week_history.empty:
+            return (
+                f"As of {latest_date}, {region_label} storage was {storage_text} Bcf. "
+                "Not enough same-week history was returned to compute a reliable five-year baseline."
+            )
+        five_year_avg = float(same_week_history["value"].mean())
+        five_year_min = float(same_week_history["value"].min())
+        five_year_max = float(same_week_history["value"].max())
+        delta_avg = latest_value - five_year_avg
+        pct_avg = (delta_avg / five_year_avg * 100.0) if five_year_avg != 0 else None
+        pct_avg_text = f" ({pct_avg:+.1f}%)" if pct_avg is not None else ""
+        if latest_value < five_year_min:
+            regime = "tight"
+        elif latest_value > five_year_max:
+            regime = "loose"
+        else:
+            regime = "neutral"
+
+        if asks_tight_loose:
+            return (
+                f"As of {latest_date}, inventories are {regime} versus the five-year range "
+                f"for this week: current {storage_text} Bcf vs range "
+                f"{_format_number(five_year_min)} to {_format_number(five_year_max)} Bcf."
+            )
+        if asks_five_year_range:
+            return (
+                f"As of {latest_date}, {region_label} storage was {storage_text} Bcf. "
+                f"For this same week, the five-year range is {_format_number(five_year_min)} to "
+                f"{_format_number(five_year_max)} Bcf, and the five-year average is "
+                f"{_format_number(five_year_avg)} Bcf."
+            )
+        return (
+            f"As of {latest_date}, {region_label} storage was {storage_text} Bcf versus a "
+            f"five-year same-week average of {_format_number(five_year_avg)} Bcf, "
+            f"a difference of {_format_number(delta_avg)} Bcf{pct_avg_text}."
+        )
+
     if pd.notna(latest["weekly_change"]):
         change_value = float(latest["weekly_change"])
         flow_word = "injection" if change_value > 0 else "withdrawal" if change_value < 0 else "change"
@@ -1644,10 +1733,11 @@ def _storage_level_and_change_structured_answer(
     *,
     df: pd.DataFrame,
     region_label: str,
+    query: str,
     source_label: str,
     source_date: Optional[str],
 ) -> StructuredAnswer:
-    answer = _storage_level_and_change_answer(df, region_label=region_label)
+    answer = _storage_level_and_change_answer(df, region_label=region_label, query=query)
     if answer == "No data was returned for the requested period.":
         return StructuredAnswer(
             answer=answer,
@@ -1888,7 +1978,7 @@ def build_answer_with_openai(
         return payload
 
     if _is_storage_level_and_change_view(metric, df) and not prefer_report_narration:
-        answer_text = _storage_level_and_change_answer(df, region_label=region_label)
+        answer_text = _storage_level_and_change_answer(df, region_label=region_label, query=query)
         if df is not None and "date" in df.columns:
             df = df.sort_values("date").reset_index(drop=True)
         chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
@@ -1899,6 +1989,7 @@ def build_answer_with_openai(
             structured_response=_storage_level_and_change_structured_answer(
                 df=df,
                 region_label=region_label,
+                query=query,
                 source_label=src.label,
                 source_date=source_date,
             ),
