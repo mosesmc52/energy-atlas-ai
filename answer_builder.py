@@ -981,7 +981,7 @@ def _is_storage_level_and_change_view(metric: str, df: pd.DataFrame | None) -> b
         metric == "working_gas_storage_lower48"
         and df is not None
         and not df.empty
-        and {"date", "value", "weekly_change"}.issubset(df.columns)
+        and {"date", "value"}.issubset(df.columns)
     )
 
 
@@ -1628,7 +1628,10 @@ def _storage_level_and_change_answer(
     ordered = df.copy()
     ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
     ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
-    ordered["weekly_change"] = pd.to_numeric(ordered["weekly_change"], errors="coerce")
+    if "weekly_change" in ordered.columns:
+        ordered["weekly_change"] = pd.to_numeric(ordered["weekly_change"], errors="coerce")
+    else:
+        ordered["weekly_change"] = np.nan
     ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
     if ordered.empty:
         return "No data was returned for the requested period."
@@ -1757,7 +1760,10 @@ def _storage_level_and_change_structured_answer(
     ordered = df.copy()
     ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
     ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
-    ordered["weekly_change"] = pd.to_numeric(ordered["weekly_change"], errors="coerce")
+    if "weekly_change" in ordered.columns:
+        ordered["weekly_change"] = pd.to_numeric(ordered["weekly_change"], errors="coerce")
+    else:
+        ordered["weekly_change"] = np.nan
     ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
     latest = ordered.iloc[-1]
     data_points = [

@@ -296,6 +296,33 @@ class TestAnswerBuilder(unittest.TestCase):
         )
         self.assertIn("inventories are tight", payload.answer_text)
 
+    def test_storage_comparison_answer_works_without_weekly_change_column(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-01-07", "value": 3300.0},
+                {"date": "2022-01-06", "value": 3200.0},
+                {"date": "2023-01-05", "value": 3100.0},
+                {"date": "2024-01-04", "value": 3000.0},
+                {"date": "2025-01-09", "value": 2900.0},
+                {"date": "2026-01-08", "value": 2800.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Lower 48 Storage",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "lower48"}},
+        )
+        payload = build_answer_with_openai(
+            query="How does current storage compare to the five-year average?",
+            result=result,
+        )
+        self.assertIn("five-year same-week average", payload.answer_text)
+
     def test_weather_answer_formats_as_of_date_human_readable(self) -> None:
         df = pd.DataFrame(
             [
