@@ -133,6 +133,22 @@ class TestRouter(unittest.TestCase):
         self.assertEqual(result.primary_metric, "working_gas_storage_change_weekly")
         self.assertEqual(result.filters, {"group_by": "region"})
 
+    def test_storage_same_week_last_year_routes_to_two_year_window(self) -> None:
+        result = route_query("How does current storage compare to the same week last year?")
+        self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+        self.assertEqual(result.filters, {"region": "lower48"})
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 700)
+
+    def test_storage_five_year_average_routes_to_six_year_window(self) -> None:
+        result = route_query("How does current storage compare to the five-year average?")
+        self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+        self.assertEqual(result.filters, {"region": "lower48"})
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 2100)
+
     def test_compare_storage_and_weekly_change_together_routes_to_combined_storage_view(self) -> None:
         result = route_query("Compare East storage and weekly change together.")
         self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
@@ -162,6 +178,14 @@ class TestRouter(unittest.TestCase):
         result = route_query("Is U.S. gas supply expanding or tightening?")
         self.assertEqual(result.primary_metric, "ng_supply_balance_regime")
         self.assertEqual(result.filters, {"region": "united_states_total"})
+
+    def test_inventories_tight_loose_neutral_routes_to_storage_lower48(self) -> None:
+        result = route_query(
+            "Are inventories currently tight, loose, or neutral versus the five-year range?"
+        )
+        self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+        self.assertEqual(result.filters, {"region": "lower48"})
+        self.assertFalse(result.ambiguous)
 
     def test_weather_demand_next_7_14_days_routes_to_weather_metric(self) -> None:
         result = route_query("How will weather impact natural gas demand over the next 7-14 days?")

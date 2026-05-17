@@ -262,6 +262,43 @@ def storage_comparison_lookback_years(q: str) -> int | None:
     return None
 
 
+def is_storage_inventory_range_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_inventory = "inventory" in lowered or "inventories" in lowered
+    has_range = "five-year range" in lowered or "5-year range" in lowered
+    has_state = any(term in lowered for term in ("tight", "loose", "neutral"))
+    return has_inventory and has_range and has_state
+
+
+def is_storage_same_week_last_year_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_storage_context = any(term in lowered for term in ("storage", "inventory", "inventories"))
+    has_yoy_phrase = (
+        "same week last year" in lowered
+        or "year over year" in lowered
+        or "yoy" in lowered
+    )
+    return has_storage_context and has_yoy_phrase
+
+
+def is_storage_five_year_average_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_storage_context = any(term in lowered for term in ("storage", "inventory", "inventories"))
+    has_five_year_avg = ("five-year average" in lowered) or ("5-year average" in lowered)
+    return has_storage_context and has_five_year_avg
+
+
+def is_storage_largest_weekly_change_by_region_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_storage = "storage" in lowered
+    has_weekly_change = "weekly storage change" in lowered or "storage change" in lowered
+    has_region_rank = (
+        "which region" in lowered
+        and any(term in lowered for term in ("largest", "biggest", "most"))
+    )
+    return has_storage and has_weekly_change and has_region_rank
+
+
 def route_trade_region(q: str) -> str | None:
     q = q.lower()
     for region, keys in TRADE_REGION_KEYWORDS.items():
@@ -891,6 +928,87 @@ def route_query(user_query: str) -> HybridRouteResult:
             candidates=candidates[:3],
             source="rule",
             reason="Deterministic route for Energy Atlas weekly multi-factor summary",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
+    if is_storage_inventory_range_query(normalized):
+        metric = "working_gas_storage_lower48"
+        inventory_start = (
+            pd.Timestamp(end) - pd.DateOffset(years=6)
+        ).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=inventory_start,
+            end=end,
+            filters={"region": "lower48"},
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for inventory tight/loose/neutral versus 5-year range",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
+    if is_storage_same_week_last_year_query(normalized):
+        metric = "working_gas_storage_lower48"
+        storage_start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=storage_start,
+            end=end,
+            filters={"region": "lower48"},
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for storage same-week-last-year comparison",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
+    if is_storage_five_year_average_query(normalized):
+        metric = "working_gas_storage_lower48"
+        storage_start = (pd.Timestamp(end) - pd.DateOffset(years=6)).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=storage_start,
+            end=end,
+            filters={"region": "lower48"},
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for storage five-year-average comparison",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
+    if is_storage_largest_weekly_change_by_region_query(normalized):
+        metric = "working_gas_storage_change_weekly"
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=start,
+            end=end,
+            filters={"group_by": "region"},
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for largest weekly storage change by region",
             normalized_query=normalized,
             include_forecast=False,
             forecast_horizon_days=None,

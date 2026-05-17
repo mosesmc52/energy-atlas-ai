@@ -222,6 +222,19 @@ def _format_card_value(value: object, unit: str) -> str:
     return f"{number} {unit}".strip()
 
 
+def _df_from_data_preview(data_preview) -> pd.DataFrame | None:
+    if data_preview is None:
+        return None
+    columns = list(getattr(data_preview, "columns", []) or [])
+    rows = list(getattr(data_preview, "rows", []) or [])
+    if not columns:
+        return None
+    try:
+        return pd.DataFrame(rows, columns=columns)
+    except Exception:
+        return None
+
+
 def format_summary_cards(metrics: list[dict]) -> str:
     if not metrics:
         return ""
@@ -920,16 +933,19 @@ async def on_message(message: cl.Message):
 
         if payload.chart_spec is not None and not rendered_custom_lng_trade_view:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
+            chart_df = _df_from_data_preview(getattr(payload, "chart_data_preview", None))
+            if chart_df is None:
+                chart_df = result.df
             fig = render_plotly(
-                payload.chart_spec, result.df, forecast_overlay=forecast
+                payload.chart_spec, chart_df, forecast_overlay=forecast
             )
 
             summary_metrics = []
             if should_render_storage_change_summary_cards(payload.chart_spec):
-                summary_metrics = compute_storage_change_summary_metrics(result.df)
+                summary_metrics = compute_storage_change_summary_metrics(chart_df)
             elif should_render_timeseries_summary_cards(payload.chart_spec):
                 summary_metrics = compute_timeseries_summary_metrics(
-                    result.df,
+                    chart_df,
                     unit=getattr(payload.chart_spec.y, "units", None),
                 )
 

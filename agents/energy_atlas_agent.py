@@ -156,7 +156,7 @@ class EnergyAtlasAgent:
         result: MetricResult
         used_plan_execution = False
         try:
-            if route.source == "llm":
+            if route.source in {"llm", "rule"}:
                 plan = self._route_to_source_plan(route)
             else:
                 parsed = llm_parse_query(
@@ -178,17 +178,20 @@ class EnergyAtlasAgent:
                     "agent_run plan intent=%s calls=%s multi=%s ambiguous=%s",
                     plan.intent,
                     [c.metric for c in plan.calls],
-                    plan.requires_multiple_sources,
-                    plan.ambiguous,
-                )
+                plan.requires_multiple_sources,
+                plan.ambiguous,
+            )
             plan_results = self.executor.execute_plan(plan, start=route.start, end=route.end)
-            route_metric = str(route.primary_metric or "")
-            if route_metric and route_metric in plan_results:
-                result = plan_results[route_metric]
-                used_plan_execution = True
-            elif plan.calls:
-                result = plan_results[plan.calls[0].metric]
-                used_plan_execution = True
+            if isinstance(plan_results, dict):
+                route_metric = str(route.primary_metric or "")
+                if route_metric and route_metric in plan_results:
+                    result = plan_results[route_metric]
+                    used_plan_execution = True
+                elif plan.calls and plan.calls[0].metric in plan_results:
+                    result = plan_results[plan.calls[0].metric]
+                    used_plan_execution = True
+                else:
+                    result = self._execute_with_fallback(route=route)
             else:
                 result = self._execute_with_fallback(route=route)
         except Exception as exc:
@@ -197,10 +200,15 @@ class EnergyAtlasAgent:
             result = self._execute_with_fallback(route=route)
         execute_ms = (perf_counter() - execute_started) * 1000
         if DEBUG_ENABLED:
+            df_obj = getattr(result, "df", None)
+            try:
+                row_count = 0 if df_obj is None else len(df_obj)
+            except Exception:
+                row_count = 0
             logger.info(
                 "agent_run execute done mode=%s rows=%s metric=%s",
                 "source_plan" if used_plan_execution else "fallback",
-                0 if result.df is None else len(result.df),
+                row_count,
                 str((result.meta or {}).get("metric") or route.primary_metric or ""),
             )
         if used_plan_execution and result.meta is not None:

@@ -47,6 +47,24 @@ class TestChartPolicy(unittest.TestCase):
         self.assertEqual(spec.x, "region")
         self.assertEqual(spec.y, ["demand_delta_bcfd"])
 
+    def test_storage_comparison_query_prefers_line_chart_over_bar(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2025-01-01", "value": 2800.0},
+                {"date": "2025-06-01", "value": 2600.0},
+                {"date": "2026-01-01", "value": 3000.0},
+                {"date": "2026-05-01", "value": 2900.0},
+            ]
+        )
+        spec = chart_policy(
+            metric="working_gas_storage_lower48",
+            mode="observed",
+            df=df,
+            query="How does current storage compare to the same week last year?",
+        )
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.chart_type, "line")
+
 
 if __name__ == "__main__":
     unittest.main()

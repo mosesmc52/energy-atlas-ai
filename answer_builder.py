@@ -1642,38 +1642,42 @@ def _storage_level_and_change_answer(
     latest_value = float(latest["value"])
     storage_text = _format_number(latest_value)
 
-    ordered["iso_year"] = ordered["date"].dt.isocalendar().year.astype(int)
-    ordered["iso_week"] = ordered["date"].dt.isocalendar().week.astype(int)
-    latest_iso = latest["date"].isocalendar()
-    latest_iso_year = int(latest_iso.year)
-    latest_iso_week = int(latest_iso.week)
-    same_week_history = ordered.loc[
-        (ordered["iso_week"] == latest_iso_week)
-        & (ordered["iso_year"] >= (latest_iso_year - 5))
-        & (ordered["iso_year"] < latest_iso_year)
-    ].copy()
+    comparison_df = _storage_same_week_yearly_comparison_df(ordered)
+    same_week_history = comparison_df.copy()
+    if not same_week_history.empty:
+        same_week_history["comparison_year"] = pd.to_numeric(
+            same_week_history["comparison_year"], errors="coerce"
+        )
+        latest_year = int(pd.Timestamp(latest["date"]).year)
+        same_week_history = same_week_history.loc[
+            same_week_history["comparison_year"] < latest_year
+        ].copy()
 
     if (
         "same week last year" in lowered_query
         or "year over year" in lowered_query
         or "yoy" in lowered_query
     ):
-        last_year_week = same_week_history.loc[
-            same_week_history["iso_year"] == (latest_iso_year - 1)
-        ].sort_values("date")
-        if last_year_week.empty:
+        target_last_year = latest["date"] - pd.DateOffset(years=1)
+        last_year_window = ordered.loc[
+            (ordered["date"] >= (target_last_year - pd.Timedelta(days=10)))
+            & (ordered["date"] <= (target_last_year + pd.Timedelta(days=10)))
+            & (ordered["date"] < latest["date"])
+        ].copy()
+        if last_year_window.empty:
             return (
                 f"As of {latest_date}, {region_label} storage was {storage_text} Bcf. "
                 "I could not find a matching same-week observation from last year in the returned history."
             )
-        prior = last_year_week.iloc[-1]
+        last_year_window["days_from_target"] = (last_year_window["date"] - target_last_year).abs().dt.days
+        prior = last_year_window.sort_values(["days_from_target", "date"]).iloc[0]
         prior_value = float(prior["value"])
         delta = latest_value - prior_value
         pct = (delta / prior_value * 100.0) if prior_value != 0 else None
         pct_text = f" ({pct:+.1f}%)" if pct is not None else ""
         return (
             f"As of {latest_date}, {region_label} storage was {storage_text} Bcf, "
-            f"vs {_format_number(prior_value)} Bcf in the same ISO week last year "
+            f"vs {_format_number(prior_value)} Bcf in the same reporting week last year "
             f"({prior['date'].date().isoformat()}), a change of {_format_number(delta)} Bcf{pct_text}."
         )
 
@@ -1689,9 +1693,9 @@ def _storage_level_and_change_answer(
                 f"As of {latest_date}, {region_label} storage was {storage_text} Bcf. "
                 "Not enough same-week history was returned to compute a reliable five-year baseline."
             )
-        five_year_avg = float(same_week_history["value"].mean())
-        five_year_min = float(same_week_history["value"].min())
-        five_year_max = float(same_week_history["value"].max())
+        five_year_avg = float(pd.to_numeric(same_week_history["value"], errors="coerce").mean())
+        five_year_min = float(pd.to_numeric(same_week_history["value"], errors="coerce").min())
+        five_year_max = float(pd.to_numeric(same_week_history["value"], errors="coerce").max())
         delta_avg = latest_value - five_year_avg
         pct_avg = (delta_avg / five_year_avg * 100.0) if five_year_avg != 0 else None
         pct_avg_text = f" ({pct_avg:+.1f}%)" if pct_avg is not None else ""
@@ -1730,6 +1734,61 @@ def _storage_level_and_change_answer(
             f"was {change_text} Bcf ({flow_word})."
         )
     return f"As of {latest_date}, {region_label} storage was {storage_text} Bcf."
+
+
+def _is_storage_five_year_comparison_query(query: str) -> bool:
+    lowered = (query or "").lower().replace("–", "-").replace("—", "-")
+    has_five_year = "five-year" in lowered or "5-year" in lowered
+    has_baseline = "average" in lowered or "range" in lowered
+    return has_five_year and has_baseline
+
+
+def _storage_same_week_yearly_comparison_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or not {"date", "value"}.issubset(df.columns):
+        return pd.DataFrame(columns=["comparison_year", "value", "date"])
+    ordered = df.copy()
+    ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
+    ordered["value"] = pd.to_numeric(ordered["value"], errors="coerce")
+    ordered = ordered.dropna(subset=["date", "value"]).sort_values("date")
+    if ordered.empty:
+        return pd.DataFrame(columns=["comparison_year", "value", "date"])
+
+    latest = ordered.iloc[-1]
+    latest_date = latest["date"]
+    latest_year = int(latest_date.year)
+    rows: list[dict[str, Any]] = []
+
+    for year in range(latest_year - 5, latest_year + 1):
+        if year == latest_year:
+            rows.append(
+                {
+                    "comparison_year": str(year),
+                    "value": float(latest["value"]),
+                    "date": latest_date,
+                }
+            )
+            continue
+        target = latest_date - pd.DateOffset(years=(latest_year - year))
+        candidates = ordered.loc[
+            (ordered["date"] >= (target - pd.Timedelta(days=10)))
+            & (ordered["date"] <= (target + pd.Timedelta(days=10)))
+            & (ordered["date"] < latest_date)
+        ].copy()
+        if candidates.empty:
+            continue
+        candidates["days_from_target"] = (candidates["date"] - target).abs().dt.days
+        pick = candidates.sort_values(["days_from_target", "date"]).iloc[0]
+        rows.append(
+            {
+                "comparison_year": str(year),
+                "value": float(pick["value"]),
+                "date": pick["date"],
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=["comparison_year", "value", "date"])
+    return pd.DataFrame(rows).sort_values("comparison_year").reset_index(drop=True)
 
 
 def _storage_level_and_change_structured_answer(
@@ -1887,11 +1946,10 @@ def build_answer_with_openai(
     metric = result.meta.get("metric", "") if result.meta else ""
     proxy_for_metric = str((result.meta or {}).get("proxy_for_metric") or "")
     proxy_note = str((result.meta or {}).get("proxy_note") or "").strip()
-    region_label = (
-        str(((result.meta or {}).get("filters") or {}).get("region") or "Selected region")
-        .replace("_", " ")
-        .title()
-    )
+    raw_region_label = str(((result.meta or {}).get("filters") or {}).get("region") or "lower48")
+    region_label = raw_region_label.replace("_", " ").title()
+    if region_label == "Lower48":
+        region_label = "Lower 48"
     source_date = src.retrieved_at.date().isoformat() if src.retrieved_at else None
     report_context_text = ""
     report_context_sources: list[AnswerSourceSummary] = []
@@ -1985,9 +2043,26 @@ def build_answer_with_openai(
 
     if _is_storage_level_and_change_view(metric, df) and not prefer_report_narration:
         answer_text = _storage_level_and_change_answer(df, region_label=region_label, query=query)
+        chart_df = df
         if df is not None and "date" in df.columns:
-            df = df.sort_values("date").reset_index(drop=True)
-        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+            chart_df = df.sort_values("date").reset_index(drop=True)
+        if _is_storage_five_year_comparison_query(query):
+            comparison_df = _storage_same_week_yearly_comparison_df(chart_df)
+            if not comparison_df.empty:
+                chart_df = comparison_df
+                chart_spec = ChartSpec(
+                    chart_type="line",
+                    title="Working Gas in Storage: Same-Week Comparison (5Y + Current)",
+                    x="comparison_year",
+                    y=["value"],
+                    x_label="Year",
+                    y_label="Storage (Bcf)",
+                    notes="Line shows storage for approximately the same reporting week across the prior five years and current year.",
+                )
+            else:
+                chart_spec = chart_policy(metric=metric, mode=mode, df=chart_df, query=query)
+        else:
+            chart_spec = chart_policy(metric=metric, mode=mode, df=chart_df, query=query)
         payload = AnswerPayload(
             query=query,
             mode=mode,
@@ -2002,7 +2077,8 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="storage_level_and_change_no_rag",
             report_context_sources=[],
-            data_preview=_maybe_data_preview(df),
+            data_preview=_maybe_data_preview(chart_df),
+            chart_data_preview=_make_preview(chart_df) if chart_df is not None else None,
             chart_spec=chart_spec,
             sources=[src],
         )

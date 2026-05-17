@@ -429,6 +429,15 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
         y = _default_y(metric, df)
         if not y:
             return None
+        if metric == "working_gas_storage_lower48":
+            return ChartSpec(
+                chart_type="line",
+                title=f"{title}: Period Comparison",
+                x="date",
+                y=y,
+                x_label="Date",
+                y_label=_default_y_label(metric, y),
+            )
         return ChartSpec(
             chart_type="bar",
             title=f"{title}: Period Comparison",

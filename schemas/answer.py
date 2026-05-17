@@ -88,6 +88,7 @@ class AnswerPayload(BaseModel):
     report_context_reason: Optional[str] = None
     report_context_sources: List[AnswerSourceSummary] = Field(default_factory=list)
     data_preview: Optional[DataPreview] = None
+    chart_data_preview: Optional[DataPreview] = None
     chart_spec: Optional[ChartSpec] = None  # <-- no quotes
 
     sources: List[SourceRef]

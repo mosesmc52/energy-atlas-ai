@@ -239,8 +239,31 @@ class TestAnswerBuilder(unittest.TestCase):
             query="How does current storage compare to the same week last year?",
             result=result,
         )
-        self.assertIn("same ISO week last year", payload.answer_text)
+        self.assertIn("same reporting week last year", payload.answer_text)
         self.assertIn("a change of 150 Bcf", payload.answer_text)
+
+    def test_storage_default_region_label_is_lower48(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-01", "value": 2800.0},
+                {"date": "2026-01-08", "value": 2850.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Lower 48 Storage",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48"},
+        )
+        payload = build_answer_with_openai(
+            query="How much storage is there?",
+            result=result,
+        )
+        self.assertIn("Lower 48 storage was 2,850 Bcf", payload.answer_text)
 
     def test_storage_vs_five_year_average_answer(self) -> None:
         df = pd.DataFrame(
@@ -268,6 +291,12 @@ class TestAnswerBuilder(unittest.TestCase):
             result=result,
         )
         self.assertIn("five-year same-week average", payload.answer_text)
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertEqual(
+            payload.chart_spec.title,
+            "Working Gas in Storage: Same-Week Comparison (5Y + Current)",
+        )
 
     def test_storage_tight_loose_neutral_vs_five_year_range_answer(self) -> None:
         df = pd.DataFrame(
