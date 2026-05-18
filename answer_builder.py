@@ -632,6 +632,7 @@ def _build_structured_answer(
     *,
     metric: str,
     query: str,
+    df: pd.DataFrame | None,
     facts: dict[str, Any],
     mode: str,
     source_label: str,
@@ -667,6 +668,7 @@ def _build_structured_answer(
         query=query,
         facts=facts,
         mode=mode,
+        df=df,
     )
     drivers = [f"Latest {metric_label} reading was {latest_value_text} {unit}".strip()]
     if delta is not None:
@@ -1050,6 +1052,159 @@ def _is_weekly_energy_atlas_summary_view(metric: str, df: pd.DataFrame | None) -
             "price_delta_usd_mmbtu",
         }.issubset(df.columns)
     )
+
+
+def _is_regional_production_change_view(metric: str, df: pd.DataFrame | None) -> bool:
+    return bool(
+        metric == "ng_production_lower48"
+        and df is not None
+        and not df.empty
+        and {"date", "value", "region"}.issubset(df.columns)
+    )
+
+
+def _regional_production_change_answer(df: pd.DataFrame) -> str:
+    if not _is_regional_production_change_view("ng_production_lower48", df):
+        return "No data was returned for the requested period."
+
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d["region"] = d["region"].astype(str)
+    d = d.dropna(subset=["date", "value", "region"]).sort_values(["region", "date"])
+    if d.empty:
+        return "No data was returned for the requested period."
+
+    rows: list[dict[str, Any]] = []
+    for region, g in d.groupby("region"):
+        g = g.sort_values("date")
+        if len(g) < 2:
+            continue
+        latest = g.iloc[-1]
+        prior = g.iloc[-2]
+        delta = float(latest["value"]) - float(prior["value"])
+        rows.append(
+            {
+                "region": region,
+                "date": latest["date"],
+                "latest": float(latest["value"]),
+                "delta": delta,
+            }
+        )
+    if not rows:
+        return "Not enough regional production history was returned to compute a latest period change ranking."
+
+    ranked = pd.DataFrame(rows)
+    ranked["abs_delta"] = ranked["delta"].abs()
+    ranked = ranked.sort_values("abs_delta", ascending=False)
+    top = ranked.iloc[0]
+    as_of = pd.to_datetime(top["date"]).date().isoformat()
+    top_region = str(top["region"]).replace("_", " ").upper() if len(str(top["region"])) == 2 else str(top["region"]).replace("_", " ").title()
+    top_delta = float(top["delta"])
+    direction = "increase" if top_delta > 0 else "decrease" if top_delta < 0 else "no change"
+    ranking = ", ".join(
+        f"{(str(row['region']).replace('_', ' ').upper() if len(str(row['region'])) == 2 else str(row['region']).replace('_', ' ').title())} ({_format_number(float(row['delta']))} MMcf)"
+        for _, row in ranked.iterrows()
+    )
+    return (
+        f"As of {as_of}, {top_region} contributed most to the latest production change "
+        f"with a {direction} of {_format_number(top_delta)} MMcf. Ranking by absolute change: {ranking}."
+    )
+
+
+def _regional_production_change_structured_answer(
+    *,
+    df: pd.DataFrame,
+    source_label: str,
+    source_date: Optional[str],
+) -> StructuredAnswer:
+    answer = _regional_production_change_answer(df)
+    if answer.startswith("No data was returned") or answer.startswith("Not enough regional production history"):
+        return StructuredAnswer(
+            answer=answer,
+            signal=SignalSummary(status="neutral", confidence=0.5),
+            summary=answer,
+            drivers=["Regional production series did not include enough observations to rank latest change contributions."],
+            data_points=[],
+            forecast=AnswerForecast(direction="flat", reasoning="Ranking unavailable because regional history was insufficient."),
+            suggested_alerts=[],
+            alerts=[AnswerAlert(name="Insufficient Regional Production History", status=True)],
+            sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+        )
+
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d["region"] = d["region"].astype(str)
+    d = d.dropna(subset=["date", "value", "region"]).sort_values(["region", "date"])
+    rows: list[dict[str, Any]] = []
+    for region, g in d.groupby("region"):
+        g = g.sort_values("date")
+        if len(g) < 2:
+            continue
+        latest = g.iloc[-1]
+        prior = g.iloc[-2]
+        rows.append(
+            {
+                "region": region,
+                "delta": float(latest["value"]) - float(prior["value"]),
+            }
+        )
+    ranked = pd.DataFrame(rows)
+    ranked["abs_delta"] = ranked["delta"].abs()
+    ranked = ranked.sort_values("abs_delta", ascending=False)
+    data_points = [
+        AnswerDataPoint(
+            metric=(str(row["region"]).replace("_", " ").upper() if len(str(row["region"])) == 2 else str(row["region"]).replace("_", " ").title()),
+            value=round(float(row["delta"]), 3),
+            unit="MMcf",
+        )
+        for _, row in ranked.iterrows()
+    ]
+    return StructuredAnswer(
+        answer=answer,
+        signal=SignalSummary(status="neutral", confidence=0.78),
+        summary=answer,
+        drivers=[
+            "Contribution is ranked by absolute latest period-over-period production change across reported regions/states.",
+            "Positive deltas indicate increases; negative deltas indicate decreases.",
+        ],
+        data_points=data_points,
+        forecast=AnswerForecast(direction="flat", reasoning="This is a latest-period contribution ranking, not a directional forecast."),
+        suggested_alerts=[],
+        alerts=[],
+        sources=[AnswerSourceSummary(title=source_label, date=source_date)],
+    )
+
+
+def _regional_production_change_chart_df(df: pd.DataFrame) -> pd.DataFrame:
+    if not _is_regional_production_change_view("ng_production_lower48", df):
+        return pd.DataFrame(columns=["region", "delta"])
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d["region"] = d["region"].astype(str)
+    d = d.dropna(subset=["date", "value", "region"]).sort_values(["region", "date"])
+    rows: list[dict[str, Any]] = []
+    for region, g in d.groupby("region"):
+        g = g.sort_values("date")
+        if len(g) < 2:
+            continue
+        latest = g.iloc[-1]
+        prior = g.iloc[-2]
+        delta = float(latest["value"]) - float(prior["value"])
+        label = (
+            str(region).replace("_", " ").upper()
+            if len(str(region)) == 2
+            else str(region).replace("_", " ").title()
+        )
+        rows.append({"region": label, "delta": delta})
+    if not rows:
+        return pd.DataFrame(columns=["region", "delta"])
+    out = pd.DataFrame(rows)
+    out["abs_delta"] = out["delta"].abs()
+    out = out.sort_values("abs_delta", ascending=False).drop(columns=["abs_delta"])
+    return out.reset_index(drop=True)
 
 
 def _weather_normal_years(df: pd.DataFrame) -> int:
@@ -1856,7 +2011,7 @@ def _storage_level_and_change_structured_answer(
 
 
 def _deterministic_answer_text(
-    *, metric: str, query: str, facts: dict[str, Any], mode: str
+    *, metric: str, query: str, facts: dict[str, Any], mode: str, df: pd.DataFrame | None = None
 ) -> str:
     latest_date = facts.get("latest_date")
     latest_value = facts.get("latest_value")
@@ -1871,6 +2026,25 @@ def _deterministic_answer_text(
 
     latest_value_text = _format_number(latest_value)
     delta_text = _format_delta(delta, unit)
+
+    average_match = re.search(r"average .* last (\d+)\s+days?", (query or "").lower())
+    if metric == "henry_hub_spot" and average_match and df is not None and not df.empty:
+        days = int(average_match.group(1))
+        scoped = df.copy()
+        if {"date", "value"}.issubset(scoped.columns) and days > 0:
+            scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+            scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+            scoped = scoped.dropna(subset=["date", "value"]).sort_values("date")
+            if not scoped.empty:
+                end_ts = scoped["date"].max()
+                start_ts = end_ts - pd.Timedelta(days=max(0, days - 1))
+                window = scoped.loc[scoped["date"] >= start_ts].copy()
+                if not window.empty:
+                    avg_value = float(window["value"].mean())
+                    return (
+                        f"Over the last {days} days ({start_ts.date().isoformat()} to {end_ts.date().isoformat()}), "
+                        f"the average Henry Hub price was {_format_number(avg_value)} $/MMBtu."
+                    )
 
     if prior_value is None or delta_text is None:
         return f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}."
@@ -2129,6 +2303,40 @@ def build_answer_with_openai(
         )
         return payload
 
+    if _is_regional_production_change_view(metric, df):
+        answer_text = _regional_production_change_answer(df)
+        chart_df = _regional_production_change_chart_df(df)
+        chart_spec = (
+            ChartSpec(
+                chart_type="bar",
+                title="Regional Contribution to Latest Production Change",
+                x="region",
+                y=["delta"],
+                x_label="Region / State",
+                y_label="Latest Change (MMcf)",
+            )
+            if not chart_df.empty
+            else None
+        )
+        payload = AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=_regional_production_change_structured_answer(
+                df=df,
+                source_label=src.label,
+                source_date=source_date,
+            ),
+            report_context_used=False,
+            report_context_reason="regional_production_change_no_rag",
+            report_context_sources=[],
+            data_preview=_maybe_data_preview(chart_df if not chart_df.empty else df),
+            chart_data_preview=_make_preview(chart_df) if not chart_df.empty else None,
+            chart_spec=chart_spec,
+            sources=[src],
+        )
+        return payload
+
     if _is_supply_balance_regime_view(metric, df) and not prefer_report_narration:
         answer_text = _supply_balance_regime_answer(df)
         chart_spec = None
@@ -2244,6 +2452,7 @@ def build_answer_with_openai(
     structured_response = _build_structured_answer(
         metric=metric,
         query=query,
+        df=df,
         facts=facts,
         mode=mode,
         source_label=src.label,
@@ -2310,6 +2519,7 @@ def build_answer_with_openai(
                 query=query,
                 facts=facts,
                 mode=mode,
+                df=df,
             )
         )
 

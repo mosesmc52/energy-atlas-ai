@@ -37,6 +37,18 @@ _REGISTRY: dict[str, MetricCapability] = {
         metric="ng_consumption_lower48",
         default_lookback_years=2,
     ),
+    "ng_production_lower48": MetricCapability(
+        metric="ng_production_lower48",
+        default_lookback_years=2,
+    ),
+    "lng_exports": MetricCapability(
+        metric="lng_exports",
+        default_lookback_years=2,
+    ),
+    "lng_imports": MetricCapability(
+        metric="lng_imports",
+        default_lookback_years=2,
+    ),
     "ng_consumption_by_sector": MetricCapability(
         metric="ng_consumption_by_sector",
         default_lookback_years=2,

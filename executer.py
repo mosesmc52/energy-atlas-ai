@@ -336,6 +336,47 @@ class MetricExecutor:
     def _eia_ng_production_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
+        if str(filters.get("group_by") or "") == "region":
+            regional_frames: list[pd.DataFrame] = []
+            sources: list[str] = []
+            region_meta: dict[str, Any] = {}
+            for region in sorted(EIAAdapter.PRODUCTION_STATES - {"united_states_total"}):
+                regional_result = self.eia.ng_production_lower48(
+                    start=start, end=end, state=region
+                )
+                frame = regional_result.df.copy()
+                if frame is None or frame.empty:
+                    continue
+                frame["region"] = region
+                regional_frames.append(frame)
+                sources.append(regional_result.source.reference)
+                region_meta[region] = (regional_result.meta or {}).get("cache")
+
+            df = (
+                pd.concat(regional_frames, ignore_index=True)
+                if regional_frames
+                else pd.DataFrame(columns=["date", "value", "region"])
+            )
+            src = SourceRef(
+                source_type="eia_api",
+                label="EIA Natural Gas: Production by Region/State",
+                reference="eia-ng-client:natural_gas.production_by_region",
+                parameters={
+                    "regions": sorted(EIAAdapter.PRODUCTION_STATES - {"united_states_total"}),
+                    "start": start,
+                    "end": end,
+                    "group_by": "region",
+                    "source_references": sources,
+                },
+            )
+            return EIAResult(
+                df=df,
+                source=src,
+                meta={
+                    "cache": {"regions": region_meta},
+                    "note": "Regional/state production levels for ranking contribution to latest period change.",
+                },
+            )
         state = str(filters.get("region") or "united_states_total")
         return self.eia.ng_production_lower48(start=start, end=end, state=state)
 

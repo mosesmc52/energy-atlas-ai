@@ -212,6 +212,13 @@ class TestRouter(unittest.TestCase):
         self.assertEqual(result.start, expected_start)
         self.assertEqual(result.filters, {"normal_years": 5})
 
+    def test_power_burn_direction_routes_to_one_year_timeseries(self) -> None:
+        result = route_query("Is gas-fired power burn increasing or decreasing?")
+        self.assertEqual(result.primary_metric, "ng_electricity")
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 360)
+
     def test_percentage_generation_from_gas_routes_to_iso_gas_dependency(self) -> None:
         result = route_query(
             "What percentage of electricity generation is coming from natural gas, and how is that changing?"
@@ -283,6 +290,30 @@ class TestRouter(unittest.TestCase):
         result = route_query("natural gas storage")
         self.assertEqual(result.intent, "single_metric")
         self.assertEqual(result.primary_metric, "working_gas_storage_lower48")
+
+    def test_latest_us_marketed_production_uses_longer_lookback(self) -> None:
+        result = route_query("What is the latest U.S. marketed natural gas production?")
+        self.assertEqual(result.primary_metric, "ng_production_lower48")
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 700)
+
+    def test_henry_hub_average_n_days_routes_to_henry_hub(self) -> None:
+        result = route_query("What was the average Henry Hub price over the last 7 days?")
+        self.assertEqual(result.primary_metric, "henry_hub_spot")
+        self.assertEqual(result.source, "rule")
+
+    def test_latest_us_lng_exports_use_longer_lookback(self) -> None:
+        result = route_query("What is the latest U.S. LNG export volume?")
+        self.assertEqual(result.primary_metric, "lng_exports")
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 700)
+
+    def test_production_contribution_by_region_routes_to_grouped_production(self) -> None:
+        result = route_query("Which state or region contributed most to the production change?")
+        self.assertEqual(result.primary_metric, "ng_production_lower48")
+        self.assertEqual(result.filters, {"group_by": "region"})
 
     def test_simple_texas_production_routes_deterministically(self) -> None:
         result = route_query("Texas production")

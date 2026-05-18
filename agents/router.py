@@ -10,6 +10,15 @@ from agents.filter_resolvers import FilterResolverDeps
 from agents.filter_resolvers import build_filters as build_metric_filters
 from agents.llm_query_parser import LLMQueryParserError, llm_parse_query
 from agents.metric_capabilities import get_metric_capability
+from agents.query_classifier import (
+    QUESTION_TYPE_AVERAGE_N_DAYS,
+    QUESTION_TYPE_FIVE_YEAR_RANGE,
+    QUESTION_TYPE_LATEST,
+    QUESTION_TYPE_MOM,
+    QUESTION_TYPE_REGIONAL_RANKING,
+    QUESTION_TYPE_YOY,
+    classify_query,
+)
 from agents.source_planner import build_source_plan
 from agents.router_data import (
     BONUS_TERMS,
@@ -247,6 +256,17 @@ def is_global_demand_for_us_gas_query(q: str) -> bool:
     return has_us_gas
 
 
+def is_power_burn_direction_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_power_burn = (
+        "power burn" in lowered
+        or "gas-fired power burn" in lowered
+        or "gas fired power burn" in lowered
+    )
+    has_direction = any(term in lowered for term in ("increasing", "decreasing", "up or down", "rising", "falling"))
+    return has_power_burn and has_direction
+
+
 def storage_comparison_lookback_years(q: str) -> int | None:
     lowered = q.lower().replace("–", "-").replace("—", "-")
     if ("five-year" in lowered or "5-year" in lowered) and (
@@ -297,6 +317,15 @@ def is_storage_largest_weekly_change_by_region_query(q: str) -> bool:
         and any(term in lowered for term in ("largest", "biggest", "most"))
     )
     return has_storage and has_weekly_change and has_region_rank
+
+
+def is_production_contribution_by_region_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_production = "production" in lowered
+    has_region_or_state = ("region" in lowered) or ("state" in lowered)
+    has_contribution = any(term in lowered for term in ("contributed most", "contribution", "contributed"))
+    has_change = "change" in lowered
+    return has_production and has_region_or_state and has_contribution and has_change
 
 
 def route_trade_region(q: str) -> str | None:
@@ -774,6 +803,7 @@ def validate_llm_route(
 def route_query(user_query: str) -> HybridRouteResult:
 
     normalized = normalize_query(user_query)
+    classified = classify_query(normalized)
     start, end = resolve_date_range(user_query)
     has_explicit_dates = has_explicit_date_reference(user_query)
     intent = detect_intent(normalized)
@@ -815,18 +845,33 @@ def route_query(user_query: str) -> HybridRouteResult:
 
     if has_production and intent == "single_metric":
         metric = "ng_production_lower48"
+        prod_start = start
+        lookback_years = resolve_window_lookback_years(
+            metric=metric,
+            q=normalized,
+            has_explicit_dates=has_explicit_dates,
+            current_like_only=current_like_only,
+            deps=WINDOW_POLICY_DEPS,
+        )
+        if lookback_years is not None:
+            prod_start = (
+                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
+            ).date().isoformat()
         return HybridRouteResult(
             intent="single_metric",
             primary_metric=metric,
             metrics=[metric],
-            start=start,
+            start=prod_start,
             end=end,
             filters=build_filters(metric, normalized, 1.0),
             confidence=max(confidence, 0.9),
             ambiguous=False,
             candidates=candidates[:3],
             source="rule",
-            reason="Deterministic route for implied natural-gas production query",
+            reason=(
+                "Deterministic route for implied natural-gas production query "
+                f"(question_type={classified.question_type})"
+            ),
             normalized_query=normalized,
             include_forecast=include_forecast,
             forecast_horizon_days=forecast_horizon_days,
@@ -854,11 +899,23 @@ def route_query(user_query: str) -> HybridRouteResult:
 
     if has_import and not has_export and intent == "single_metric":
         metric = "lng_imports"
+        imp_start = start
+        lookback_years = resolve_window_lookback_years(
+            metric=metric,
+            q=normalized,
+            has_explicit_dates=has_explicit_dates,
+            current_like_only=current_like_only,
+            deps=WINDOW_POLICY_DEPS,
+        )
+        if lookback_years is not None:
+            imp_start = (
+                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
+            ).date().isoformat()
         return HybridRouteResult(
             intent="single_metric",
             primary_metric=metric,
             metrics=[metric],
-            start=start,
+            start=imp_start,
             end=end,
             filters=build_filters(metric, normalized, 1.0),
             confidence=max(confidence, 0.9),
@@ -873,11 +930,23 @@ def route_query(user_query: str) -> HybridRouteResult:
 
     if has_export and not has_import and intent == "single_metric":
         metric = "lng_exports"
+        exp_start = start
+        lookback_years = resolve_window_lookback_years(
+            metric=metric,
+            q=normalized,
+            has_explicit_dates=has_explicit_dates,
+            current_like_only=current_like_only,
+            deps=WINDOW_POLICY_DEPS,
+        )
+        if lookback_years is not None:
+            exp_start = (
+                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
+            ).date().isoformat()
         return HybridRouteResult(
             intent="single_metric",
             primary_metric=metric,
             metrics=[metric],
-            start=start,
+            start=exp_start,
             end=end,
             filters=build_filters(metric, normalized, 1.0),
             confidence=max(confidence, 0.9),
@@ -933,7 +1002,29 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=None,
         )
 
-    if is_storage_inventory_range_query(normalized):
+    if is_power_burn_direction_query(normalized):
+        metric = "ng_electricity"
+        power_start = (pd.Timestamp(end) - pd.DateOffset(years=1)).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=power_start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for power-burn direction over past year",
+            normalized_query=normalized,
+            include_forecast=include_forecast,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+
+    if is_storage_inventory_range_query(normalized) or (
+        classified.question_type == QUESTION_TYPE_FIVE_YEAR_RANGE and "inventor" in normalized
+    ):
         metric = "working_gas_storage_lower48"
         inventory_start = (
             pd.Timestamp(end) - pd.DateOffset(years=6)
@@ -955,7 +1046,9 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=None,
         )
 
-    if is_storage_same_week_last_year_query(normalized):
+    if is_storage_same_week_last_year_query(normalized) or (
+        classified.question_type == QUESTION_TYPE_YOY and "storage" in normalized
+    ):
         metric = "working_gas_storage_lower48"
         storage_start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
         return HybridRouteResult(
@@ -995,7 +1088,12 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=None,
         )
 
-    if is_storage_largest_weekly_change_by_region_query(normalized):
+    if is_storage_largest_weekly_change_by_region_query(normalized) or (
+        classified.question_type == QUESTION_TYPE_REGIONAL_RANKING
+        and "storage" in normalized
+        and "weekly" in normalized
+        and "change" in normalized
+    ):
         metric = "working_gas_storage_change_weekly"
         return HybridRouteResult(
             intent="single_metric",
@@ -1009,6 +1107,51 @@ def route_query(user_query: str) -> HybridRouteResult:
             candidates=candidates[:3],
             source="rule",
             reason="Deterministic route for largest weekly storage change by region",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
+    if is_production_contribution_by_region_query(normalized):
+        metric = "ng_production_lower48"
+        prod_start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=prod_start,
+            end=end,
+            filters={"group_by": "region"},
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for production change contribution by region/state",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
+    if (
+        classified.question_type == QUESTION_TYPE_AVERAGE_N_DAYS
+        and "henry hub" in normalized
+        and intent == "single_metric"
+    ):
+        metric = "henry_hub_spot"
+        days = int(classified.params.get("days") or 7)
+        avg_start = (pd.Timestamp(end) - pd.Timedelta(days=max(1, days) + 7)).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=avg_start,
+            end=end,
+            filters=None,
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for Henry Hub average over trailing N days",
             normalized_query=normalized,
             include_forecast=False,
             forecast_horizon_days=None,

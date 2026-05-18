@@ -192,6 +192,39 @@ class TestAnswerBuilder(unittest.TestCase):
 
         self.assertIn("Midwest posted the fastest storage withdrawal", payload.answer_text)
 
+    def test_regional_production_change_builds_contribution_ranking_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-04-01", "region": "tx", "value": 1000.0},
+                {"date": "2026-05-01", "region": "tx", "value": 1060.0},
+                {"date": "2026-04-01", "region": "la", "value": 800.0},
+                {"date": "2026-05-01", "region": "la", "value": 790.0},
+                {"date": "2026-04-01", "region": "pa", "value": 900.0},
+                {"date": "2026-05-01", "region": "pa", "value": 920.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Production by Region",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 22),
+            ),
+            meta={"metric": "ng_production_lower48", "filters": {"group_by": "region"}},
+        )
+
+        payload = build_answer_with_openai(
+            query="Which state or region contributed most to the production change?",
+            result=result,
+        )
+
+        self.assertIn("contributed most to the latest production change", payload.answer_text)
+        self.assertIn("TX", payload.answer_text)
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "bar")
+        self.assertEqual(payload.chart_spec.x, "region")
+
     def test_storage_level_and_change_builds_combined_answer(self) -> None:
         df = pd.DataFrame(
             [
@@ -413,6 +446,36 @@ class TestAnswerBuilder(unittest.TestCase):
         )
 
         self.assertIn("As of April 23, 2026", payload.answer_text)
+
+    def test_henry_hub_average_last_7_days_answer(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-05-06", "value": 2.80},
+                {"date": "2026-05-07", "value": 2.82},
+                {"date": "2026-05-08", "value": 2.85},
+                {"date": "2026-05-09", "value": 2.88},
+                {"date": "2026-05-10", "value": 2.90},
+                {"date": "2026-05-11", "value": 2.92},
+                {"date": "2026-05-12", "value": 2.91},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Henry Hub Spot",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 12),
+            ),
+            meta={"metric": "henry_hub_spot"},
+        )
+
+        payload = build_answer_with_openai(
+            query="What was the average Henry Hub price over the last 7 days?",
+            result=result,
+        )
+        self.assertIn("average Henry Hub price was", payload.answer_text)
+        self.assertIn("Over the last 7 days", payload.answer_text)
 
     def test_ng_electricity_seasonal_norms_answer_uses_seasonal_baseline(self) -> None:
         df = pd.DataFrame(

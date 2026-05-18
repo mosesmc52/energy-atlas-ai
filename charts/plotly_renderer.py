@@ -134,25 +134,25 @@ def compute_timeseries_summary_metrics(
 
     return [
         {
-            "label": "Latest reading",
+            "label": "Latest",
             "value": latest,
             "unit": unit or "",
             "subtitle": latest_date,
         },
         {
-            "label": "Previous period",
+            "label": "Previous",
             "value": previous,
             "unit": unit or "",
             "subtitle": "prior observation" if previous is not None else None,
         },
         {
-            "label": "Period low",
+            "label": "Low",
             "value": period_low,
             "unit": unit or "",
             "subtitle": "displayed period",
         },
         {
-            "label": "Period high",
+            "label": "High",
             "value": period_high,
             "unit": unit or "",
             "subtitle": "displayed period",

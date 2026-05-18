@@ -65,6 +65,23 @@ class TestChartPolicy(unittest.TestCase):
         self.assertIsNotNone(spec)
         self.assertEqual(spec.chart_type, "line")
 
+    def test_production_mom_query_prefers_line_chart_over_bar(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-01", "value": 100100.0},
+                {"date": "2026-02-01", "value": 100400.0},
+                {"date": "2026-03-01", "value": 100250.0},
+            ]
+        )
+        spec = chart_policy(
+            metric="ng_production_lower48",
+            mode="observed",
+            df=df,
+            query="Is production up or down month over month?",
+        )
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.chart_type, "line")
+
 
 if __name__ == "__main__":
     unittest.main()
