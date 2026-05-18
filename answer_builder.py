@@ -825,6 +825,45 @@ def _deterministic_sector_consumption_answer(query: str, df: pd.DataFrame) -> st
     )
 
 
+def _sector_consumption_chart_df(query: str, df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or not {"date", "value", "series"}.issubset(df.columns):
+        return pd.DataFrame(columns=["sector", "value"])
+
+    scoped = df.copy()
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+    scoped["series"] = scoped["series"].astype(str)
+    scoped = scoped.dropna(subset=["date", "value", "series"])
+    if scoped.empty:
+        return pd.DataFrame(columns=["sector", "value"])
+
+    latest_date = scoped["date"].max()
+    latest_rows = scoped.loc[scoped["date"] == latest_date].copy()
+    q = (query or "").lower()
+    sector_terms = {
+        "electric_power": ("power", "electric power"),
+        "residential": ("residential",),
+        "industrial": ("industrial",),
+        "commercial": ("commercial",),
+    }
+    requested_sectors = [
+        sector
+        for sector, terms in sector_terms.items()
+        if any(term in q for term in terms)
+    ]
+    if requested_sectors:
+        latest_rows = latest_rows.loc[latest_rows["series"].isin(requested_sectors)].copy()
+
+    if latest_rows.empty:
+        return pd.DataFrame(columns=["sector", "value"])
+
+    latest_rows["sector"] = latest_rows["series"].apply(
+        lambda s: SECTOR_LABELS.get(str(s), str(s)).replace("_", " ").title()
+    )
+    out = latest_rows[["sector", "value"]].sort_values("value", ascending=False).reset_index(drop=True)
+    return out
+
+
 def _deterministic_sector_structured_answer(
     *,
     query: str,
@@ -1898,6 +1937,74 @@ def _is_storage_five_year_comparison_query(query: str) -> bool:
     return has_five_year and has_baseline
 
 
+def _is_same_time_five_year_comparison_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    normalized = re.sub(r"[\u2010-\u2015\u2212]", "-", lowered)
+    has_five_year = bool(re.search(r"(?:five|5)\s*-\s*year", normalized))
+    has_baseline = "average" in normalized or "range" in normalized
+    same_time_hint = bool(re.search(r"same[\s-]*time|same[\s-]*week", normalized))
+    return has_five_year and has_baseline and same_time_hint
+
+
+def _five_year_same_time_baseline(series_df: pd.DataFrame) -> tuple[float, float, float] | None:
+    scoped = series_df.copy()
+    if not {"date", "value"}.issubset(scoped.columns):
+        return None
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+    scoped = scoped.dropna(subset=["date", "value"]).sort_values("date")
+    if len(scoped) < 24:
+        return None
+    latest_row = scoped.iloc[-1]
+    latest_ts = pd.Timestamp(latest_row["date"])
+    latest_year = int(latest_ts.year)
+    deltas = scoped["date"].diff().dropna().dt.total_seconds() / 86400.0
+    spacing = float(deltas.median()) if not deltas.empty else 30.0
+
+    if spacing <= 10.0:
+        scoped["iso_week"] = scoped["date"].dt.isocalendar().week.astype(int)
+        hist = scoped.loc[
+            (scoped["iso_week"] == int(latest_ts.isocalendar().week))
+            & (scoped["date"].dt.year >= latest_year - 5)
+            & (scoped["date"].dt.year < latest_year)
+        ]
+    elif spacing <= 45.0:
+        hist = scoped.loc[
+            (scoped["date"].dt.month == latest_ts.month)
+            & (scoped["date"].dt.year >= latest_year - 5)
+            & (scoped["date"].dt.year < latest_year)
+        ]
+    else:
+        doy = int(latest_ts.dayofyear)
+        hist = scoped.loc[
+            (scoped["date"].dt.year >= latest_year - 5)
+            & (scoped["date"].dt.year < latest_year)
+            & ((scoped["date"].dt.dayofyear - doy).abs() <= 3)
+        ]
+
+    hist_vals = pd.to_numeric(hist["value"], errors="coerce").dropna()
+    if len(hist_vals) < 3:
+        return None
+    return float(hist_vals.mean()), float(hist_vals.min()), float(hist_vals.max())
+
+
+def _series_with_five_year_average_line(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or not {"date", "value"}.issubset(df.columns):
+        return pd.DataFrame()
+    baseline = _five_year_same_time_baseline(df)
+    if baseline is None:
+        return pd.DataFrame()
+    avg_5y, _, _ = baseline
+    chart_df = df.copy()
+    chart_df["date"] = pd.to_datetime(chart_df["date"], errors="coerce")
+    chart_df["value"] = pd.to_numeric(chart_df["value"], errors="coerce")
+    chart_df = chart_df.dropna(subset=["date", "value"]).sort_values("date").reset_index(drop=True)
+    if chart_df.empty:
+        return pd.DataFrame()
+    chart_df["five_year_average"] = float(avg_5y)
+    return chart_df
+
+
 def _storage_same_week_yearly_comparison_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty or not {"date", "value"}.issubset(df.columns):
         return pd.DataFrame(columns=["comparison_year", "value", "date"])
@@ -2046,14 +2153,61 @@ def _deterministic_answer_text(
                         f"the average Henry Hub price was {_format_number(avg_value)} $/MMBtu."
                     )
 
+    def _should_auto_add_five_year_context() -> bool:
+        q = (query or "").lower()
+        if any(token in q for token in ("five-year", "5-year", "yoy", "year over year", "same week last year")):
+            return False
+        return any(token in q for token in ("latest", "current", "right now", "what is", "how much is"))
+
+    def _asks_explicit_five_year_comparison() -> bool:
+        q = (query or "").lower()
+        has_five_year = ("five-year" in q or "5-year" in q)
+        has_baseline = ("average" in q or "range" in q)
+        return has_five_year and has_baseline
+
     if prior_value is None or delta_text is None:
+        if df is not None and (_should_auto_add_five_year_context() or _asks_explicit_five_year_comparison()):
+            baseline = _five_year_same_time_baseline(df)
+            if baseline is not None:
+                avg_5y, min_5y, max_5y = baseline
+                latest_num = float(latest_value)
+                diff = latest_num - avg_5y
+                pct = (diff / avg_5y * 100.0) if avg_5y != 0 else None
+                pct_text = f" ({pct:+.1f}%)" if pct is not None else ""
+                return (
+                    f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}, "
+                    f"vs a same-time 5-year average of {_format_number(avg_5y)}{unit_suffix} "
+                    f"({_format_number(diff)}{unit_suffix}{pct_text}). "
+                    f"5-year range: {_format_number(min_5y)} to {_format_number(max_5y)}{unit_suffix}."
+                )
+            if _asks_explicit_five_year_comparison():
+                return (
+                    f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}. "
+                    "Not enough same-time history was returned to compute a reliable five-year baseline."
+                )
         return f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}."
 
     if mode == "observed":
-        return (
+        base = (
             f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}, "
             f"{delta_text}."
         )
+        if df is not None and (_should_auto_add_five_year_context() or _asks_explicit_five_year_comparison()):
+            baseline = _five_year_same_time_baseline(df)
+            if baseline is not None:
+                avg_5y, min_5y, max_5y = baseline
+                latest_num = float(latest_value)
+                diff = latest_num - avg_5y
+                pct = (diff / avg_5y * 100.0) if avg_5y != 0 else None
+                pct_text = f" ({pct:+.1f}%)" if pct is not None else ""
+                return (
+                    f"{base} Versus the same-time 5-year average of {_format_number(avg_5y)}{unit_suffix}, "
+                    f"this is {_format_number(diff)}{unit_suffix}{pct_text}. "
+                    f"5-year range: {_format_number(min_5y)} to {_format_number(max_5y)}{unit_suffix}."
+                )
+            if _asks_explicit_five_year_comparison():
+                return f"{base} Not enough same-time history was returned to compute a reliable five-year baseline."
+        return base
 
     return (
         f"The latest observed value is {latest_value_text}{unit_suffix} on {latest_date}, "
@@ -2169,9 +2323,20 @@ def build_answer_with_openai(
             return payload
 
         answer_text = _deterministic_sector_consumption_answer(query=query, df=df)
-        if df is not None and "date" in df.columns:
-            df = df.sort_values("date").reset_index(drop=True)
-        chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+        chart_df = _sector_consumption_chart_df(query=query, df=df)
+        if not chart_df.empty:
+            chart_spec = ChartSpec(
+                chart_type="bar",
+                title="Natural Gas Consumption by Sector (Latest)",
+                x="sector",
+                y=["value"],
+                x_label="Sector",
+                y_label="MMcf",
+            )
+        else:
+            if df is not None and "date" in df.columns:
+                df = df.sort_values("date").reset_index(drop=True)
+            chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
         payload = AnswerPayload(
             query=query,
             mode=mode,
@@ -2185,7 +2350,8 @@ def build_answer_with_openai(
             report_context_used=False,
             report_context_reason="ranking_response_no_rag",
             report_context_sources=[],
-            data_preview=_maybe_data_preview(df),
+            data_preview=_maybe_data_preview(chart_df if not chart_df.empty else df),
+            chart_data_preview=_make_preview(chart_df) if not chart_df.empty else None,
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -2284,7 +2450,14 @@ def build_answer_with_openai(
 
     if _is_weather_regional_demand_drivers_view(metric, df):
         answer_text = _weather_regional_demand_drivers_answer(df)
-        chart_spec = None
+        chart_spec = ChartSpec(
+            chart_type="bar",
+            title="Regional Weather-Driven Gas Demand",
+            x="region",
+            y=["demand_delta_bcfd"],
+            x_label="Region",
+            y_label="Demand Delta (Bcf/d)",
+        )
         payload = AnswerPayload(
             query=query,
             mode=mode,
@@ -2570,7 +2743,21 @@ def build_answer_with_openai(
     # 3) Assemble AnswerPayload
     if df is not None and "date" in df.columns:
         df = df.sort_values("date").reset_index(drop=True)
+    chart_df = df
     chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+    if metric == "ng_production_lower48" and _is_same_time_five_year_comparison_query(query):
+        production_chart_df = _series_with_five_year_average_line(df) if df is not None else pd.DataFrame()
+        if not production_chart_df.empty:
+            chart_df = production_chart_df
+            chart_spec = ChartSpec(
+                chart_type="line",
+                title="U.S. Marketed Natural Gas Production vs Same-Time 5-Year Average",
+                x="date",
+                y=["value", "five_year_average"],
+                x_label="Date",
+                y_label="MMcf",
+                notes="Horizontal line represents the same-time 5-year average benchmark.",
+            )
     payload = AnswerPayload(
         query=query,
         mode=mode,
@@ -2579,7 +2766,8 @@ def build_answer_with_openai(
         report_context_used=report_context_used,
         report_context_reason=report_context_reason,
         report_context_sources=report_context_sources,
-        data_preview=_maybe_data_preview(df),
+        data_preview=_maybe_data_preview(chart_df),
+        chart_data_preview=_make_preview(chart_df) if chart_df is not None else None,
         chart_spec=chart_spec,
         sources=[src],
         warnings=None,

@@ -54,6 +54,33 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertIsNotNone(payload.structured_response)
         self.assertEqual(payload.structured_response.signal.status, "neutral")
 
+    def test_sector_consumption_question_renders_latest_sector_bar_chart(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-01", "series": "commercial", "value": 200.0},
+                {"date": "2026-01-01", "series": "residential", "value": 300.0},
+                {"date": "2026-01-01", "series": "industrial", "value": 250.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Consumption by Sector",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "ng_consumption_by_sector"},
+        )
+
+        payload = build_answer_with_openai(
+            query="Which sector consumes the most gas (commercial, residential, industrial)?",
+            result=result,
+        )
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "bar")
+        self.assertEqual(payload.chart_spec.x, "sector")
+
     def test_structured_response_is_built_for_standard_metric(self) -> None:
         df = pd.DataFrame(
             [
@@ -447,6 +474,35 @@ class TestAnswerBuilder(unittest.TestCase):
 
         self.assertIn("As of April 23, 2026", payload.answer_text)
 
+    def test_weather_regional_drivers_question_renders_region_bar_chart(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"region": "east", "demand_delta_bcfd": 0.5, "total_delta_hdd": 10, "total_delta_cdd": -1, "date": "2026-05-10"},
+                {"region": "midwest", "demand_delta_bcfd": 0.2, "total_delta_hdd": 5, "total_delta_cdd": 0, "date": "2026-05-10"},
+                {"region": "south", "demand_delta_bcfd": -0.1, "total_delta_hdd": -2, "total_delta_cdd": 3, "date": "2026-05-10"},
+                {"region": "west", "demand_delta_bcfd": -0.3, "total_delta_hdd": -4, "total_delta_cdd": 2, "date": "2026-05-10"},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Regional Weather Drivers",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 10),
+            ),
+            meta={"metric": "weather_regional_demand_drivers"},
+        )
+
+        payload = build_answer_with_openai(
+            query="Which regions are driving weather-related demand right now?",
+            result=result,
+        )
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "bar")
+        self.assertEqual(payload.chart_spec.x, "region")
+        self.assertEqual(payload.chart_spec.y, ["demand_delta_bcfd"])
+
     def test_henry_hub_average_last_7_days_answer(self) -> None:
         df = pd.DataFrame(
             [
@@ -476,6 +532,113 @@ class TestAnswerBuilder(unittest.TestCase):
         )
         self.assertIn("average Henry Hub price was", payload.answer_text)
         self.assertIn("Over the last 7 days", payload.answer_text)
+
+    def test_latest_production_answer_auto_includes_five_year_context(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-05-01", "value": 98000.0},
+                {"date": "2022-05-01", "value": 99000.0},
+                {"date": "2023-05-01", "value": 100000.0},
+                {"date": "2024-05-01", "value": 101000.0},
+                {"date": "2025-05-01", "value": 102000.0},
+                {"date": "2026-05-01", "value": 103000.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Production",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 12),
+            ),
+            meta={"metric": "ng_production_lower48"},
+        )
+        payload = build_answer_with_openai(
+            query="What is the latest U.S. marketed natural gas production?",
+            result=result,
+        )
+        self.assertIn("5-year average", payload.answer_text)
+        self.assertIn("5-year range", payload.answer_text)
+
+    def test_latest_marketed_production_five_year_query_adds_average_line_chart(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 3000000.0},
+                {"date": "2021-03-01", "value": 3020000.0},
+                {"date": "2021-04-01", "value": 3040000.0},
+                {"date": "2021-05-01", "value": 3060000.0},
+                {"date": "2022-02-01", "value": 3010000.0},
+                {"date": "2022-03-01", "value": 3030000.0},
+                {"date": "2022-04-01", "value": 3050000.0},
+                {"date": "2022-05-01", "value": 3070000.0},
+                {"date": "2023-02-01", "value": 3020000.0},
+                {"date": "2023-03-01", "value": 3040000.0},
+                {"date": "2023-04-01", "value": 3060000.0},
+                {"date": "2023-05-01", "value": 3080000.0},
+                {"date": "2024-02-01", "value": 3030000.0},
+                {"date": "2024-03-01", "value": 3050000.0},
+                {"date": "2024-04-01", "value": 3070000.0},
+                {"date": "2024-05-01", "value": 3090000.0},
+                {"date": "2025-02-01", "value": 3040000.0},
+                {"date": "2025-03-01", "value": 3060000.0},
+                {"date": "2025-04-01", "value": 3080000.0},
+                {"date": "2025-05-01", "value": 3100000.0},
+                {"date": "2026-02-01", "value": 3050000.0},
+                {"date": "2026-03-01", "value": 3070000.0},
+                {"date": "2026-04-01", "value": 3090000.0},
+                {"date": "2026-05-01", "value": 3110000.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Production",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 12),
+            ),
+            meta={"metric": "ng_production_lower48"},
+        )
+        payload = build_answer_with_openai(
+            query="What is the latest U.S. marketed natural gas production, and how does it compare to the same-time 5-year average and range?",
+            result=result,
+        )
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertEqual(payload.chart_spec.x, "date")
+        self.assertEqual(payload.chart_spec.y, ["value", "five_year_average"])
+
+    def test_latest_marketed_production_five_year_query_with_short_history_reports_gap(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2025-05-01", "value": 3300000.0},
+                {"date": "2025-06-01", "value": 3220000.0},
+                {"date": "2025-07-01", "value": 3350000.0},
+                {"date": "2025-08-01", "value": 3370000.0},
+                {"date": "2025-09-01", "value": 3240000.0},
+                {"date": "2025-10-01", "value": 3320000.0},
+                {"date": "2025-11-01", "value": 3305000.0},
+                {"date": "2025-12-01", "value": 3460000.0},
+                {"date": "2026-01-01", "value": 3363000.0},
+                {"date": "2026-02-01", "value": 3080138.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Production",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 12),
+            ),
+            meta={"metric": "ng_production_lower48"},
+        )
+        payload = build_answer_with_openai(
+            query="What is the latest U.S. marketed natural gas production, and how does it compare to the same-time 5-year average and range?",
+            result=result,
+        )
+        self.assertIn("Not enough same-time history was returned", payload.answer_text)
 
     def test_ng_electricity_seasonal_norms_answer_uses_seasonal_baseline(self) -> None:
         df = pd.DataFrame(

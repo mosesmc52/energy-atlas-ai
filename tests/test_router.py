@@ -190,6 +190,7 @@ class TestRouter(unittest.TestCase):
     def test_weather_demand_next_7_14_days_routes_to_weather_metric(self) -> None:
         result = route_query("How will weather impact natural gas demand over the next 7-14 days?")
         self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
+        self.assertFalse(result.include_forecast)
 
     def test_weather_regions_driving_routes_to_weather_metric(self) -> None:
         result = route_query("Which regions are driving weather-related demand right now?")
@@ -297,6 +298,15 @@ class TestRouter(unittest.TestCase):
         start = pd.Timestamp(result.start)
         end = pd.Timestamp(result.end)
         self.assertGreaterEqual((end - start).days, 700)
+
+    def test_latest_marketed_production_with_five_year_comparison_stays_on_production(self) -> None:
+        result = route_query(
+            "What is the latest U.S. marketed natural gas production, and how does it compare to the same-time 5-year average and range?"
+        )
+        self.assertEqual(result.primary_metric, "ng_production_lower48")
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 6 * 365 - 2)
 
     def test_henry_hub_average_n_days_routes_to_henry_hub(self) -> None:
         result = route_query("What was the average Henry Hub price over the last 7 days?")

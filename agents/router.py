@@ -328,6 +328,14 @@ def is_production_contribution_by_region_query(q: str) -> bool:
     return has_production and has_region_or_state and has_contribution and has_change
 
 
+def is_production_five_year_comparison_query(q: str) -> bool:
+    lowered = q.lower().replace("–", "-").replace("—", "-")
+    has_production = any(term in lowered for term in ("production", "marketed natural gas"))
+    has_five_year = ("five-year" in lowered) or ("5-year" in lowered)
+    has_baseline = ("average" in lowered) or ("range" in lowered)
+    return has_production and has_five_year and has_baseline
+
+
 def route_trade_region(q: str) -> str | None:
     q = q.lower()
     for region, keys in TRADE_REGION_KEYWORDS.items():
@@ -843,7 +851,15 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=forecast_horizon_days,
         )
 
-    if has_production and intent == "single_metric":
+    production_weather_terms = ("weather", "degree day", "hdd", "cdd", "forecast")
+    production_companion_terms = ("storage", "export", "imports", "henry hub", "price")
+    should_force_production = (
+        has_production
+        and not is_production_five_year_comparison_query(normalized)
+        and not any(term in normalized for term in production_weather_terms)
+        and not any(term in normalized for term in production_companion_terms)
+    )
+    if should_force_production and intent in {"single_metric", "explain", "derived", "compare"}:
         metric = "ng_production_lower48"
         prod_start = start
         lookback_years = resolve_window_lookback_years(
@@ -1132,6 +1148,26 @@ def route_query(user_query: str) -> HybridRouteResult:
             forecast_horizon_days=None,
         )
 
+    if is_production_five_year_comparison_query(normalized):
+        metric = "ng_production_lower48"
+        prod_start = (pd.Timestamp(end) - pd.DateOffset(years=6)).date().isoformat()
+        return HybridRouteResult(
+            intent="single_metric",
+            primary_metric=metric,
+            metrics=[metric],
+            start=prod_start,
+            end=end,
+            filters=build_filters(metric, normalized, 1.0),
+            confidence=max(confidence, 0.9),
+            ambiguous=False,
+            candidates=candidates[:3],
+            source="rule",
+            reason="Deterministic route for production five-year comparison",
+            normalized_query=normalized,
+            include_forecast=False,
+            forecast_horizon_days=None,
+        )
+
     if (
         classified.question_type == QUESTION_TYPE_AVERAGE_N_DAYS
         and "henry hub" in normalized
@@ -1340,8 +1376,8 @@ def route_query(user_query: str) -> HybridRouteResult:
             source="rule",
             reason=f"Weather degree-day rule route on {top.metric} using {top.matched_terms}",
             normalized_query=normalized,
-            include_forecast=True,
-            forecast_horizon_days=15,
+            include_forecast=False,
+            forecast_horizon_days=None,
         )
 
     # Fast path: for single-metric questions, stay on rules unless the match is ambiguous.

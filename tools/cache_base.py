@@ -117,7 +117,14 @@ class CacheBackedTimeseriesAdapterBase:
         )
 
         background_refresh_scheduled = False
+        requested_days = max(0, int((end_ts - start_ts).days))
+        # For long analytical windows (e.g., 5-year comparisons), return complete
+        # data in the same request instead of serving partial cache then refreshing
+        # in the background.
+        allow_background_refresh = requested_days <= 370
         if (
+            allow_background_refresh
+            and
             df_cache is not None
             and not df_cache.empty
             and not cached_window.empty
