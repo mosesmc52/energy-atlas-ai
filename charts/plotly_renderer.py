@@ -131,8 +131,9 @@ def compute_timeseries_summary_metrics(
     period_low = float(d[value_field].min())
     period_high = float(d[value_field].max())
     latest_date = d.iloc[-1][date_field].date().isoformat()
+    five_year_avg = _same_time_five_year_average(d, date_field=date_field, value_field=value_field)
 
-    return [
+    metrics = [
         {
             "label": "Latest",
             "value": latest,
@@ -158,6 +159,58 @@ def compute_timeseries_summary_metrics(
             "subtitle": "displayed period",
         },
     ]
+    if five_year_avg is not None:
+        metrics.append(
+            {
+                "label": "5Y Avg",
+                "value": float(five_year_avg),
+                "unit": unit or "",
+                "subtitle": "same-time baseline",
+            }
+        )
+    return metrics
+
+
+def _same_time_five_year_average(
+    df: pd.DataFrame,
+    *,
+    date_field: str,
+    value_field: str,
+) -> float | None:
+    if df is None or df.empty or len(df) < 6:
+        return None
+    latest = df.iloc[-1]
+    latest_ts = pd.Timestamp(latest[date_field])
+    latest_year = int(latest_ts.year)
+    deltas = df[date_field].diff().dropna().dt.total_seconds() / 86400.0
+    spacing = float(deltas.median()) if not deltas.empty else 30.0
+
+    if spacing <= 10.0:
+        scoped = df.copy()
+        scoped["iso_week"] = scoped[date_field].dt.isocalendar().week.astype(int)
+        hist = scoped.loc[
+            (scoped["iso_week"] == int(latest_ts.isocalendar().week))
+            & (scoped[date_field].dt.year >= latest_year - 5)
+            & (scoped[date_field].dt.year < latest_year)
+        ]
+    elif spacing <= 45.0:
+        hist = df.loc[
+            (df[date_field].dt.month == latest_ts.month)
+            & (df[date_field].dt.year >= latest_year - 5)
+            & (df[date_field].dt.year < latest_year)
+        ]
+    else:
+        doy = int(latest_ts.dayofyear)
+        hist = df.loc[
+            (df[date_field].dt.year >= latest_year - 5)
+            & (df[date_field].dt.year < latest_year)
+            & ((df[date_field].dt.dayofyear - doy).abs() <= 3)
+        ]
+
+    values = pd.to_numeric(hist[value_field], errors="coerce").dropna()
+    if len(values) < 3:
+        return None
+    return float(values.mean())
 
 
 def _flow_subtitle(value: float | None) -> str | None:

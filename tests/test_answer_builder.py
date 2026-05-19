@@ -607,7 +607,36 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertIsNotNone(payload.chart_spec)
         self.assertEqual(payload.chart_spec.chart_type, "line")
         self.assertEqual(payload.chart_spec.x, "date")
-        self.assertEqual(payload.chart_spec.y, ["value", "five_year_average"])
+        self.assertEqual(payload.chart_spec.y, ["value", "five_year_baseline"])
+
+    def test_five_year_historical_seasonal_query_triggers_baseline_chart(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-05-01", "value": 100.0},
+                {"date": "2022-05-01", "value": 101.0},
+                {"date": "2023-05-01", "value": 102.0},
+                {"date": "2024-05-01", "value": 103.0},
+                {"date": "2025-05-01", "value": 104.0},
+                {"date": "2026-05-01", "value": 105.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Power Burn",
+                reference="test",
+                retrieved_at=datetime(2026, 5, 19),
+            ),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand this week compared to 5 year historical seasonal demand?",
+            result=result,
+        )
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertEqual(payload.chart_spec.y, ["value", "five_year_baseline"])
 
     def test_latest_marketed_production_five_year_query_with_short_history_reports_gap(self) -> None:
         df = pd.DataFrame(
@@ -639,6 +668,162 @@ class TestAnswerBuilder(unittest.TestCase):
             result=result,
         )
         self.assertIn("Not enough same-time history was returned", payload.answer_text)
+
+    def test_interpretive_formatter_above_normal_tight_signal(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 100.0},
+                {"date": "2022-02-01", "value": 101.0},
+                {"date": "2023-02-01", "value": 102.0},
+                {"date": "2024-02-01", "value": 103.0},
+                {"date": "2025-02-01", "value": 104.0},
+                {"date": "2026-02-01", "value": 115.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("above seasonal norms", payload.answer_text)
+        self.assertIn("tight", payload.answer_text.lower())
+
+    def test_interpretive_formatter_below_normal_loose_signal(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 100.0},
+                {"date": "2022-02-01", "value": 101.0},
+                {"date": "2023-02-01", "value": 102.0},
+                {"date": "2024-02-01", "value": 103.0},
+                {"date": "2025-02-01", "value": 104.0},
+                {"date": "2026-02-01", "value": 90.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("below seasonal norms", payload.answer_text)
+        self.assertIn("loose", payload.answer_text.lower())
+
+    def test_interpretive_formatter_near_normal_neutral_signal(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 100.0},
+                {"date": "2022-02-01", "value": 101.0},
+                {"date": "2023-02-01", "value": 102.0},
+                {"date": "2024-02-01", "value": 103.0},
+                {"date": "2025-02-01", "value": 104.0},
+                {"date": "2026-02-01", "value": 103.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("near seasonal norms", payload.answer_text)
+        self.assertIn("neutral", payload.answer_text.lower())
+
+    def test_interpretive_formatter_mentions_near_upper_end(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 90.0},
+                {"date": "2022-02-01", "value": 95.0},
+                {"date": "2023-02-01", "value": 100.0},
+                {"date": "2024-02-01", "value": 105.0},
+                {"date": "2025-02-01", "value": 110.0},
+                {"date": "2026-02-01", "value": 109.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("near the upper end of the recent historical range", payload.answer_text)
+
+    def test_interpretive_formatter_mentions_near_lower_end(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 90.0},
+                {"date": "2022-02-01", "value": 95.0},
+                {"date": "2023-02-01", "value": 100.0},
+                {"date": "2024-02-01", "value": 105.0},
+                {"date": "2025-02-01", "value": 110.0},
+                {"date": "2026-02-01", "value": 91.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("near the lower end of the recent historical range", payload.answer_text)
+
+    def test_interpretive_formatter_missing_range_keeps_gap_message(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2025-11-01", "value": 120.0},
+                {"date": "2025-12-01", "value": 125.0},
+                {"date": "2026-01-01", "value": 121.0},
+                {"date": "2026-02-01", "value": 122.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("Not enough same-time history was returned", payload.answer_text)
+
+    def test_interpretive_formatter_missing_prior_observation(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2021-02-01", "value": 100.0},
+                {"date": "2022-02-01", "value": 101.0},
+                {"date": "2023-02-01", "value": 102.0},
+                {"date": "2024-02-01", "value": 103.0},
+                {"date": "2025-02-01", "value": 104.0},
+                {"date": "2026-01-01", "value": None},
+                {"date": "2026-02-01", "value": 105.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(source_type="eia_api", label="Power Burn", reference="test", retrieved_at=datetime(2026, 2, 2)),
+            meta={"metric": "ng_electricity"},
+        )
+        payload = build_answer_with_openai(
+            query="How is power demand translating into natural gas usage this week compared to 5 year average?",
+            result=result,
+        )
+        self.assertIn("prior observation was not available", payload.answer_text.lower())
 
     def test_ng_electricity_seasonal_norms_answer_uses_seasonal_baseline(self) -> None:
         df = pd.DataFrame(

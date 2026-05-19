@@ -18,6 +18,10 @@ from answers.features import (
     ng_electricity_seasonal_norm_summary as compute_ng_electricity_seasonal_norm_summary,
 )
 from answers.features import should_compute_ng_electricity_seasonal_norm
+from answers.response_formatters.natural_gas import (
+    NaturalGasMetricSnapshot,
+    format_natural_gas_commentary,
+)
 from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
 from openai import OpenAI
 from schemas.answer import (
@@ -1940,9 +1944,13 @@ def _is_storage_five_year_comparison_query(query: str) -> bool:
 def _is_same_time_five_year_comparison_query(query: str) -> bool:
     lowered = (query or "").lower()
     normalized = re.sub(r"[\u2010-\u2015\u2212]", "-", lowered)
-    has_five_year = bool(re.search(r"(?:five|5)\s*-\s*year", normalized))
-    has_baseline = "average" in normalized or "range" in normalized
-    same_time_hint = bool(re.search(r"same[\s-]*time|same[\s-]*week", normalized))
+    has_five_year = bool(re.search(r"(?:five|5)\s*-?\s*year", normalized))
+    has_baseline = any(
+        token in normalized for token in ("average", "range", "seasonal", "historical", "history", "norm", "normal")
+    )
+    same_time_hint = bool(
+        re.search(r"same[\s-]*time|same[\s-]*week|this[\s-]*week|this[\s-]*time", normalized)
+    )
     return has_five_year and has_baseline and same_time_hint
 
 
@@ -1953,7 +1961,7 @@ def _five_year_same_time_baseline(series_df: pd.DataFrame) -> tuple[float, float
     scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
     scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
     scoped = scoped.dropna(subset=["date", "value"]).sort_values("date")
-    if len(scoped) < 24:
+    if len(scoped) < 6:
         return None
     latest_row = scoped.iloc[-1]
     latest_ts = pd.Timestamp(latest_row["date"])
@@ -1988,7 +1996,11 @@ def _five_year_same_time_baseline(series_df: pd.DataFrame) -> tuple[float, float
     return float(hist_vals.mean()), float(hist_vals.min()), float(hist_vals.max())
 
 
-def _series_with_five_year_average_line(df: pd.DataFrame) -> pd.DataFrame:
+def _series_with_five_year_average_line(
+    df: pd.DataFrame,
+    *,
+    baseline_mode: str = "average",
+) -> pd.DataFrame:
     if df is None or df.empty or not {"date", "value"}.issubset(df.columns):
         return pd.DataFrame()
     baseline = _five_year_same_time_baseline(df)
@@ -2001,7 +2013,37 @@ def _series_with_five_year_average_line(df: pd.DataFrame) -> pd.DataFrame:
     chart_df = chart_df.dropna(subset=["date", "value"]).sort_values("date").reset_index(drop=True)
     if chart_df.empty:
         return pd.DataFrame()
-    chart_df["five_year_average"] = float(avg_5y)
+    baseline_value = float(avg_5y)
+    if baseline_mode == "median":
+        history = chart_df.copy()
+        latest_ts = pd.Timestamp(history.iloc[-1]["date"])
+        latest_year = int(latest_ts.year)
+        deltas = history["date"].diff().dropna().dt.total_seconds() / 86400.0
+        spacing = float(deltas.median()) if not deltas.empty else 30.0
+        if spacing <= 10.0:
+            history["iso_week"] = history["date"].dt.isocalendar().week.astype(int)
+            hist = history.loc[
+                (history["iso_week"] == int(latest_ts.isocalendar().week))
+                & (history["date"].dt.year >= latest_year - 5)
+                & (history["date"].dt.year < latest_year)
+            ]
+        elif spacing <= 45.0:
+            hist = history.loc[
+                (history["date"].dt.month == latest_ts.month)
+                & (history["date"].dt.year >= latest_year - 5)
+                & (history["date"].dt.year < latest_year)
+            ]
+        else:
+            doy = int(latest_ts.dayofyear)
+            hist = history.loc[
+                (history["date"].dt.year >= latest_year - 5)
+                & (history["date"].dt.year < latest_year)
+                & ((history["date"].dt.dayofyear - doy).abs() <= 3)
+            ]
+        hist_vals = pd.to_numeric(hist["value"], errors="coerce").dropna()
+        if len(hist_vals) >= 3:
+            baseline_value = float(hist_vals.median())
+    chart_df["five_year_baseline"] = baseline_value
     return chart_df
 
 
@@ -2153,16 +2195,74 @@ def _deterministic_answer_text(
                         f"the average Henry Hub price was {_format_number(avg_value)} $/MMBtu."
                     )
 
+    def _format_interpretive_baseline_answer(
+        *,
+        latest_date_str: str,
+        latest_num: float,
+        prior_num: float | None,
+        avg_5y: float,
+        min_5y: float,
+        max_5y: float,
+    ) -> str:
+        diff = latest_num - avg_5y
+        pct = ((diff / avg_5y) * 100.0) if avg_5y != 0 else None
+        prior_diff = (latest_num - prior_num) if prior_num is not None else None
+        category_map = {
+            "working_gas_storage_lower48": ("storage", "storage_level"),
+            "working_gas_storage_change_weekly": ("storage", "storage_change"),
+            "weather_degree_days_forecast_vs_5y": ("weather", "demand_weather"),
+            "ng_production_lower48": ("production", "dry_gas"),
+            "lng_exports": ("exports", "lng_exports"),
+            "lng_imports": ("imports", "imports"),
+            "ng_electricity": ("consumption", "power_burn"),
+            "ng_consumption_lower48": ("consumption", "total"),
+            "henry_hub_spot": ("price", "spot"),
+        }
+        category, subtype = category_map.get(metric, ("consumption", None))
+        metric_label = {
+            "working_gas_storage_lower48": "Natural gas storage",
+            "working_gas_storage_change_weekly": "Weekly storage change",
+            "weather_degree_days_forecast_vs_5y": "Weather-driven gas demand",
+            "ng_production_lower48": "Dry gas production",
+            "lng_exports": "LNG exports",
+            "lng_imports": "Natural gas imports",
+            "ng_electricity": "Power-sector gas demand",
+            "ng_consumption_lower48": "Natural gas consumption",
+            "henry_hub_spot": "Henry Hub price",
+        }.get(metric, "Natural gas metric")
+        out = format_natural_gas_commentary(
+            NaturalGasMetricSnapshot(
+                metric_name=metric_label,
+                category=category,
+                subtype=subtype,
+                date=str(latest_date_str),
+                current_value=float(latest_num),
+                unit=unit or "",
+                baseline_5y=float(avg_5y),
+                baseline_type="average",
+                difference=float(diff),
+                percent_difference=float(pct) if pct is not None else None,
+                prior_value=float(prior_num) if prior_num is not None else None,
+                prior_difference=float(prior_diff) if prior_diff is not None else None,
+                range_5y_min=float(min_5y),
+                range_5y_max=float(max_5y),
+            )
+        )
+        return str(out.get("summary") or "")
+
     def _should_auto_add_five_year_context() -> bool:
         q = (query or "").lower()
-        if any(token in q for token in ("five-year", "5-year", "yoy", "year over year", "same week last year")):
+        has_five_year = bool(re.search(r"(?:five|5)\s*-?\s*year", q))
+        if has_five_year or any(token in q for token in ("yoy", "year over year", "same week last year")):
             return False
         return any(token in q for token in ("latest", "current", "right now", "what is", "how much is"))
 
     def _asks_explicit_five_year_comparison() -> bool:
         q = (query or "").lower()
-        has_five_year = ("five-year" in q or "5-year" in q)
-        has_baseline = ("average" in q or "range" in q)
+        has_five_year = bool(re.search(r"(?:five|5)\s*-?\s*year", q))
+        has_baseline = any(
+            token in q for token in ("average", "range", "seasonal", "historical", "history", "norm", "normal")
+        )
         return has_five_year and has_baseline
 
     if prior_value is None or delta_text is None:
@@ -2170,15 +2270,13 @@ def _deterministic_answer_text(
             baseline = _five_year_same_time_baseline(df)
             if baseline is not None:
                 avg_5y, min_5y, max_5y = baseline
-                latest_num = float(latest_value)
-                diff = latest_num - avg_5y
-                pct = (diff / avg_5y * 100.0) if avg_5y != 0 else None
-                pct_text = f" ({pct:+.1f}%)" if pct is not None else ""
-                return (
-                    f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}, "
-                    f"vs a same-time 5-year average of {_format_number(avg_5y)}{unit_suffix} "
-                    f"({_format_number(diff)}{unit_suffix}{pct_text}). "
-                    f"5-year range: {_format_number(min_5y)} to {_format_number(max_5y)}{unit_suffix}."
+                return _format_interpretive_baseline_answer(
+                    latest_date_str=str(latest_date),
+                    latest_num=float(latest_value),
+                    prior_num=_safe_float(prior_value),
+                    avg_5y=avg_5y,
+                    min_5y=min_5y,
+                    max_5y=max_5y,
                 )
             if _asks_explicit_five_year_comparison():
                 return (
@@ -2196,14 +2294,13 @@ def _deterministic_answer_text(
             baseline = _five_year_same_time_baseline(df)
             if baseline is not None:
                 avg_5y, min_5y, max_5y = baseline
-                latest_num = float(latest_value)
-                diff = latest_num - avg_5y
-                pct = (diff / avg_5y * 100.0) if avg_5y != 0 else None
-                pct_text = f" ({pct:+.1f}%)" if pct is not None else ""
-                return (
-                    f"{base} Versus the same-time 5-year average of {_format_number(avg_5y)}{unit_suffix}, "
-                    f"this is {_format_number(diff)}{unit_suffix}{pct_text}. "
-                    f"5-year range: {_format_number(min_5y)} to {_format_number(max_5y)}{unit_suffix}."
+                return _format_interpretive_baseline_answer(
+                    latest_date_str=str(latest_date),
+                    latest_num=float(latest_value),
+                    prior_num=_safe_float(prior_value),
+                    avg_5y=avg_5y,
+                    min_5y=min_5y,
+                    max_5y=max_5y,
                 )
             if _asks_explicit_five_year_comparison():
                 return f"{base} Not enough same-time history was returned to compute a reliable five-year baseline."
@@ -2745,18 +2842,22 @@ def build_answer_with_openai(
         df = df.sort_values("date").reset_index(drop=True)
     chart_df = df
     chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
-    if metric == "ng_production_lower48" and _is_same_time_five_year_comparison_query(query):
-        production_chart_df = _series_with_five_year_average_line(df) if df is not None else pd.DataFrame()
-        if not production_chart_df.empty:
-            chart_df = production_chart_df
+    if _is_same_time_five_year_comparison_query(query):
+        baseline_mode = "median" if any(t in (query or "").lower() for t in ("median", "medium")) else "average"
+        comparison_chart_df = _series_with_five_year_average_line(
+            df, baseline_mode=baseline_mode
+        ) if df is not None else pd.DataFrame()
+        if not comparison_chart_df.empty:
+            chart_df = comparison_chart_df
+            baseline_label = "Median" if baseline_mode == "median" else "Average"
             chart_spec = ChartSpec(
                 chart_type="line",
-                title="U.S. Marketed Natural Gas Production vs Same-Time 5-Year Average",
+                title="Period Comparison with Same-Time 5-Year Baseline",
                 x="date",
-                y=["value", "five_year_average"],
+                y=["value", "five_year_baseline"],
                 x_label="Date",
-                y_label="MMcf",
-                notes="Horizontal line represents the same-time 5-year average benchmark.",
+                y_label=METRIC_UNITS.get(metric, "Value"),
+                notes=f"Horizontal line represents the same-time 5-year {baseline_label.lower()} benchmark.",
             )
     payload = AnswerPayload(
         query=query,

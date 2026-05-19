@@ -40,6 +40,14 @@ NATURAL_GAS_CONTEXT_TERMS = {
     "hdd",
     "cdd",
     "degree day",
+    "power demand",
+    "electric demand",
+    "electricity demand",
+    "power burn",
+    "gas burn",
+    "gas usage",
+    "gas use",
+    "seasonal demand",
 }
 
 OUT_OF_SCOPE_ENERGY_TERMS = {
@@ -85,6 +93,12 @@ def is_natural_gas_question(question: str, previous_context: str = "") -> bool:
         and ("this week" in normalized or "weekly" in normalized)
     )
     if weekly_energy_atlas_summary:
+        return True
+    power_to_gas_context = (
+        any(term in normalized for term in ("power demand", "electric demand", "electricity demand", "power burn"))
+        and any(term in normalized for term in ("5 year", "5-year", "five year", "five-year", "seasonal", "historical"))
+    )
+    if power_to_gas_context:
         return True
     if any(term in normalized for term in NATURAL_GAS_CONTEXT_TERMS):
         return True

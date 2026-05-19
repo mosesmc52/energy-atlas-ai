@@ -12,6 +12,11 @@ class GuardrailTests(unittest.TestCase):
                 "Are inventories currently tight, loose, or neutral versus the five-year range?"
             )
         )
+        self.assertTrue(
+            is_natural_gas_question(
+                "How is power demand this week compared to 5 year historical seasonal demand?"
+            )
+        )
 
     def test_guardrail_blocks_non_gas_energy_questions(self) -> None:
         self.assertFalse(is_natural_gas_question("What is the outlook for crude oil?"))

@@ -335,6 +335,24 @@ class TestRouter(unittest.TestCase):
         result = route_query("gas power burn")
         self.assertEqual(result.primary_metric, "ng_electricity")
 
+    def test_power_demand_translating_to_gas_usage_vs_5y_routes_to_ng_electricity(self) -> None:
+        result = route_query(
+            "How is power demand translating into natural gas usage this week compared to 5 year average?"
+        )
+        self.assertEqual(result.primary_metric, "ng_electricity")
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 6 * 365 - 2)
+
+    def test_power_demand_historical_seasonal_routes_to_ng_electricity(self) -> None:
+        result = route_query(
+            "How is power demand this week compared to 5 year historical seasonal demand?"
+        )
+        self.assertEqual(result.primary_metric, "ng_electricity")
+        start = pd.Timestamp(result.start)
+        end = pd.Timestamp(result.end)
+        self.assertGreaterEqual((end - start).days, 6 * 365 - 2)
+
     def test_compare_exports_vs_imports_routes_compare(self) -> None:
         result = route_query("exports vs imports")
         self.assertEqual(result.intent, "compare")

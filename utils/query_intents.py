@@ -43,10 +43,45 @@ def is_current_like_without_explicit_window(text: str) -> bool:
 
 def is_power_burn_seasonal_question(text: str) -> bool:
     q = (text or "").lower()
-    return (
-        "power burn" in q
-        and "natural gas" in q
-        and any(term in q for term in ("seasonal norm", "seasonal norms", "seasonal"))
+    has_power_context = any(
+        phrase in q
+        for phrase in (
+            "power burn",
+            "power demand",
+            "electric demand",
+            "electricity demand",
+            "power load",
+        )
+    )
+    has_gas_usage_context = any(
+        phrase in q
+        for phrase in (
+            "natural gas",
+            "gas usage",
+            "gas use",
+            "gas consumption",
+            "gas burn",
+        )
+    )
+    has_baseline_context = any(
+        phrase in q
+        for phrase in (
+            "seasonal norm",
+            "seasonal norms",
+            "seasonal average",
+            "seasonal demand",
+            "historical seasonal",
+            "5-year average",
+            "5 year average",
+            "five-year average",
+            "five year average",
+            "compared to",
+            "versus",
+            "vs",
+        )
+    )
+    return has_power_context and has_baseline_context and (
+        has_gas_usage_context or ("seasonal demand" in q or "historical seasonal" in q)
     )
 
 

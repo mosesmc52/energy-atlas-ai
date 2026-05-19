@@ -113,6 +113,71 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertEqual(metrics[2]["value"], 2.1)
         self.assertEqual(metrics[3]["value"], 2.8)
 
+    def test_compute_timeseries_summary_metrics_includes_five_year_avg_when_available(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2021-01-01",
+                        "2021-02-01",
+                        "2021-03-01",
+                        "2021-04-01",
+                        "2022-01-01",
+                        "2022-02-01",
+                        "2022-03-01",
+                        "2022-04-01",
+                        "2023-01-01",
+                        "2023-02-01",
+                        "2023-03-01",
+                        "2023-04-01",
+                        "2024-01-01",
+                        "2024-02-01",
+                        "2024-03-01",
+                        "2024-04-01",
+                        "2025-01-01",
+                        "2025-02-01",
+                        "2025-03-01",
+                        "2025-04-01",
+                        "2026-01-01",
+                        "2026-02-01",
+                        "2026-03-01",
+                        "2026-04-01",
+                    ]
+                ),
+                "value": [
+                    10.0,
+                    11.0,
+                    12.0,
+                    13.0,
+                    20.0,
+                    21.0,
+                    22.0,
+                    23.0,
+                    30.0,
+                    31.0,
+                    32.0,
+                    33.0,
+                    40.0,
+                    41.0,
+                    42.0,
+                    43.0,
+                    50.0,
+                    51.0,
+                    52.0,
+                    53.0,
+                    60.0,
+                    61.0,
+                    62.0,
+                    63.0,
+                ],
+            }
+        )
+
+        metrics = compute_timeseries_summary_metrics(df, unit="MMcf")
+        labels = [m.get("label") for m in metrics]
+
+        self.assertIn("5Y Avg", labels)
+
     def test_storage_change_chart_gets_dashboard_styling(self) -> None:
         df = pd.DataFrame(
             {

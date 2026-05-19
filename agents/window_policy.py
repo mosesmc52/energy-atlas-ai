@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Optional
+import re
 
 from agents.metric_capabilities import MetricCapability
 
@@ -39,11 +40,23 @@ def resolve_metric_lookback_years(
     current_like_only: bool,
     deps: WindowPolicyDeps,
 ) -> Optional[int]:
+    capability = deps.get_metric_capability(metric)
+    default_lookback = capability.default_lookback_years
+    normalized_q = (q or "").lower().replace("–", "-").replace("—", "-")
+    asks_five_year_context = (
+        bool(re.search(r"(?:five|5)\s*-?\s*year", normalized_q))
+        and any(
+            token in normalized_q
+            for token in ("average", "range", "norm", "normal", "seasonal", "historical", "history")
+        )
+    )
+    if asks_five_year_context:
+        return max(default_lookback or 0, 6)
+
     if has_explicit_dates and not current_like_only:
         return None
 
-    capability = deps.get_metric_capability(metric)
     normal_years = resolved_normal_years_for_query(metric=metric, q=q, deps=deps)
     if normal_years is not None:
         return normal_years
-    return capability.default_lookback_years
+    return default_lookback
