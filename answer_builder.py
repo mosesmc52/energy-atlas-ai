@@ -20,6 +20,9 @@ from answers.features import (
 from answers.features import should_compute_ng_electricity_seasonal_norm
 from answers.response_formatters.natural_gas import (
     NaturalGasMetricSnapshot,
+    format_directional_change,
+    format_date_month_d_year,
+    format_period_comparison,
     format_natural_gas_commentary,
 )
 from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
@@ -339,11 +342,13 @@ def _is_text_metric(metric: str, df: pd.DataFrame) -> bool:
 def _format_delta(delta: Optional[float], unit: Optional[str]) -> Optional[str]:
     if delta is None:
         return None
-    direction = "up" if delta > 0 else "down" if delta < 0 else "unchanged"
-    if direction == "unchanged":
-        return "unchanged from the previous observation"
+    if delta == 0:
+        return "remained relatively stable versus the prior reporting period"
     unit_suffix = f" {unit}" if unit else ""
-    return f"{direction} {_format_number(abs(delta))}{unit_suffix} from the previous observation"
+    direction, phrase = format_directional_change("consumption", delta, None)
+    if direction == "up":
+        return f"{phrase} by {_format_number(abs(delta))}{unit_suffix} {format_period_comparison()}"
+    return f"{phrase} by {_format_number(abs(delta))}{unit_suffix} {format_period_comparison()}"
 
 
 def _titleize_metric(metric: str) -> str:
@@ -2280,16 +2285,13 @@ def _deterministic_answer_text(
                 )
             if _asks_explicit_five_year_comparison():
                 return (
-                    f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}. "
+                    f"As of {format_date_month_d_year(str(latest_date))}, the reading came in at {latest_value_text}{unit_suffix}. "
                     "Not enough same-time history was returned to compute a reliable five-year baseline."
                 )
-        return f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}."
+        return f"As of {format_date_month_d_year(str(latest_date))}, the reading came in at {latest_value_text}{unit_suffix}."
 
     if mode == "observed":
-        base = (
-            f"As of {latest_date}, the latest value is {latest_value_text}{unit_suffix}, "
-            f"{delta_text}."
-        )
+        base = f"As of {format_date_month_d_year(str(latest_date))}, the reading came in at {latest_value_text}{unit_suffix} and {delta_text}."
         if df is not None and (_should_auto_add_five_year_context() or _asks_explicit_five_year_comparison()):
             baseline = _five_year_same_time_baseline(df)
             if baseline is not None:
@@ -2307,7 +2309,7 @@ def _deterministic_answer_text(
         return base
 
     return (
-        f"The latest observed value is {latest_value_text}{unit_suffix} on {latest_date}, "
+        f"The latest observed reading came in at {latest_value_text}{unit_suffix} on {format_date_month_d_year(str(latest_date))}, "
         f"{delta_text}."
     )
 

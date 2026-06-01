@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import math
+import pandas as pd
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,66 @@ class NaturalGasMetricSnapshot:
     yoy_difference: float | None = None
     range_5y_min: float | None = None
     range_5y_max: float | None = None
+
+
+def format_period_comparison(period_type: str = "prior_reporting_period") -> str:
+    if period_type == "prior_reporting_period":
+        return "from the prior reporting period"
+    return "compared with the prior reporting period"
+
+
+def format_date_month_d_year(value: str) -> str:
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return value
+    return f"{ts.strftime('%B')} {ts.day}, {ts.year}"
+
+
+def format_trend_phrase(category: str, direction: str, magnitude: str) -> str:
+    up_map = {
+        "price": {"small": "edged higher", "moderate": "rose", "large": "surged"},
+        "production": {"small": "edged higher", "moderate": "increased", "large": "jumped"},
+        "storage": {"small": "edged higher", "moderate": "increased", "large": "jumped"},
+        "imports": {"small": "edged higher", "moderate": "increased", "large": "jumped"},
+        "exports": {"small": "edged higher", "moderate": "increased", "large": "jumped"},
+        "consumption": {"small": "remained elevated", "moderate": "increased", "large": "jumped"},
+        "weather": {"small": "edged higher", "moderate": "strengthened", "large": "surged"},
+    }
+    down_map = {
+        "price": {"small": "edged lower", "moderate": "fell", "large": "dropped sharply"},
+        "production": {"small": "edged lower", "moderate": "declined", "large": "fell significantly"},
+        "storage": {"small": "edged lower", "moderate": "declined", "large": "fell significantly"},
+        "imports": {"small": "edged lower", "moderate": "declined", "large": "fell significantly"},
+        "exports": {"small": "edged lower", "moderate": "declined", "large": "fell significantly"},
+        "consumption": {"small": "eased", "moderate": "declined", "large": "dropped sharply"},
+        "weather": {"small": "softened", "moderate": "eased", "large": "dropped sharply"},
+    }
+    if direction == "flat":
+        return "remained relatively stable"
+    table = up_map if direction == "up" else down_map
+    return table.get(category, {"small": "moved higher", "moderate": "increased", "large": "surged"} if direction == "up" else {"small": "moved lower", "moderate": "declined", "large": "dropped sharply"}).get(magnitude, "moved")
+
+
+def format_directional_change(
+    category: str,
+    delta: float | None,
+    pct_change: float | None,
+) -> tuple[str, str]:
+    if delta is None:
+        return "flat", "remained relatively stable"
+    if math.isclose(delta, 0.0, abs_tol=1e-12):
+        return "flat", "remained relatively stable"
+    direction = "up" if delta > 0 else "down"
+    abs_pct = abs(pct_change) if pct_change is not None else None
+    if abs_pct is None:
+        magnitude = "moderate"
+    elif abs_pct < 1:
+        magnitude = "small"
+    elif abs_pct <= 5:
+        magnitude = "moderate"
+    else:
+        magnitude = "large"
+    return direction, format_trend_phrase(category, direction, magnitude)
 
 
 def _classify_signal(category: str, subtype: str | None, percent_difference: float | None) -> str:
@@ -128,16 +190,18 @@ def format_natural_gas_commentary(snapshot: NaturalGasMetricSnapshot) -> dict[st
 
     p1 = f"{snapshot.metric_name} is {norm}."
 
+    display_date = format_date_month_d_year(snapshot.date)
+
     if snapshot.baseline_5y is not None and snapshot.percent_difference is not None and snapshot.difference is not None:
         direction = "above" if snapshot.difference >= 0 else "below"
         p2 = (
-            f"As of {snapshot.date}, the reading came in at {snapshot.current_value:,.0f} {snapshot.unit}, "
+            f"As of {display_date}, the reading came in at {snapshot.current_value:,.0f} {snapshot.unit}, "
             f"about {abs(snapshot.percent_difference):.1f}% {direction} the {baseline_label} for this time of year "
             f"({abs(snapshot.difference):,.0f} {snapshot.unit} {direction})."
         )
     else:
         p2 = (
-            f"As of {snapshot.date}, the reading came in at {snapshot.current_value:,.0f} {snapshot.unit}. "
+            f"As of {display_date}, the reading came in at {snapshot.current_value:,.0f} {snapshot.unit}. "
             "A seasonal baseline was unavailable, so this is compared to recent observations instead."
         )
 
@@ -145,10 +209,14 @@ def format_natural_gas_commentary(snapshot: NaturalGasMetricSnapshot) -> dict[st
     if range_text:
         p3_parts.append(range_text.capitalize() + ".")
     if snapshot.prior_difference is not None:
-        if snapshot.prior_difference > 0:
-            p3_parts.append(f"From the prior observation, it increased by {snapshot.prior_difference:,.0f} {snapshot.unit}.")
-        elif snapshot.prior_difference < 0:
-            p3_parts.append(f"From the prior observation, it declined by {abs(snapshot.prior_difference):,.0f} {snapshot.unit}.")
+        direction, phrase = format_directional_change(
+            snapshot.category, snapshot.prior_difference, None
+        )
+        if direction != "flat":
+            sign_word = "up" if direction == "up" else "down"
+            p3_parts.append(
+                f"Compared with the prior reporting period, it {phrase} ({sign_word} {abs(snapshot.prior_difference):,.0f} {snapshot.unit})."
+            )
     p3 = " ".join(p3_parts).strip()
 
     p4 = _market_meaning(snapshot.category, snapshot.subtype, signal)

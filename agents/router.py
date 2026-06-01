@@ -2,114 +2,25 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional
 
-import pandas as pd
-
-from agents.filter_resolvers import FilterResolverDeps
-from agents.filter_resolvers import build_filters as build_metric_filters
 from agents.llm_query_parser import LLMQueryParserError, llm_parse_query
-from agents.metric_capabilities import get_metric_capability
-from agents.query_classifier import (
-    QUESTION_TYPE_AVERAGE_N_DAYS,
-    QUESTION_TYPE_FIVE_YEAR_RANGE,
-    QUESTION_TYPE_LATEST,
-    QUESTION_TYPE_MOM,
-    QUESTION_TYPE_REGIONAL_RANKING,
-    QUESTION_TYPE_YOY,
-    classify_query,
+from agents.llm_router import (
+    DATASET_FILTERS,
+    ISO_FILTERS,
+    METRICS,
+    REGION_FILTERS,
+    RESOURCE_CATEGORY_FILTERS,
 )
 from agents.source_planner import build_source_plan
-from agents.router_data import (
-    BONUS_TERMS,
-    COMPARE_PATTERNS,
-    DERIVED_PATTERNS,
-    EXPLAIN_PATTERNS,
-    FORECAST_PATTERNS,
-    NORMALIZE_PATTERNS,
-    RANK_PATTERNS,
-    ROUTE_MAP,
-)
-from agents.router_keywords import (
-    ALLOWED_CONSUMPTION_STATES,
-    ALLOWED_EXPORT_REGIONS,
-    ALLOWED_IMPORT_REGIONS,
-    ALLOWED_ISOS,
-    ALLOWED_PIPELINE_DATASETS,
-    ALLOWED_PRODUCTION_STATES,
-    ALLOWED_RESERVES_RESOURCE_CATEGORIES,
-    ALLOWED_RESERVES_STATES,
-    ALLOWED_STORAGE_REGIONS,
-    ALLOWED_TRADE_REGIONS,
-    ALLOWED_WEATHER_NORMAL_YEARS,
-    ALLOWED_WEATHER_REGIONS,
-    CONSUMPTION_STATE_KEYWORDS,
-    EXPORT_REGION_KEYWORDS,
-    IMPORT_REGION_KEYWORDS,
-    ISO_KEYWORDS,
-    PIPELINE_DATASET_KEYWORDS,
-    PRODUCTION_STATE_KEYWORDS,
-    REGIONAL_GROUP_TERMS,
-    RESERVES_RESOURCE_CATEGORY_KEYWORDS,
-    RESERVES_STATE_KEYWORDS,
-    STORAGE_COMPARE_TERMS,
-    STORAGE_REGION_KEYWORDS,
-    TRADE_REGION_KEYWORDS,
-    WEATHER_REGION_KEYWORDS,
-)
-from agents.scoring_policy import ScoreAdjustmentDeps, apply_metric_score_adjustments
-from agents.window_policy import WindowPolicyDeps
-from agents.window_policy import (
-    resolve_metric_lookback_years as resolve_window_lookback_years,
-)
-from agents.window_policy import (
-    resolved_normal_years_for_query as resolve_window_normal_years,
-)
-from utils.dates import has_explicit_date_reference, resolve_date_range
-from utils.helpers import contains_any
-from utils.query_intents import has_seasonal_norm_phrase
-from utils.query_intents import (
-    is_current_like_without_explicit_window,
-    is_iso_gas_share_question,
-    is_power_burn_seasonal_question,
-    is_renewables_power_sector_demand_question,
-)
+from utils.dates import resolve_date_range
 
-ALLOWED_METRICS = set(ROUTE_MAP.keys())
-CONCEPT_TO_METRICS: Dict[str, List[str]] = {
-    "demand": ["lng_exports", "ng_consumption_lower48", "ng_electricity"],
-    "supply": ["ng_production_lower48"],
-    "trade_flows": ["lng_exports", "lng_imports"],
-    "storage_context": ["working_gas_storage_lower48", "working_gas_storage_change_weekly"],
-    "supply_balance": [
-        "ng_supply_balance_regime",
-        "ng_production_lower48",
-        "lng_exports",
-        "lng_imports",
-        "working_gas_storage_lower48",
-        "working_gas_storage_change_weekly",
-    ],
-    "market_tightness": [
-        "ng_supply_balance_regime",
-        "working_gas_storage_lower48",
-        "working_gas_storage_change_weekly",
-        "ng_production_lower48",
-        "lng_exports",
-    ],
-    "price_drivers": [
-        "working_gas_storage_lower48",
-        "working_gas_storage_change_weekly",
-        "weather_degree_days_forecast_vs_5y",
-        "ng_production_lower48",
-        "lng_exports",
-    ],
-}
-
-@dataclass(frozen=True)
-class RouteCandidate:
-    metric: str
-    score: float
-    matched_terms: List[str] = field(default_factory=list)
+ALLOWED_METRICS = set(METRICS)
+ALLOWED_ISOS = set(ISO_FILTERS)
+ALLOWED_REGIONS = set(REGION_FILTERS)
+ALLOWED_RESOURCE_CATEGORIES = set(RESOURCE_CATEGORY_FILTERS)
+ALLOWED_DATASETS = set(DATASET_FILTERS)
+ALLOWED_WEATHER_NORMAL_YEARS = {1, 2, 3, 5}
 
 
 @dataclass(frozen=True)
@@ -130,527 +41,14 @@ class HybridRouteResult:
     filters: Optional[Dict[str, Any]] = None
     confidence: float = 0.0
     ambiguous: bool = False
-    candidates: List[RouteCandidate] = field(default_factory=list)
-    source: Literal["rule", "llm"] = "rule"
+    candidates: List[Any] = field(default_factory=list)
+    source: Literal["rule", "llm"] = "llm"
     reason: Optional[str] = None
     normalized_query: Optional[str] = None
     include_forecast: bool = False
     forecast_horizon_days: Optional[int] = None
 
 
-# ----------------------------
-# Helpers
-# ----------------------------
-def normalize_query(user_query: str) -> str:
-    q = user_query.lower().strip()
-    for pattern, replacement in NORMALIZE_PATTERNS:
-        q = re.sub(pattern, replacement, q, flags=re.IGNORECASE)
-    q = re.sub(r"\s+", " ", q).strip()
-    return q
-
-
-def route_iso(q: str) -> str | None:
-    q = q.lower()
-    for iso, keys in ISO_KEYWORDS.items():
-        if contains_any(keys, q):
-            return iso
-    return None
-
-
-def route_storage_region(q: str) -> str | None:
-    q = q.lower()
-    for region, keys in STORAGE_REGION_KEYWORDS.items():
-        if contains_any(keys, q):
-            return region
-    return None
-
-
-def route_weather_region(q: str) -> str | None:
-    q = q.lower()
-    for region, keys in WEATHER_REGION_KEYWORDS.items():
-        if contains_any(keys, q):
-            return region
-    return None
-
-
-def route_weather_normal_years(q: str) -> int | None:
-    q = q.lower()
-    direct = re.search(r"\b([12345])\s*[- ]?years?\b", q)
-    if direct:
-        return int(direct.group(1))
-    word_map = {
-        "one year": 1,
-        "two year": 2,
-        "three year": 3,
-        "four year": 4,
-        "five year": 5,
-    }
-    for phrase, value in word_map.items():
-        if phrase in q:
-            return value
-    return None
-
-
-def wants_regional_grouping(q: str) -> bool:
-    q = q.lower()
-    return contains_any(REGIONAL_GROUP_TERMS, q)
-
-
-def wants_storage_ranking_by_region(q: str) -> bool:
-    q = q.lower()
-    return any(term in q for term in ("withdrawal", "injection", "build")) and any(
-        term in q for term in ("where", "fastest", "largest", "biggest", "most")
-    )
-
-
-def wants_storage_level_and_change(q: str) -> bool:
-    q = q.lower()
-    return "storage" in q and contains_any(STORAGE_COMPARE_TERMS, q) and any(
-        term in q for term in ("together", "compare")
-    )
-
-
-def wants_seasonal_norm_comparison(q: str) -> bool:
-    return has_seasonal_norm_phrase(q)
-
-
-def is_weekly_energy_atlas_summary_query(q: str) -> bool:
-    q = q.lower().replace("’", "'")
-    direct_phrases = (
-        "week in energy atlas",
-        "energy atlas weekly summary",
-        "weekly energy atlas recap",
-        "weekly natural gas wrap-up",
-        "weekly natural gas wrap up",
-        "weekly wrap-up",
-        "weekly wrap up",
-    )
-    if any(phrase in q for phrase in direct_phrases):
-        return True
-
-    recap_cues = ("weekly summary", "weekly recap", "this week's summary")
-    has_recap = any(cue in q for cue in recap_cues)
-    if not has_recap and "energy atlas summary" in q and ("this week" in q or "weekly" in q):
-        has_recap = True
-    has_energy_atlas = "energy atlas" in q
-    if has_recap and has_energy_atlas:
-        return True
-    has_weather = "weather" in q
-    has_storage = "storage" in q
-    has_lng_or_supply = ("lng" in q) or ("supply" in q)
-    has_price = ("price" in q) or ("henry hub" in q)
-    return has_recap and has_weather and has_storage and has_lng_or_supply and has_price
-
-
-def is_global_demand_for_us_gas_query(q: str) -> bool:
-    q = q.lower()
-    if "global demand" not in q:
-        return False
-    has_us_gas = (
-        "u.s. natural gas" in q
-        or "us natural gas" in q
-        or "u.s natural gas" in q
-        or "united states natural gas" in q
-        or "american natural gas" in q
-    )
-    return has_us_gas
-
-
-def is_power_burn_direction_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_power_burn = (
-        "power burn" in lowered
-        or "gas-fired power burn" in lowered
-        or "gas fired power burn" in lowered
-    )
-    has_direction = any(term in lowered for term in ("increasing", "decreasing", "up or down", "rising", "falling"))
-    return has_power_burn and has_direction
-
-
-def storage_comparison_lookback_years(q: str) -> int | None:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    if ("five-year" in lowered or "5-year" in lowered) and (
-        "average" in lowered or "range" in lowered
-    ):
-        return 6
-    if (
-        "same week last year" in lowered
-        or "year over year" in lowered
-        or "yoy" in lowered
-    ):
-        return 2
-    return None
-
-
-def is_storage_inventory_range_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_inventory = "inventory" in lowered or "inventories" in lowered
-    has_range = "five-year range" in lowered or "5-year range" in lowered
-    has_state = any(term in lowered for term in ("tight", "loose", "neutral"))
-    return has_inventory and has_range and has_state
-
-
-def is_storage_same_week_last_year_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_storage_context = any(term in lowered for term in ("storage", "inventory", "inventories"))
-    has_yoy_phrase = (
-        "same week last year" in lowered
-        or "year over year" in lowered
-        or "yoy" in lowered
-    )
-    return has_storage_context and has_yoy_phrase
-
-
-def is_storage_five_year_average_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_storage_context = any(term in lowered for term in ("storage", "inventory", "inventories"))
-    has_five_year_avg = ("five-year average" in lowered) or ("5-year average" in lowered)
-    return has_storage_context and has_five_year_avg
-
-
-def is_storage_largest_weekly_change_by_region_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_storage = "storage" in lowered
-    has_weekly_change = "weekly storage change" in lowered or "storage change" in lowered
-    has_region_rank = (
-        "which region" in lowered
-        and any(term in lowered for term in ("largest", "biggest", "most"))
-    )
-    return has_storage and has_weekly_change and has_region_rank
-
-
-def is_production_contribution_by_region_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_production = "production" in lowered
-    has_region_or_state = ("region" in lowered) or ("state" in lowered)
-    has_contribution = any(term in lowered for term in ("contributed most", "contribution", "contributed"))
-    has_change = "change" in lowered
-    return has_production and has_region_or_state and has_contribution and has_change
-
-
-def is_production_five_year_comparison_query(q: str) -> bool:
-    lowered = q.lower().replace("–", "-").replace("—", "-")
-    has_production = any(term in lowered for term in ("production", "marketed natural gas"))
-    has_five_year = ("five-year" in lowered) or ("5-year" in lowered)
-    has_baseline = ("average" in lowered) or ("range" in lowered)
-    return has_production and has_five_year and has_baseline
-
-
-def route_trade_region(q: str) -> str | None:
-    q = q.lower()
-    for region, keys in TRADE_REGION_KEYWORDS.items():
-        if contains_any(keys, q):
-            return region
-    return None
-
-
-def route_import_region(q: str) -> str | None:
-    q = q.lower()
-    for region, keys in IMPORT_REGION_KEYWORDS.items():
-        if contains_any(keys, q):
-            return region
-    return None
-
-
-def route_export_region(q: str) -> str | None:
-    q = q.lower()
-    for region, keys in EXPORT_REGION_KEYWORDS.items():
-        if contains_any(keys, q):
-            return region
-    return None
-
-
-def route_production_state(q: str) -> str | None:
-    q = q.lower()
-    for state, keys in PRODUCTION_STATE_KEYWORDS.items():
-        long_keys = [key for key in keys if len(key) > 2]
-        if long_keys and contains_any(long_keys, q):
-            return state
-
-    safe_abbrev_states = ALLOWED_PRODUCTION_STATES - {"ar", "in", "or", "united_states_total"}
-    tokens = set(re.findall(r"\b[a-z]{2}\b", q))
-    for state in safe_abbrev_states:
-        if state in tokens:
-            return state
-
-    return None
-
-
-def route_consumption_state(q: str) -> str | None:
-    q = q.lower()
-    for state, keys in CONSUMPTION_STATE_KEYWORDS.items():
-        long_keys = [key for key in keys if len(key) > 2]
-        if long_keys and contains_any(long_keys, q):
-            return state
-
-    safe_abbrev_states = ALLOWED_CONSUMPTION_STATES - {
-        "ar",
-        "de",
-        "hi",
-        "id",
-        "in",
-        "me",
-        "or",
-        "united_states_total",
-    }
-    tokens = set(re.findall(r"\b[a-z]{2}\b", q))
-    for state in safe_abbrev_states:
-        if state in tokens:
-            return state
-
-    return None
-
-
-def route_reserves_state(q: str) -> str | None:
-    q = q.lower()
-    for state, keys in RESERVES_STATE_KEYWORDS.items():
-        long_keys = [key for key in keys if len(key) > 2]
-        if long_keys and contains_any(long_keys, q):
-            return state
-
-    safe_abbrev_states = ALLOWED_RESERVES_STATES - {"al", "ar", "oh", "ok", "all", "us"}
-    tokens = set(re.findall(r"\b[a-z]{2}\b", q))
-    for state in safe_abbrev_states:
-        if state in tokens:
-            return state
-
-    return None
-
-
-def route_reserves_resource_category(q: str) -> str | None:
-    q = q.lower()
-    for category, keys in RESERVES_RESOURCE_CATEGORY_KEYWORDS.items():
-        if contains_any(keys, q):
-            return category
-    return None
-
-
-def route_pipeline_dataset(q: str) -> str | None:
-    q = q.lower()
-    for dataset, keys in PIPELINE_DATASET_KEYWORDS.items():
-        if contains_any(keys, q):
-            return dataset
-    return None
-
-
-def detect_intent(q: str) -> str:
-    if any(re.search(p, q) for p in COMPARE_PATTERNS):
-        return "compare"
-    if any(re.search(p, q) for p in RANK_PATTERNS):
-        return "ranking"
-    if any(re.search(p, q) for p in DERIVED_PATTERNS):
-        return "derived"
-    if any(re.search(p, q) for p in EXPLAIN_PATTERNS):
-        return "explain"
-    return "single_metric"
-
-
-def is_analytical_query(q: str) -> bool:
-    return any(
-        phrase in q
-        for phrase in (
-            "how strong",
-            "what is driving",
-            "why",
-            "regime",
-            "balance",
-            "tight",
-            "loose",
-            "outlook",
-            "pressure",
-            "supportive",
-            "bearish",
-            "bullish",
-            "oversupplied",
-            "undersupplied",
-        )
-    )
-
-
-def detect_concepts(q: str) -> set[str]:
-    concepts: set[str] = set()
-    if any(term in q for term in ("demand", "consumption", "usage", "power burn")):
-        concepts.add("demand")
-    if any(term in q for term in ("supply", "production", "output")):
-        concepts.add("supply")
-    if any(term in q for term in ("import", "export", "trade flow", "trade flows", "lng flow")):
-        concepts.add("trade_flows")
-    if any(term in q for term in ("storage", "injection", "withdrawal", "inventory")):
-        concepts.add("storage_context")
-    if any(term in q for term in ("balance", "oversupplied", "undersupplied", "supply-demand")):
-        concepts.add("supply_balance")
-    if any(term in q for term in ("tight", "tightness", "loose", "loosening", "constrained")):
-        concepts.add("market_tightness")
-    if any(term in q for term in ("driving", "drivers", "price", "pressure", "supportive", "bearish", "bullish")):
-        concepts.add("price_drivers")
-    return concepts
-
-
-def _primary_metric_from_concepts(
-    *,
-    concepts: set[str],
-    deduped_metrics: List[str],
-) -> str:
-    if "supply_balance" in concepts or "market_tightness" in concepts:
-        if "ng_supply_balance_regime" in deduped_metrics:
-            return "ng_supply_balance_regime"
-    if "trade_flows" in concepts and "lng_exports" in deduped_metrics:
-        return "lng_exports"
-    return deduped_metrics[0]
-
-
-def detect_forecast_request(q: str) -> bool:
-    return any(re.search(pattern, q) for pattern in FORECAST_PATTERNS)
-
-
-def detect_forecast_horizon_days(q: str) -> Optional[int]:
-    if not detect_forecast_request(q):
-        return None
-    if re.search(r"\b(14|fourteen)\s*day", q) or re.search(r"\b(two|2)\s+weeks?\b", q):
-        return 14
-    return 7
-
-
-def score_metric(q: str, metric: str, keywords: List[str]) -> RouteCandidate:
-    score = 0.0
-    matched_terms: List[str] = []
-
-    for kw in keywords:
-        if kw in q:
-            score += 3.0 if len(kw.split()) > 1 else 1.5
-            matched_terms.append(kw)
-
-    for bonus in BONUS_TERMS.get(metric, []):
-        if bonus in q and bonus not in matched_terms:
-            score += 1.0
-            matched_terms.append(bonus)
-
-    score = apply_metric_score_adjustments(
-        metric=metric,
-        q=q,
-        score=score,
-        deps=SCORE_ADJUSTMENT_DEPS,
-    )
-
-    return RouteCandidate(
-        metric=metric, score=max(score, 0.0), matched_terms=matched_terms
-    )
-
-
-def score_routes(q: str) -> List[RouteCandidate]:
-    candidates = [
-        score_metric(q, metric, keywords) for metric, keywords in ROUTE_MAP.items()
-    ]
-    candidates = [c for c in candidates if c.score > 0]
-    candidates.sort(key=lambda x: x.score, reverse=True)
-    return candidates
-
-
-def resolve_candidate_filters(
-    q: str,
-    candidates: List[RouteCandidate],
-) -> Dict[str, Optional[Dict[str, Any]]]:
-    resolved: Dict[str, Optional[Dict[str, Any]]] = {}
-    for candidate in candidates:
-        resolved[candidate.metric] = build_filters(candidate.metric, q, 1.0)
-    return resolved
-
-
-def boost_candidates_from_filters(
-    candidates: List[RouteCandidate],
-    candidate_filters: Dict[str, Optional[Dict[str, Any]]],
-) -> List[RouteCandidate]:
-    boosted: List[RouteCandidate] = []
-    for candidate in candidates:
-        filters = candidate_filters.get(candidate.metric)
-        filter_bonus = 0.2 if filters else 0.0
-        boosted.append(
-            RouteCandidate(
-                metric=candidate.metric,
-                score=candidate.score + filter_bonus,
-                matched_terms=list(candidate.matched_terms),
-            )
-        )
-    boosted.sort(key=lambda x: x.score, reverse=True)
-    return boosted
-
-
-WINDOW_POLICY_DEPS = WindowPolicyDeps(
-    get_metric_capability=get_metric_capability,
-    wants_seasonal_norm_comparison=wants_seasonal_norm_comparison,
-    route_weather_normal_years=route_weather_normal_years,
-    allowed_weather_normal_years=ALLOWED_WEATHER_NORMAL_YEARS,
-)
-
-
-FILTER_RESOLVER_DEPS = FilterResolverDeps(
-    route_iso=route_iso,
-    route_storage_region=route_storage_region,
-    wants_storage_level_and_change=wants_storage_level_and_change,
-    wants_regional_grouping=wants_regional_grouping,
-    wants_storage_ranking_by_region=wants_storage_ranking_by_region,
-    route_export_region=route_export_region,
-    route_import_region=route_import_region,
-    route_consumption_state=route_consumption_state,
-    route_production_state=route_production_state,
-    resolve_ng_electricity_normal_years=lambda q: resolve_window_normal_years(
-        metric="ng_electricity",
-        q=q,
-        deps=WINDOW_POLICY_DEPS,
-    ),
-    route_reserves_state=route_reserves_state,
-    route_reserves_resource_category=route_reserves_resource_category,
-    route_pipeline_dataset=route_pipeline_dataset,
-    route_weather_region=route_weather_region,
-    route_weather_normal_years=route_weather_normal_years,
-    allowed_weather_normal_years=ALLOWED_WEATHER_NORMAL_YEARS,
-)
-
-SCORE_ADJUSTMENT_DEPS = ScoreAdjustmentDeps(
-    route_consumption_state=route_consumption_state,
-    route_production_state=route_production_state,
-    route_reserves_state=route_reserves_state,
-    route_reserves_resource_category=route_reserves_resource_category,
-    route_import_region=route_import_region,
-    route_export_region=route_export_region,
-)
-
-
-def build_filters(metric: str, q: str, confidence: float) -> Optional[Dict[str, Any]]:
-    return build_metric_filters(
-        metric=metric,
-        q=q,
-        confidence=confidence,
-        deps=FILTER_RESOLVER_DEPS,
-    )
-
-
-def candidate_confidence(candidates: List[RouteCandidate]) -> float:
-    if not candidates:
-        return 0.0
-    top = candidates[0].score
-    second = candidates[1].score if len(candidates) > 1 else 0.0
-
-    # simple heuristic: strong top score + clear gap improves confidence
-    conf = min(0.98, 0.15 * top + 0.08 * max(top - second, 0))
-    return round(conf, 3)
-
-
-def is_ambiguous(candidates: List[RouteCandidate]) -> bool:
-    if not candidates:
-        return True
-    if len(candidates) == 1:
-        return candidates[0].score < 1.5
-
-    top = candidates[0].score
-    second = candidates[1].score
-    ratio = second / max(top, 1e-6)
-    return (top < 3.0) or (ratio > 0.75)
-
-
-# ----------------------------
-# LLM hook contract
-# ----------------------------
 @dataclass(frozen=True)
 class LLMRouteOutput:
     intent: str
@@ -662,8 +60,33 @@ class LLMRouteOutput:
     ambiguous: bool
 
 
-def llm_route_structured(user_query: str, normalized_query: str) -> LLMRouteOutput:
+def normalize_query(user_query: str) -> str:
+    q = user_query.lower().strip()
+    q = q.replace("’", "'").replace("–", "-").replace("—", "-")
+    q = re.sub(r"\s+", " ", q).strip()
+    return q
 
+
+def detect_forecast_request(q: str) -> bool:
+    return bool(
+        re.search(r"\b(forecast|predict|projection|outlook)\b", q)
+        or re.search(r"\bnext\s+\d+\s+days?\b", q)
+        or re.search(r"\bnext\s+(one|two|three|four)\s+weeks?\b", q)
+    )
+
+
+def detect_forecast_horizon_days(q: str) -> Optional[int]:
+    if not detect_forecast_request(q):
+        return None
+    match = re.search(r"\bnext\s+(\d+)\s+days?\b", q)
+    if match:
+        return int(match.group(1))
+    if re.search(r"\b(14|fourteen)\s*day", q) or re.search(r"\b(two|2)\s+weeks?\b", q):
+        return 14
+    return 7
+
+
+def llm_route_structured(user_query: str, normalized_query: str) -> LLMRouteOutput:
     try:
         parsed = llm_parse_query(
             user_query=user_query,
@@ -696,6 +119,43 @@ def llm_route_structured(user_query: str, normalized_query: str) -> LLMRouteOutp
         )
 
 
+def _sanitize_filters(
+    *,
+    primary_metric: Optional[str],
+    filters: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    out = dict(filters or {})
+
+    if "iso" in out and out["iso"] not in ALLOWED_ISOS:
+        out.pop("iso", None)
+    if "region" in out and out["region"] not in ALLOWED_REGIONS:
+        out.pop("region", None)
+    if "resource_category" in out:
+        if (
+            primary_metric != "ng_exploration_reserves_lower48"
+            or out["resource_category"] not in ALLOWED_RESOURCE_CATEGORIES
+        ):
+            out.pop("resource_category", None)
+    if "dataset" in out:
+        if primary_metric != "ng_pipeline" or out["dataset"] not in ALLOWED_DATASETS:
+            out.pop("dataset", None)
+    if "normal_years" in out:
+        try:
+            normal_years = int(out["normal_years"])
+        except (TypeError, ValueError):
+            out.pop("normal_years", None)
+        else:
+            if (
+                primary_metric == "weather_degree_days_forecast_vs_5y"
+                and normal_years in ALLOWED_WEATHER_NORMAL_YEARS
+            ):
+                out["normal_years"] = normal_years
+            else:
+                out.pop("normal_years", None)
+
+    return out or None
+
+
 def validate_llm_route(
     llm: LLMRouteOutput,
     start: str,
@@ -710,80 +170,20 @@ def validate_llm_route(
     if primary_metric and primary_metric not in metrics:
         metrics = [primary_metric] + metrics
 
-    filters = dict(llm.filters or {})
-
-    if "iso" in filters and filters["iso"] not in ALLOWED_ISOS:
-        filters.pop("iso")
-    if "region" in filters:
-        region = filters["region"]
-        if primary_metric and primary_metric.startswith("iso_"):
-            filters.pop("region", None)
-        elif primary_metric in {
-            "working_gas_storage_lower48",
-            "working_gas_storage_change_weekly",
-        }:
-            if region not in ALLOWED_STORAGE_REGIONS:
-                filters.pop("region", None)
-        elif primary_metric == "lng_exports":
-            if region not in ALLOWED_EXPORT_REGIONS:
-                filters.pop("region", None)
-        elif primary_metric == "lng_imports":
-            if region not in ALLOWED_IMPORT_REGIONS:
-                filters.pop("region", None)
-        elif primary_metric == "ng_consumption_lower48":
-            if region not in ALLOWED_CONSUMPTION_STATES:
-                filters.pop("region", None)
-        elif primary_metric == "ng_production_lower48":
-            if region not in ALLOWED_PRODUCTION_STATES:
-                filters.pop("region", None)
-        elif primary_metric == "ng_exploration_reserves_lower48":
-            if region not in ALLOWED_RESERVES_STATES:
-                filters.pop("region", None)
-        elif primary_metric == "weather_degree_days_forecast_vs_5y":
-            if region not in ALLOWED_WEATHER_REGIONS:
-                filters.pop("region", None)
-        else:
-            filters.pop("region", None)
-    if "resource_category" in filters:
-        resource_category = filters["resource_category"]
-        if primary_metric != "ng_exploration_reserves_lower48":
-            filters.pop("resource_category", None)
-        elif resource_category not in ALLOWED_RESERVES_RESOURCE_CATEGORIES:
-            filters.pop("resource_category", None)
-    if "dataset" in filters:
-        dataset = filters["dataset"]
-        if primary_metric != "ng_pipeline":
-            filters.pop("dataset", None)
-        elif dataset not in ALLOWED_PIPELINE_DATASETS:
-            filters.pop("dataset", None)
-    if "normal_years" in filters:
-        normal_years = filters["normal_years"]
-        if primary_metric != "weather_degree_days_forecast_vs_5y":
-            filters.pop("normal_years", None)
-        else:
-            try:
-                parsed_years = int(normal_years)
-            except (TypeError, ValueError):
-                filters.pop("normal_years", None)
-            else:
-                if parsed_years in ALLOWED_WEATHER_NORMAL_YEARS:
-                    filters["normal_years"] = parsed_years
-                else:
-                    filters.pop("normal_years", None)
-
-    if llm.intent not in {
-        "single_metric",
-        "compare",
-        "ranking",
-        "derived",
-        "explain",
-        "ambiguous",
-        "unsupported",
-    }:
-        intent = "unsupported"
-    else:
-        intent = llm.intent
-
+    intent = (
+        llm.intent
+        if llm.intent
+        in {
+            "single_metric",
+            "compare",
+            "ranking",
+            "derived",
+            "explain",
+            "ambiguous",
+            "unsupported",
+        }
+        else "unsupported"
+    )
     if not metrics and primary_metric is None:
         intent = "unsupported"
 
@@ -793,10 +193,9 @@ def validate_llm_route(
         metrics=metrics,
         start=start,
         end=end,
-        filters=filters or None,
+        filters=_sanitize_filters(primary_metric=primary_metric, filters=llm.filters),
         confidence=max(0.0, min(1.0, float(llm.confidence))),
         ambiguous=bool(llm.ambiguous),
-        candidates=[],
         source="llm",
         reason=llm.reason,
         normalized_query=normalized_query,
@@ -805,665 +204,13 @@ def validate_llm_route(
     )
 
 
-# ----------------------------
-# Main hybrid router
-# ----------------------------
 def route_query(user_query: str) -> HybridRouteResult:
-
     normalized = normalize_query(user_query)
-    classified = classify_query(normalized)
     start, end = resolve_date_range(user_query)
-    has_explicit_dates = has_explicit_date_reference(user_query)
-    intent = detect_intent(normalized)
-    analytical_query = is_analytical_query(normalized)
-    concepts = detect_concepts(normalized)
-    has_balance_language = bool(concepts.intersection({"supply_balance", "market_tightness", "price_drivers"}))
-    include_forecast = detect_forecast_request(normalized)
-    forecast_horizon_days = detect_forecast_horizon_days(normalized)
-    current_like_only = is_current_like_without_explicit_window(normalized)
-
-    candidates = score_routes(normalized)
-    candidate_filters = resolve_candidate_filters(normalized, candidates)
-    candidates = boost_candidates_from_filters(candidates, candidate_filters)
-    confidence = candidate_confidence(candidates)
-    ambiguous = is_ambiguous(candidates)
-
-    has_import = bool(re.search(r"\bimports?\b", normalized))
-    has_export = bool(re.search(r"\bexports?\b", normalized))
-    has_reserves = bool(re.search(r"\breserves?\b", normalized))
-    has_production = bool(re.search(r"\b(production|output)\b", normalized))
-
-    if has_import and has_export:
-        return HybridRouteResult(
-            intent="compare",
-            primary_metric="lng_exports",
-            metrics=["lng_exports", "lng_imports"],
-            start=start,
-            end=end,
-            filters=None,
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic compare route for imports versus exports query",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    production_weather_terms = ("weather", "degree day", "hdd", "cdd", "forecast")
-    production_companion_terms = ("storage", "export", "imports", "henry hub", "price")
-    should_force_production = (
-        has_production
-        and not is_production_five_year_comparison_query(normalized)
-        and not any(term in normalized for term in production_weather_terms)
-        and not any(term in normalized for term in production_companion_terms)
-    )
-    if should_force_production and intent in {"single_metric", "explain", "derived", "compare"}:
-        metric = "ng_production_lower48"
-        prod_start = start
-        lookback_years = resolve_window_lookback_years(
-            metric=metric,
-            q=normalized,
-            has_explicit_dates=has_explicit_dates,
-            current_like_only=current_like_only,
-            deps=WINDOW_POLICY_DEPS,
-        )
-        if lookback_years is not None:
-            prod_start = (
-                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
-            ).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=prod_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason=(
-                "Deterministic route for implied natural-gas production query "
-                f"(question_type={classified.question_type})"
-            ),
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if has_reserves and intent == "single_metric":
-        metric = "ng_exploration_reserves_lower48"
-        reserves_start = "2000-01-01" if not has_explicit_dates else start
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=reserves_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for implied natural-gas reserves query",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if has_import and not has_export and intent == "single_metric":
-        metric = "lng_imports"
-        imp_start = start
-        lookback_years = resolve_window_lookback_years(
-            metric=metric,
-            q=normalized,
-            has_explicit_dates=has_explicit_dates,
-            current_like_only=current_like_only,
-            deps=WINDOW_POLICY_DEPS,
-        )
-        if lookback_years is not None:
-            imp_start = (
-                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
-            ).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=imp_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for implied natural-gas imports query",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if has_export and not has_import and intent == "single_metric":
-        metric = "lng_exports"
-        exp_start = start
-        lookback_years = resolve_window_lookback_years(
-            metric=metric,
-            q=normalized,
-            has_explicit_dates=has_explicit_dates,
-            current_like_only=current_like_only,
-            deps=WINDOW_POLICY_DEPS,
-        )
-        if lookback_years is not None:
-            exp_start = (
-                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
-            ).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=exp_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for implied natural-gas exports query",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if is_global_demand_for_us_gas_query(normalized) and intent == "single_metric":
-        metric = "lng_exports"
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for global demand proxy via U.S. natural-gas exports",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if is_weekly_energy_atlas_summary_query(normalized):
-        summary_start = start
-        if not has_explicit_dates:
-            summary_start = (
-                pd.Timestamp(end) - pd.DateOffset(years=1)
-            ).date().isoformat()
-        metric = "weekly_energy_atlas_summary"
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=summary_start,
-            end=end,
-            filters=None,
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for Energy Atlas weekly multi-factor summary",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if is_power_burn_direction_query(normalized):
-        metric = "ng_electricity"
-        power_start = (pd.Timestamp(end) - pd.DateOffset(years=1)).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=power_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for power-burn direction over past year",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if is_storage_inventory_range_query(normalized) or (
-        classified.question_type == QUESTION_TYPE_FIVE_YEAR_RANGE and "inventor" in normalized
-    ):
-        metric = "working_gas_storage_lower48"
-        inventory_start = (
-            pd.Timestamp(end) - pd.DateOffset(years=6)
-        ).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=inventory_start,
-            end=end,
-            filters={"region": "lower48"},
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for inventory tight/loose/neutral versus 5-year range",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if is_storage_same_week_last_year_query(normalized) or (
-        classified.question_type == QUESTION_TYPE_YOY and "storage" in normalized
-    ):
-        metric = "working_gas_storage_lower48"
-        storage_start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=storage_start,
-            end=end,
-            filters={"region": "lower48"},
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for storage same-week-last-year comparison",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if is_storage_five_year_average_query(normalized):
-        metric = "working_gas_storage_lower48"
-        storage_start = (pd.Timestamp(end) - pd.DateOffset(years=6)).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=storage_start,
-            end=end,
-            filters={"region": "lower48"},
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for storage five-year-average comparison",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if is_storage_largest_weekly_change_by_region_query(normalized) or (
-        classified.question_type == QUESTION_TYPE_REGIONAL_RANKING
-        and "storage" in normalized
-        and "weekly" in normalized
-        and "change" in normalized
-    ):
-        metric = "working_gas_storage_change_weekly"
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=start,
-            end=end,
-            filters={"group_by": "region"},
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for largest weekly storage change by region",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if is_production_contribution_by_region_query(normalized):
-        metric = "ng_production_lower48"
-        prod_start = (pd.Timestamp(end) - pd.DateOffset(years=2)).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=prod_start,
-            end=end,
-            filters={"group_by": "region"},
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for production change contribution by region/state",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if is_production_five_year_comparison_query(normalized):
-        metric = "ng_production_lower48"
-        prod_start = (pd.Timestamp(end) - pd.DateOffset(years=6)).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=prod_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for production five-year comparison",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    if (
-        classified.question_type == QUESTION_TYPE_AVERAGE_N_DAYS
-        and "henry hub" in normalized
-        and intent == "single_metric"
-    ):
-        metric = "henry_hub_spot"
-        days = int(classified.params.get("days") or 7)
-        avg_start = (pd.Timestamp(end) - pd.Timedelta(days=max(1, days) + 7)).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=avg_start,
-            end=end,
-            filters=None,
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for Henry Hub average over trailing N days",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    # Deterministic domain fast-paths for frequent electricity + gas asks.
-    if is_power_burn_seasonal_question(normalized):
-        metric = "ng_electricity"
-        fast_start = start
-        lookback_years = resolve_window_lookback_years(
-            metric=metric,
-            q=normalized,
-            has_explicit_dates=has_explicit_dates,
-            current_like_only=current_like_only,
-            deps=WINDOW_POLICY_DEPS,
-        )
-        if lookback_years is not None:
-            fast_start = (
-                pd.Timestamp(end) - pd.DateOffset(years=lookback_years)
-            ).date().isoformat()
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=fast_start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for natural gas power burn seasonal comparison",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if is_iso_gas_share_question(normalized) or is_renewables_power_sector_demand_question(normalized):
-        metric = "iso_gas_dependency"
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=metric,
-            metrics=[metric],
-            start=start,
-            end=end,
-            filters=build_filters(metric, normalized, 1.0),
-            confidence=max(confidence, 0.9),
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason="Deterministic route for electricity generation gas-share dependency",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    # No rule candidate -> LLM fallback
-    if analytical_query and intent == "single_metric":
-        intent = "derived" if has_balance_language else "explain"
-
-    if intent in {"derived", "explain"} and concepts and not (
-        "weather" in normalized and ("forecast" in normalized or "hdd" in normalized or "cdd" in normalized)
-    ):
-        concept_metrics: List[str] = []
-        for concept in concepts:
-            concept_metrics.extend(CONCEPT_TO_METRICS.get(concept, []))
-        deduped = []
-        seen = set()
-        for metric in concept_metrics:
-            if metric in ALLOWED_METRICS and metric not in seen:
-                deduped.append(metric)
-                seen.add(metric)
-        if deduped:
-            primary_metric = _primary_metric_from_concepts(
-                concepts=concepts,
-                deduped_metrics=deduped,
-            )
-            return HybridRouteResult(
-                intent=intent,
-                primary_metric=primary_metric,
-                metrics=deduped,
-                start=start,
-                end=end,
-                filters=build_filters(primary_metric, normalized, confidence),
-                confidence=max(confidence, 0.75),
-                ambiguous=False,
-                candidates=candidates[:3],
-                source="rule",
-                reason=f"Concept route for {intent} query using {sorted(concepts)}",
-                normalized_query=normalized,
-                include_forecast=include_forecast,
-                forecast_horizon_days=forecast_horizon_days,
-            )
-
-    if not candidates:
-        llm = llm_route_structured(user_query=user_query, normalized_query=normalized)
-        return validate_llm_route(
-            llm, start=start, end=end, normalized_query=normalized
-        )
-
-    if intent == "compare":
-        compare_metrics: List[str] = []
-        if has_import and has_export:
-            compare_metrics = ["lng_exports", "lng_imports"]
-        elif "storage" in normalized and "production" in normalized:
-            compare_metrics = ["working_gas_storage_lower48", "ng_production_lower48"]
-        elif "production" in normalized and "export" in normalized:
-            compare_metrics = ["ng_production_lower48", "lng_exports"]
-
-        if compare_metrics:
-            primary_metric = compare_metrics[0]
-            return HybridRouteResult(
-                intent="compare",
-                primary_metric=primary_metric,
-                metrics=compare_metrics,
-                start=start,
-                end=end,
-                filters=build_filters(primary_metric, normalized, confidence),
-                confidence=max(confidence, 0.75),
-                ambiguous=False,
-                candidates=candidates[:3],
-                source="rule",
-                reason=f"Deterministic compare route for {compare_metrics}",
-                normalized_query=normalized,
-                include_forecast=include_forecast,
-                forecast_horizon_days=forecast_horizon_days,
-            )
-
-    top = candidates[0]
-    if not has_explicit_dates and top.metric == "ng_exploration_reserves_lower48":
-        start = "2000-01-01"
-    lookback_years = resolve_window_lookback_years(
-        metric=top.metric,
-        q=normalized,
-        has_explicit_dates=has_explicit_dates,
-        current_like_only=current_like_only,
-        deps=WINDOW_POLICY_DEPS,
-    )
-    if (
-        lookback_years is None
-        and top.metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}
-    ):
-        lookback_years = storage_comparison_lookback_years(normalized)
-    if lookback_years is not None:
-        start = (pd.Timestamp(end) - pd.DateOffset(years=lookback_years)).date().isoformat()
-    filters = candidate_filters.get(top.metric)
-
-    if (
-        top.metric in {"working_gas_storage_lower48", "working_gas_storage_change_weekly"}
-        and filters
-        and (
-            filters.get("region") in ALLOWED_STORAGE_REGIONS
-            or
-            filters.get("group_by") == "region"
-            or filters.get("include_weekly_change") is True
-        )
-    ):
-        return HybridRouteResult(
-            intent="single_metric" if filters.get("include_weekly_change") else intent,
-            primary_metric=top.metric,
-            metrics=[top.metric],
-            start=start,
-            end=end,
-            filters=filters,
-            confidence=confidence,
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason=f"Storage rule route on {top.metric} using {top.matched_terms}",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if top.metric == "weather_degree_days_forecast_vs_5y" and confidence >= 0.6:
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=top.metric,
-            metrics=[top.metric],
-            start=start,
-            end=end,
-            filters=filters,
-            confidence=confidence,
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason=f"Weather degree-day rule route on {top.metric} using {top.matched_terms}",
-            normalized_query=normalized,
-            include_forecast=False,
-            forecast_horizon_days=None,
-        )
-
-    # Fast path: for single-metric questions, stay on rules unless the match is ambiguous.
-    if intent == "single_metric" and not ambiguous:
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=top.metric,
-            metrics=[top.metric],
-            start=start,
-            end=end,
-            filters=filters,
-            confidence=confidence,
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    if intent == "ranking" and top.metric == "ng_consumption_by_sector" and not ambiguous:
-        return HybridRouteResult(
-            intent="ranking",
-            primary_metric=top.metric,
-            metrics=[top.metric],
-            start=start,
-            end=end,
-            filters=filters,
-            confidence=confidence,
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason=f"Strong rule match on {top.metric} using {top.matched_terms}",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    # If a non-single intent still has a very strong single top metric, keep rule routing.
-    if intent in {"compare", "derived", "explain"} and not ambiguous and confidence >= 0.8 and not analytical_query:
-        return HybridRouteResult(
-            intent="single_metric",
-            primary_metric=top.metric,
-            metrics=[top.metric],
-            start=start,
-            end=end,
-            filters=filters,
-            confidence=confidence,
-            ambiguous=False,
-            candidates=candidates[:3],
-            source="rule",
-            reason=f"High-confidence rule match on {top.metric} for {intent} phrasing",
-            normalized_query=normalized,
-            include_forecast=include_forecast,
-            forecast_horizon_days=forecast_horizon_days,
-        )
-
-    # Multi-metric or advanced intent -> LLM assist
-    if intent in {"compare", "ranking", "derived", "explain"}:
-        llm = llm_route_structured(user_query=user_query, normalized_query=normalized)
-        return validate_llm_route(
-            llm, start=start, end=end, normalized_query=normalized
-        )
-
-    # Ambiguous rule route -> LLM assist
-    if ambiguous:
-        llm = llm_route_structured(user_query=user_query, normalized_query=normalized)
-        return validate_llm_route(
-            llm, start=start, end=end, normalized_query=normalized
-        )
-
-    # Fallback deterministic return
-    return HybridRouteResult(
-        intent="single_metric",
-        primary_metric=top.metric,
-        metrics=[top.metric],
+    llm = llm_route_structured(user_query=user_query, normalized_query=normalized)
+    return validate_llm_route(
+        llm,
         start=start,
         end=end,
-        filters=filters,
-        confidence=confidence,
-        ambiguous=ambiguous,
-        candidates=candidates[:3],
-        source="rule",
-        reason=f"Fallback rule route to {top.metric}",
         normalized_query=normalized,
-        include_forecast=include_forecast,
-        forecast_horizon_days=forecast_horizon_days,
     )

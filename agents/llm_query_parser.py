@@ -19,7 +19,7 @@ from agents.llm_router import (
 )
 
 logger = logging.getLogger(__name__)
-OPENAI_CLIENT = OpenAI()
+OPENAI_CLIENT: Any | None = None
 
 TIME_WINDOWS: Final[tuple[str, ...]] = (
     "latest",
@@ -220,6 +220,9 @@ def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
 
 
 def _get_openai_client() -> Any:
+    global OPENAI_CLIENT
+    if OPENAI_CLIENT is None:
+        OPENAI_CLIENT = OpenAI()
     return OPENAI_CLIENT
 
 

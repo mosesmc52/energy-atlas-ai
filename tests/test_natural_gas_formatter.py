@@ -2,6 +2,8 @@ import unittest
 
 from answers.response_formatters.natural_gas import (
     NaturalGasMetricSnapshot,
+    format_date_month_d_year,
+    format_directional_change,
     format_natural_gas_commentary,
 )
 
@@ -106,6 +108,49 @@ class TestNaturalGasFormatter(unittest.TestCase):
         )
         self.assertEqual(out["market_signal"], "neutral")
         self.assertIn("near seasonal norms", out["summary"])
+
+    def test_directional_change_positive_small(self) -> None:
+        direction, phrase = format_directional_change("price", 0.1, 0.5)
+        self.assertEqual(direction, "up")
+        self.assertIn("edged higher", phrase)
+
+    def test_directional_change_positive_moderate(self) -> None:
+        direction, phrase = format_directional_change("production", 10, 3.0)
+        self.assertEqual(direction, "up")
+        self.assertIn("increased", phrase)
+
+    def test_directional_change_positive_large(self) -> None:
+        direction, phrase = format_directional_change("exports", 50, 9.0)
+        self.assertEqual(direction, "up")
+        self.assertIn("jumped", phrase)
+
+    def test_directional_change_negative_small(self) -> None:
+        direction, phrase = format_directional_change("price", -0.1, -0.4)
+        self.assertEqual(direction, "down")
+        self.assertIn("edged lower", phrase)
+
+    def test_directional_change_negative_moderate(self) -> None:
+        direction, phrase = format_directional_change("imports", -20, -2.0)
+        self.assertEqual(direction, "down")
+        self.assertIn("declined", phrase)
+
+    def test_directional_change_negative_large(self) -> None:
+        direction, phrase = format_directional_change("consumption", -80, -12.0)
+        self.assertEqual(direction, "down")
+        self.assertIn("dropped sharply", phrase)
+
+    def test_directional_change_near_flat(self) -> None:
+        direction, phrase = format_directional_change("production", 0.0, 0.0)
+        self.assertEqual(direction, "flat")
+        self.assertIn("relatively stable", phrase)
+
+    def test_directional_change_missing_percent(self) -> None:
+        direction, phrase = format_directional_change("production", 15.0, None)
+        self.assertEqual(direction, "up")
+        self.assertIn("increased", phrase)
+
+    def test_date_format_month_d_year(self) -> None:
+        self.assertEqual(format_date_month_d_year("2026-05-12"), "May 12, 2026")
 
 
 if __name__ == "__main__":
