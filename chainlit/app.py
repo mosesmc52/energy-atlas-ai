@@ -714,14 +714,14 @@ async def on_message(message: cl.Message):
         answer_elapsed_ms = outcome.timings.answer_ms if DEBUG_ENABLED else 0.0
         if DEBUG_ENABLED:
             logger.info(
-                "on_message route intent=%s primary=%s source=%s ambiguous=%s",
-                route.intent,
+                "on_message route domain=%s analysis=%s primary=%s ambiguous=%s",
+                route.domain,
+                route.analysis_type,
                 route.primary_metric,
-                route.source,
                 route.ambiguous,
             )
 
-        if route.intent == "ambiguous":
+        if route.ambiguous:
             await cl.Message(
                 content=(
                     "That question is ambiguous. Try naming the metric explicitly, "
@@ -729,7 +729,7 @@ async def on_message(message: cl.Message):
                 )
             ).send()
             return
-        if route.intent == "unsupported" or route.primary_metric is None:
+        if route.domain == "unsupported" or route.analysis_type == "unsupported" or route.primary_metric is None:
             if looks_like_general_energy_question(user_query, previous_energy_context):
                 try:
                     answer = await asyncio.to_thread(
@@ -763,7 +763,9 @@ async def on_message(message: cl.Message):
             ).send()
             return
         if route.primary_metric is None:
-            raise ValueError(f"Unable to determine a metric for intent: {route.intent}")
+            raise ValueError(
+                f"Unable to determine a metric for route: {route.domain}/{route.analysis_type}"
+            )
         cl.user_session.set("last_energy_question", user_query)
 
         result = outcome.result
@@ -987,7 +989,7 @@ async def on_message(message: cl.Message):
                 chart_elapsed_ms,
                 sources_elapsed_ms,
                 route.primary_metric,
-                route.source,
+                route.domain,
                 user_query,
             )
             logger.info("response_cache hit=%s key=%s", cache_hit, cache_key)

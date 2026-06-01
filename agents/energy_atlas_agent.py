@@ -7,10 +7,9 @@ from time import perf_counter
 from typing import Callable, Optional
 
 from agents.agent_policy import AgentPolicy, load_agent_policy
-from agents.llm_query_parser import llm_parse_query
 from agents.metric_capabilities import get_metric_capability
-from agents.router import HybridRouteResult, route_query
-from agents.source_planner import SourceCall, SourcePlan, build_source_plan
+from agents.router import EnergyRouteResult, route_query
+from agents.source_planner import SourceCall, SourcePlan
 from executer import ExecuteRequest, MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
 
@@ -32,7 +31,7 @@ class AgentTimings:
 
 @dataclass(frozen=True)
 class AgentOutcome:
-    route: HybridRouteResult
+    route: EnergyRouteResult
     result: Optional[MetricResult]
     payload: Optional[AnswerPayload]
     forecast: Optional[object]
@@ -45,7 +44,7 @@ class EnergyAtlasAgent:
         *,
         executor: MetricExecutor,
         model: Optional[str] = None,
-        route_fn: Callable[[str], HybridRouteResult] = route_query,
+        route_fn: Callable[[str], EnergyRouteResult] = route_query,
         answer_builder_fn: Optional[Callable[..., AnswerPayload]] = None,
         policy: Optional[AgentPolicy] = None,
         policy_path: Optional[str] = None,
@@ -65,7 +64,7 @@ class EnergyAtlasAgent:
         self._route_fn = route_fn
         self._answer_builder_fn = answer_builder_fn
 
-    def _route_to_source_plan(self, route: HybridRouteResult) -> SourcePlan:
+    def _route_to_source_plan(self, route: EnergyRouteResult) -> SourcePlan:
         calls: list[SourceCall] = []
         metrics = list(route.metrics or [])
         if route.primary_metric and route.primary_metric not in metrics:
@@ -77,23 +76,25 @@ class EnergyAtlasAgent:
                     metric=metric,
                     filters=dict(route.filters or {}),
                     calculation=None,
+                    start_date=route.start_date,
+                    end_date=route.end_date,
                 )
             )
         return SourcePlan(
-            intent=route.intent,
+            intent=route.analysis_type,
             calls=calls,
-            comparison=None,
-            time_window=None,
+            comparison=None if route.comparisons == ["none"] else ",".join(route.comparisons),
+            time_window=route.analysis_type,
             requires_multiple_sources=len(calls) > 1,
             ambiguous=route.ambiguous,
             reason=route.reason,
         )
 
-    def _execute_with_fallback(self, *, route: HybridRouteResult) -> MetricResult:
+    def _execute_with_fallback(self, *, route: EnergyRouteResult) -> MetricResult:
         req = ExecuteRequest(
             metric=route.primary_metric or "",
-            start=route.start,
-            end=route.end,
+            start=route.start_date or "",
+            end=route.end_date or "",
             filters=route.filters,
         )
         result = self.executor.execute(req)
@@ -106,8 +107,8 @@ class EnergyAtlasAgent:
         ):
             proxy_req = ExecuteRequest(
                 metric=capability.fallback_metric,
-                start=route.start,
-                end=route.end,
+                start=route.start_date or "",
+                end=route.end_date or "",
                 filters={},
             )
             proxy_result = self.executor.execute(proxy_req)
@@ -135,15 +136,15 @@ class EnergyAtlasAgent:
         route_ms = (perf_counter() - route_started) * 1000
         if DEBUG_ENABLED:
             logger.info(
-                "agent_run route intent=%s primary=%s start=%s end=%s source=%s",
-                route.intent,
+                "agent_run route domain=%s analysis=%s primary=%s start=%s end=%s",
+                route.domain,
+                route.analysis_type,
                 route.primary_metric,
-                route.start,
-                route.end,
-                route.source,
+                route.start_date,
+                route.end_date,
             )
 
-        if route.intent in {"ambiguous", "unsupported"} or route.primary_metric is None:
+        if route.domain == "unsupported" or route.analysis_type == "unsupported" or route.primary_metric is None:
             return AgentOutcome(
                 route=route,
                 result=None,
@@ -156,32 +157,20 @@ class EnergyAtlasAgent:
         result: MetricResult
         used_plan_execution = False
         try:
-            if route.source in {"llm", "rule"}:
-                plan = self._route_to_source_plan(route)
-            else:
-                parsed = llm_parse_query(
-                    user_query=user_query,
-                    normalized_query=(route.normalized_query or user_query).strip().lower(),
-                )
-                if DEBUG_ENABLED:
-                    logger.info(
-                        "agent_run parser intent=%s primary=%s metrics=%s ambiguous=%s conf=%.3f",
-                        parsed.intent,
-                        parsed.primary_metric,
-                        parsed.metrics,
-                        parsed.ambiguous,
-                        parsed.confidence,
-                    )
-                plan = build_source_plan(parsed)
+            plan = self._route_to_source_plan(route)
             if DEBUG_ENABLED:
                 logger.info(
                     "agent_run plan intent=%s calls=%s multi=%s ambiguous=%s",
                     plan.intent,
                     [c.metric for c in plan.calls],
-                plan.requires_multiple_sources,
-                plan.ambiguous,
+                    plan.requires_multiple_sources,
+                    plan.ambiguous,
+                )
+            plan_results = self.executor.execute_plan(
+                plan,
+                start=route.start_date or "",
+                end=route.end_date or "",
             )
-            plan_results = self.executor.execute_plan(plan, start=route.start, end=route.end)
             if isinstance(plan_results, dict):
                 route_metric = str(route.primary_metric or "")
                 if route_metric and route_metric in plan_results:
@@ -216,14 +205,12 @@ class EnergyAtlasAgent:
 
         forecast = None
         metric = str((result.meta or {}).get("metric") or route.primary_metric or "")
-        forecast_requested = bool(route.include_forecast) or (
-            metric in self.policy.force_forecast_metrics
-        )
+        forecast_requested = metric in self.policy.force_forecast_metrics
         forecast_allowed = (
             self.policy.enable_forecast and metric not in self.policy.disable_forecast_metrics
         )
         if forecast_requested and forecast_allowed and forecaster is not None:
-            requested_horizon = route.forecast_horizon_days or self.policy.default_forecast_horizon_days
+            requested_horizon = self.policy.default_forecast_horizon_days
             horizon_days = max(1, min(int(requested_horizon), int(self.policy.max_forecast_horizon_days)))
             forecast = forecaster.forecast_dataframe(
                 result.df,

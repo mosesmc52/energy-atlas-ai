@@ -2,89 +2,50 @@ from __future__ import annotations
 
 import unittest
 
-from agents.llm_query_parser import LLMQueryParseOutput
+from agents.llm_query_parser import parse_energy_query
 from agents.source_planner import build_source_plan
 
 
 class TestSourcePlanner(unittest.TestCase):
-    def test_power_demand_translating_into_gas_usage_expands_multi_source(self) -> None:
-        parsed = LLMQueryParseOutput(
-            intent="derived",
-            primary_metric="ng_electricity",
-            metrics=["ng_electricity"],
-            filters=None,
-            time_window="this_week",
-            comparison="none",
-            calculation="summary",
-            question_topics=["demand", "power"],
-            requires_multiple_sources=True,
-            reason="derived power-to-gas translation",
-            confidence=0.82,
-            ambiguous=False,
+    def test_storage_level_query_routes_to_eia_storage_metric(self) -> None:
+        parsed = parse_energy_query(
+            user_query="What is current working gas in storage?",
+            normalized_query="what is current working gas in storage?",
         )
-        plan = build_source_plan(parsed)
-        metrics = [c.metric for c in plan.calls]
-        self.assertEqual(plan.intent, "derived")
-        self.assertIn("ng_electricity", metrics)
-        self.assertIn("weather_degree_days_forecast_vs_5y", metrics)
-        self.assertTrue(plan.requires_multiple_sources)
 
-    def test_storage_query_routes_storage_metric(self) -> None:
-        parsed = LLMQueryParseOutput(
-            intent="single_metric",
-            primary_metric="working_gas_storage_lower48",
-            metrics=["working_gas_storage_lower48"],
-            filters={"region": "lower48"},
-            time_window="latest",
-            comparison="none",
-            calculation="latest_value",
-            question_topics=["storage"],
-            requires_multiple_sources=False,
-            reason=None,
-            confidence=0.9,
-            ambiguous=False,
-        )
         plan = build_source_plan(parsed)
-        self.assertEqual([c.metric for c in plan.calls], ["working_gas_storage_lower48"])
 
-    def test_lng_exports_week_query_keeps_exports_with_comparison(self) -> None:
-        parsed = LLMQueryParseOutput(
-            intent="single_metric",
-            primary_metric="lng_exports",
-            metrics=["lng_exports"],
-            filters={"region": "united_states_pipeline_total"},
-            time_window="this_week",
-            comparison="week_over_week",
-            calculation="change",
-            question_topics=["trade"],
-            requires_multiple_sources=False,
-            reason=None,
-            confidence=0.87,
-            ambiguous=False,
-        )
-        plan = build_source_plan(parsed)
-        self.assertEqual(plan.calls[0].metric, "lng_exports")
-        self.assertEqual(plan.comparison, "week_over_week")
+        self.assertEqual(plan.intent, "latest")
+        self.assertEqual([call.metric for call in plan.calls], ["working_gas_storage_lower48"])
+        self.assertEqual(plan.calls[0].adapter, "eia")
 
-    def test_price_because_of_storage_adds_price_and_storage_metrics(self) -> None:
-        parsed = LLMQueryParseOutput(
-            intent="explain",
-            primary_metric="henry_hub_spot",
-            metrics=["henry_hub_spot"],
-            filters=None,
-            time_window="last_30_days",
-            comparison="none",
-            calculation="summary",
-            question_topics=["price", "storage"],
-            requires_multiple_sources=True,
-            reason=None,
-            confidence=0.79,
-            ambiguous=False,
+    def test_storage_weekly_change_routes_to_eia_change_metric(self) -> None:
+        parsed = parse_energy_query(
+            user_query="Are injections accelerating?",
+            normalized_query="are injections accelerating?",
         )
+
         plan = build_source_plan(parsed)
-        metrics = [c.metric for c in plan.calls]
-        self.assertIn("henry_hub_spot", metrics)
-        self.assertIn("working_gas_storage_lower48", metrics)
+
+        self.assertEqual(plan.intent, "weekly_change")
+        self.assertEqual(
+            [call.metric for call in plan.calls],
+            ["working_gas_storage_change_weekly"],
+        )
+        self.assertEqual(plan.comparison, "prior_week")
+
+    def test_route_dates_are_attached_to_source_call(self) -> None:
+        from datetime import date
+
+        from agents.router import route_query
+
+        route = route_query("Compare East and Midwest storage since 2021")
+        plan = build_source_plan(route)
+
+        self.assertEqual(plan.time_window, "custom")
+        self.assertEqual(plan.calls[0].start_date, "2021-01-01")
+        self.assertEqual(plan.calls[0].end_date, date.today().isoformat())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,247 +1,90 @@
 from __future__ import annotations
 
-import json
 import unittest
-from unittest.mock import patch
+from datetime import date
 
-from agents.llm_router import llm_route_structured
-
-
-class _FakeResponse:
-    def __init__(self, payload: dict) -> None:
-        self.output_text = json.dumps(payload)
+from agents.llm_router import STORAGE_REGIONS
+from agents.router import route_query
 
 
-class _FakeResponses:
-    def __init__(self, payload: dict) -> None:
-        self._payload = payload
+class TestStorageRouting(unittest.TestCase):
+    def test_current_working_gas_storage(self) -> None:
+        route = route_query("What is current working gas in storage?")
 
-    def create(self, **_: object) -> _FakeResponse:
-        return _FakeResponse(self._payload)
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.regions, ["lower48"])
+        self.assertEqual(route.value_type, "level")
 
+    def test_plot_east_storage_date_range(self) -> None:
+        route = route_query("Plot East storage from 2020 to 2026")
 
-class _FakeClient:
-    def __init__(self, payload: dict) -> None:
-        self.responses = _FakeResponses(payload)
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.regions, ["east"])
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.date_expression, "from 2020 to 2026")
+        self.assertEqual(route.start_date, "2020-01-01")
+        self.assertEqual(route.end_date, "2026-12-31")
 
+    def test_compare_two_regions_as_time_series(self) -> None:
+        route = route_query("Compare East and Midwest storage since 2021")
 
-class TestLLMRouterStructured(unittest.TestCase):
-    def _call_with_payload(self, payload: dict):
-        with patch(
-            "agents.llm_router._get_openai_client",
-            return_value=_FakeClient(payload),
-        ):
-            return llm_route_structured(
-                user_query="test",
-                normalized_query="test",
-            )
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.regions, ["east", "midwest"])
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.date_expression, "since 2021")
+        self.assertEqual(route.start_date, "2021-01-01")
+        self.assertEqual(route.end_date, date.today().isoformat())
 
-    def test_straightforward_single_metric(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "henry_hub_spot",
-                "metrics": ["henry_hub_spot"],
-                "filters": None,
-                "reason": "Henry Hub price",
-                "confidence": 0.92,
-                "ambiguous": False,
-            }
+    def test_compare_current_storage_by_region(self) -> None:
+        route = route_query("Compare current storage by region")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "regional_compare")
+        self.assertEqual(route.regions, list(STORAGE_REGIONS))
+        self.assertEqual(route.chart_type, "bar")
+
+    def test_compare_storage_to_five_year_average(self) -> None:
+        route = route_query("How does Lower 48 storage compare to the five-year average?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "seasonal_compare")
+        self.assertIn("five_year_avg", route.comparisons)
+        self.assertEqual(route.chart_type, "seasonal_line")
+
+    def test_rank_regions_against_normal(self) -> None:
+        route = route_query("Which region is most above normal?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertTrue(
+            {"five_year_avg", "seasonal_normal"}.intersection(route.comparisons)
         )
-        self.assertEqual(result.intent, "single_metric")
-        self.assertEqual(result.primary_metric, "henry_hub_spot")
-        self.assertEqual(result.metrics, ["henry_hub_spot"])
-        self.assertIsNone(result.filters)
+        self.assertEqual(route.chart_type, "bar")
 
-    def test_ambiguous_forces_ambiguous_flag(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "ambiguous",
-                "primary_metric": None,
-                "metrics": [],
-                "filters": None,
-                "reason": "Could refer to demand or consumption",
-                "confidence": 0.4,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.intent, "ambiguous")
-        self.assertTrue(result.ambiguous)
+    def test_injected_this_week_by_region(self) -> None:
+        route = route_query("How much gas was injected this week by region?")
 
-    def test_compare_inserts_primary_into_metrics(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "compare",
-                "primary_metric": "lng_exports",
-                "metrics": ["lng_imports"],
-                "filters": {"region": "canada_pipeline"},
-                "reason": "Compare import and export flows",
-                "confidence": 0.8,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.intent, "compare")
-        self.assertEqual(result.metrics, ["lng_exports", "lng_imports"])
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "regional_compare")
+        self.assertEqual(route.value_type, "weekly_change")
+        self.assertEqual(route.chart_type, "bar")
 
-    def test_production_state_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "ng_production_lower48",
-                "metrics": ["ng_production_lower48"],
-                "filters": {"region": "tx"},
-                "reason": "Texas production",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "ng_production_lower48")
-        self.assertEqual(result.filters, {"region": "tx"})
+    def test_injections_accelerating(self) -> None:
+        route = route_query("Are injections accelerating?")
 
-    def test_consumption_state_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "ng_consumption_lower48",
-                "metrics": ["ng_consumption_lower48"],
-                "filters": {"region": "ca"},
-                "reason": "California consumption",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "ng_consumption_lower48")
-        self.assertEqual(result.filters, {"region": "ca"})
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "weekly_change")
+        self.assertEqual(route.value_type, "weekly_change")
+        self.assertIn("prior_week", route.comparisons)
+        self.assertEqual(route.chart_type, "line")
 
-    def test_import_region_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "lng_imports",
-                "metrics": ["lng_imports"],
-                "filters": {"region": "qatar"},
-                "reason": "Qatar imports",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "lng_imports")
-        self.assertEqual(result.filters, {"region": "qatar"})
+    def test_henry_hub_price_is_unsupported(self) -> None:
+        route = route_query("What is the current Henry Hub price?")
 
-    def test_export_region_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "lng_exports",
-                "metrics": ["lng_exports"],
-                "filters": {"region": "japan"},
-                "reason": "Japan exports",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "lng_exports")
-        self.assertEqual(result.filters, {"region": "japan"})
-
-    def test_import_compressed_region_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "lng_imports",
-                "metrics": ["lng_imports"],
-                "filters": {"region": "united_states_compressed_total"},
-                "reason": "Compressed imports total",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "lng_imports")
-        self.assertEqual(
-            result.filters, {"region": "united_states_compressed_total"}
-        )
-
-    def test_export_truck_region_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "lng_exports",
-                "metrics": ["lng_exports"],
-                "filters": {"region": "united_states_truck_total"},
-                "reason": "Truck exports total",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "lng_exports")
-        self.assertEqual(result.filters, {"region": "united_states_truck_total"})
-
-    def test_reserves_filters_are_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "ng_exploration_reserves_lower48",
-                "metrics": ["ng_exploration_reserves_lower48"],
-                "filters": {
-                    "region": "tx",
-                    "resource_category": "proved_ngl",
-                },
-                "reason": "Texas proved ngl reserves",
-                "confidence": 0.88,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "ng_exploration_reserves_lower48")
-        self.assertEqual(
-            result.filters,
-            {"region": "tx", "resource_category": "proved_ngl"},
-        )
-
-    def test_derived_clamps_confidence_and_filters(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "derived",
-                "primary_metric": "working_gas_storage_change_weekly",
-                "metrics": ["working_gas_storage_change_weekly"],
-                "filters": {"region": "lower48", "dataset": "not_real"},
-                "reason": "Derived week-over-week storage tightness",
-                "confidence": 1.7,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.intent, "derived")
-        self.assertEqual(result.confidence, 1.0)
-        self.assertEqual(result.filters, {"region": "lower48"})
-
-    def test_unsupported_forces_null_primary_and_empty_metrics(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "unsupported",
-                "primary_metric": "henry_hub_spot",
-                "metrics": ["henry_hub_spot"],
-                "filters": None,
-                "reason": "Topic not covered",
-                "confidence": 0.5,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.intent, "unsupported")
-        self.assertIsNone(result.primary_metric)
-        self.assertEqual(result.metrics, [])
-
-    def test_weather_degree_day_region_filter_is_preserved(self) -> None:
-        result = self._call_with_payload(
-            {
-                "intent": "single_metric",
-                "primary_metric": "weather_degree_days_forecast_vs_5y",
-                "metrics": ["weather_degree_days_forecast_vs_5y"],
-                "filters": {"region": "east", "normal_years": 3},
-                "reason": "East region degree-day anomaly forecast",
-                "confidence": 0.86,
-                "ambiguous": False,
-            }
-        )
-        self.assertEqual(result.primary_metric, "weather_degree_days_forecast_vs_5y")
-        self.assertEqual(result.filters, {"region": "east", "normal_years": 3})
+        self.assertEqual(route.domain, "unsupported")
 
 
 if __name__ == "__main__":

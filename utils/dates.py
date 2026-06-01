@@ -34,6 +34,10 @@ def has_explicit_date_reference(query: str) -> bool:
 
     if re.search(r"(20\d{2})-(\d{2})", q):
         return True
+    if re.search(r"\bsince\s+(20\d{2})\b", q):
+        return True
+    if re.search(r"\bfrom\s+(20\d{2})\s+(?:to|through|-)\s+(20\d{2})\b", q):
+        return True
     if re.search(r"last\s+(\d+)\s+(day|days|month|months|year|years)", q):
         return True
     if re.search(
@@ -78,6 +82,19 @@ def resolve_date_range(query: str) -> Tuple[str, str]:
         start = pd.Timestamp(f"{m.group(1)}-{m.group(2)}-01")
         end = start + pd.offsets.MonthEnd(1)
         return start.date().isoformat(), end.date().isoformat()
+
+    m = re.search(r"\bsince\s+(20\d{2})\b", q)
+    if m:
+        start = date(int(m.group(1)), 1, 1)
+        return start.isoformat(), today.isoformat()
+
+    m = re.search(r"\bfrom\s+(20\d{2})\s+(?:to|through|-)\s+(20\d{2})\b", q)
+    if m:
+        start_year = int(m.group(1))
+        end_year = int(m.group(2))
+        start = date(start_year, 1, 1)
+        end = date(end_year, 12, 31)
+        return start.isoformat(), end.isoformat()
 
     # ---- last/past N days / months / years ----
     m = re.search(

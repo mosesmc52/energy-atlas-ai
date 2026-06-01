@@ -1,412 +1,256 @@
 from __future__ import annotations
 
-import json
-import logging
-import os
-import time
-from dataclasses import dataclass
-from typing import Any, Dict, Final, Optional, Tuple
-
-from openai import OpenAI
+import re
+from dataclasses import dataclass, field
+from typing import Optional
 
 from agents.llm_router import (
-    DATASET_FILTERS,
-    INTENTS,
-    METRICS,
-    REGION_FILTERS,
-    RESOURCE_CATEGORY_FILTERS,
-)
-
-logger = logging.getLogger(__name__)
-OPENAI_CLIENT: Any | None = None
-
-TIME_WINDOWS: Final[tuple[str, ...]] = (
-    "latest",
-    "today",
-    "this_week",
-    "prior_week",
-    "last_7_days",
-    "last_30_days",
-    "month_to_date",
-    "year_to_date",
-    "custom",
-    "unknown",
-)
-
-COMPARISONS: Final[tuple[str, ...]] = (
-    "prior_period",
-    "week_over_week",
-    "month_over_month",
-    "year_over_year",
-    "five_year_normal",
-    "regional_comparison",
-    "sector_comparison",
-    "none",
-)
-
-CALCULATIONS: Final[tuple[str, ...]] = (
-    "latest_value",
-    "change",
-    "percent_change",
-    "spread",
-    "z_score",
-    "percentile",
-    "correlation",
-    "summary",
-    "none",
+    CHART_TYPES,
+    COMPARISONS,
+    OUTPUT_MODES,
+    STORAGE_ANALYSIS_TYPES,
+    STORAGE_REGIONS,
+    VALUE_TYPES,
 )
 
 
 @dataclass(frozen=True)
-class LLMQueryParseOutput:
-    intent: str
-    primary_metric: Optional[str]
-    metrics: list[str]
-    filters: Optional[dict]
-    time_window: Optional[str]
-    comparison: Optional[str]
-    calculation: Optional[str]
-    question_topics: list[str]
-    requires_multiple_sources: bool
-    reason: Optional[str]
-    confidence: float
-    ambiguous: bool
+class EnergyQueryParse:
+    domain: str
+    analysis_type: str
+    regions: list[str] = field(default_factory=list)
+    value_type: str = "level"
+    comparisons: list[str] = field(default_factory=lambda: ["none"])
+    chart_type: str = "none"
+    output_mode: str = "answer"
+    date_expression: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    filters: dict = field(default_factory=dict)
+    confidence: float = 0.0
+    ambiguous: bool = False
+    reason: Optional[str] = None
 
 
-class LLMQueryParserError(RuntimeError):
-    """Raised when structured LLM parsing cannot be completed safely."""
+STORAGE_TERMS = (
+    "storage",
+    "working gas",
+    "inventor",
+    "inventories",
+)
+
+NON_STORAGE_NATGAS_TERMS = (
+    "henry hub",
+    "price",
+    "production",
+    "output",
+    "lng",
+    "export",
+    "exports",
+    "import",
+    "imports",
+    "consumption",
+    "demand",
+    "weather",
+    "hdd",
+    "cdd",
+    "power",
+)
+
+WEEKLY_CHANGE_TERMS = (
+    "injection",
+    "injections",
+    "injected",
+    "withdrawal",
+    "withdrawals",
+    "withdrew",
+    "build",
+    "draw",
+    "change",
+)
+
+REGION_ALIASES = {
+    "lower48": ("lower 48", "lower48", "u.s.", "us ", "united states"),
+    "east": ("east", "eastern"),
+    "midwest": ("midwest", "mid-west"),
+    "mountain": ("mountain",),
+    "pacific": ("pacific",),
+    "south_central": ("south central", "south-central"),
+    "south_central_salt": ("salt", "salt cavern", "south central salt"),
+    "south_central_nonsalt": ("nonsalt", "non-salt", "non salt", "south central nonsalt"),
+}
 
 
-_ALLOWED_INTENTS = set(INTENTS)
-_ALLOWED_METRICS = set(METRICS)
-_ALLOWED_REGIONS = set(REGION_FILTERS)
-_ALLOWED_TIME_WINDOWS = set(TIME_WINDOWS)
-_ALLOWED_COMPARISONS = set(COMPARISONS)
-_ALLOWED_CALCULATIONS = set(CALCULATIONS)
+def _contains_any(q: str, terms: tuple[str, ...]) -> bool:
+    return any(term in q for term in terms)
 
 
-def _build_parse_schema() -> Dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "intent": {"type": "string", "enum": list(INTENTS)},
-            "primary_metric": {
-                "anyOf": [
-                    {"type": "string", "enum": list(METRICS)},
-                    {"type": "null"},
-                ]
-            },
-            "metrics": {
-                "type": "array",
-                "items": {"type": "string", "enum": list(METRICS)},
-            },
-            "filters": {
-                "anyOf": [
-                    {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "region": {
-                                "anyOf": [
-                                    {"type": "string", "enum": list(REGION_FILTERS)},
-                                    {"type": "null"},
-                                ]
-                            },
-                            "resource_category": {
-                                "anyOf": [
-                                    {
-                                        "type": "string",
-                                        "enum": list(RESOURCE_CATEGORY_FILTERS),
-                                    },
-                                    {"type": "null"},
-                                ]
-                            },
-                            "dataset": {
-                                "anyOf": [
-                                    {"type": "string", "enum": list(DATASET_FILTERS)},
-                                    {"type": "null"},
-                                ]
-                            },
-                            "normal_years": {
-                                "anyOf": [
-                                    {"type": "integer", "enum": [1, 2, 3, 5]},
-                                    {"type": "null"},
-                                ]
-                            },
-                        },
-                        "required": [
-                            "region",
-                            "resource_category",
-                            "dataset",
-                            "normal_years",
-                        ],
-                    },
-                    {"type": "null"},
-                ]
-            },
-            "time_window": {
-                "anyOf": [
-                    {"type": "string", "enum": list(TIME_WINDOWS)},
-                    {"type": "null"},
-                ]
-            },
-            "comparison": {
-                "anyOf": [
-                    {"type": "string", "enum": list(COMPARISONS)},
-                    {"type": "null"},
-                ]
-            },
-            "calculation": {
-                "anyOf": [
-                    {"type": "string", "enum": list(CALCULATIONS)},
-                    {"type": "null"},
-                ]
-            },
-            "question_topics": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "requires_multiple_sources": {"type": "boolean"},
-            "reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "ambiguous": {"type": "boolean"},
-        },
-        "required": [
-            "intent",
-            "primary_metric",
-            "metrics",
-            "filters",
-            "time_window",
-            "comparison",
-            "calculation",
-            "question_topics",
-            "requires_multiple_sources",
-            "reason",
-            "confidence",
-            "ambiguous",
-        ],
-    }
+def _classify_domain(q: str) -> tuple[str, str, float]:
+    if _contains_any(q, STORAGE_TERMS):
+        return "storage", "Storage language detected.", 0.9
+    if _contains_any(q, WEEKLY_CHANGE_TERMS):
+        return "storage", "Storage weekly-change language detected.", 0.78
+    if "region" in q and any(term in q for term in ("normal", "above", "below")):
+        return "storage", "Regional storage comparison language detected.", 0.72
+    if _contains_any(q, NON_STORAGE_NATGAS_TERMS):
+        return "unsupported", "Only the storage domain is active right now.", 0.9
+    return "unsupported", "No supported storage domain language detected.", 0.7
 
 
-def _build_prompts(user_query: str, normalized_query: str) -> Tuple[str, str]:
-    system_prompt = (
-        "You are a strict query parser for an energy analytics backend. "
-        "Your job is to convert the user’s question into structured JSON.\n\n"
-        "Do NOT select source adapters.\n"
-        "Do NOT execute queries.\n"
-        "Do NOT invent metrics or filters.\n\n"
-        "Use only allowed enum values.\n\n"
-        "If multiple datasets are required, set requires_multiple_sources=true.\n"
-        "If uncertain, set intent='ambiguous'.\n"
-        "If unsupported, set intent='unsupported', primary_metric=null, metrics=[]."
+def _parse_regions(q: str) -> list[str]:
+    if _asks_all_regions(q):
+        return list(STORAGE_REGIONS)
+
+    regions: list[str] = []
+    padded = f" {q} "
+    for region, aliases in REGION_ALIASES.items():
+        if any(alias in padded for alias in aliases) and region not in regions:
+            regions.append(region)
+    return regions
+
+
+def _asks_all_regions(q: str) -> bool:
+    all_region_phrases = (
+        "by region",
+        "all regions",
+        "across regions",
+        "compare regions",
+        "which region",
+        "rank",
+        "ranking",
     )
-
-    user_prompt = (
-        f"Original user query: {user_query}\n"
-        f"Normalized query: {normalized_query}\n"
-        "Task: parse question into intent, metric(s), filters, time_window, comparison, calculation, and topics using allowed enums only."
-    )
-    return system_prompt, user_prompt
+    return any(phrase in q for phrase in all_region_phrases)
 
 
-def _get_openai_client() -> Any:
-    global OPENAI_CLIENT
-    if OPENAI_CLIENT is None:
-        OPENAI_CLIENT = OpenAI()
-    return OPENAI_CLIENT
+def _parse_value_type(q: str) -> str:
+    if _contains_any(q, WEEKLY_CHANGE_TERMS):
+        return "weekly_change"
+    return "level"
 
 
-def _extract_json_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
-
-    output = getattr(response, "output", None)
-    if isinstance(output, list):
-        for item in output:
-            content = getattr(item, "content", None)
-            if not isinstance(content, list):
-                continue
-            for chunk in content:
-                text_value = getattr(chunk, "text", None)
-                if isinstance(text_value, str) and text_value.strip():
-                    return text_value
-
-    raise LLMQueryParserError("Responses API returned no parseable text payload")
+def _parse_comparisons(q: str) -> list[str]:
+    comparisons: list[str] = []
+    if any(term in q for term in ("prior week", "previous week", "previous report", "last report", "accelerating")):
+        comparisons.append("prior_week")
+    if any(term in q for term in ("last year", "year ago", "same week last year")):
+        comparisons.append("last_year")
+    if any(term in q for term in ("5-year average", "5 year average", "five-year average", "five year average")):
+        comparisons.append("five_year_avg")
+    if any(term in q for term in ("range", "band", "min/max", "min max", "five-year range", "5-year range")):
+        comparisons.append("five_year_range")
+    if any(term in q for term in ("normal", "seasonal", "same week history", "above normal", "below normal")):
+        comparisons.append("seasonal_normal")
+    return comparisons or ["none"]
 
 
-def _request_structured_parse(
-    user_query: str,
-    normalized_query: str,
-    model: str,
-) -> Dict[str, Any]:
-    system_prompt, user_prompt = _build_prompts(user_query=user_query, normalized_query=normalized_query)
-    client = _get_openai_client()
-    response = client.responses.create(
-        model=model,
-        input=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "llm_query_parse_output",
-                "strict": True,
-                "schema": _build_parse_schema(),
-            }
-        },
-    )
-    raw_json = _extract_json_text(response)
-    parsed = json.loads(raw_json)
-    if not isinstance(parsed, dict):
-        raise LLMQueryParserError("Structured parse payload must be a JSON object")
-    return parsed
+def _parse_analysis_type(q: str, value_type: str, comparisons: list[str], regions: list[str]) -> str:
+    if any(term in q for term in ("which region", "rank", "ranking", "most above", "most below")):
+        return "ranking"
+    if _asks_all_regions(q):
+        return "regional_compare"
+    if len(regions) > 1:
+        return "time_series"
+    if any(comp in comparisons for comp in ("five_year_avg", "five_year_range", "seasonal_normal", "last_year")):
+        return "seasonal_compare"
+    if any(term in q for term in ("plot", "chart", "trend", "over time", "since", "from ")) or re.search(r"\b20\d{2}\b", q):
+        return "time_series"
+    if value_type == "weekly_change":
+        return "weekly_change"
+    if any(term in q for term in ("why", "explain", "driver", "driving")):
+        return "explain"
+    return "latest"
 
 
-def _clamp_confidence(value: Any) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, parsed))
+def _parse_chart_type(q: str, analysis_type: str) -> str:
+    explicit_chart = any(term in q for term in ("plot", "chart", "graph", "visualize"))
+    if analysis_type == "time_series":
+        return "line"
+    if analysis_type in {"regional_compare", "ranking"}:
+        return "bar"
+    if analysis_type == "seasonal_compare":
+        return "seasonal_line"
+    if analysis_type == "weekly_change":
+        return "line"
+    if explicit_chart:
+        return "line"
+    return "none"
 
 
-def _normalize_filters(filters: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(filters, dict):
-        return None
-    out: Dict[str, Any] = {}
-    region = filters.get("region")
-    resource_category = filters.get("resource_category")
-    dataset = filters.get("dataset")
-    if isinstance(region, str) and region in _ALLOWED_REGIONS:
-        out["region"] = region
-    if isinstance(resource_category, str) and resource_category in RESOURCE_CATEGORY_FILTERS:
-        out["resource_category"] = resource_category
-    if isinstance(dataset, str) and dataset in DATASET_FILTERS:
-        out["dataset"] = dataset
-    normal_years = filters.get("normal_years")
-    if isinstance(normal_years, int) and normal_years in {1, 2, 3, 5}:
-        out["normal_years"] = normal_years
-    return out or None
+def _parse_output_mode(q: str, chart_type: str) -> str:
+    if any(term in q for term in ("plot", "chart", "graph", "visualize")):
+        return "chart_and_answer"
+    if chart_type != "none" and any(term in q for term in ("show", "compare", "trend")):
+        return "chart_and_answer"
+    return "answer"
 
 
-def _sanitize_payload(payload: Dict[str, Any]) -> LLMQueryParseOutput:
-    intent_value = payload.get("intent")
-    intent = intent_value if isinstance(intent_value, str) and intent_value in _ALLOWED_INTENTS else "unsupported"
+def _parse_date_expression(q: str) -> Optional[str]:
+    match = re.search(r"\bsince\s+20\d{2}\b", q)
+    if match:
+        return match.group(0)
 
-    primary_metric_value = payload.get("primary_metric")
-    primary_metric = (
-        primary_metric_value if isinstance(primary_metric_value, str) and primary_metric_value in _ALLOWED_METRICS else None
-    )
+    match = re.search(r"\bfrom\s+20\d{2}\s+(?:to|through|-)\s+20\d{2}\b", q)
+    if match:
+        return match.group(0)
 
-    metrics: list[str] = []
-    raw_metrics = payload.get("metrics")
-    if isinstance(raw_metrics, list):
-        for metric in raw_metrics:
-            if isinstance(metric, str) and metric in _ALLOWED_METRICS and metric not in metrics:
-                metrics.append(metric)
-    if primary_metric and primary_metric not in metrics:
-        metrics.insert(0, primary_metric)
+    match = re.search(r"\b(?:latest|current|this week|this year|ytd|year to date)\b", q)
+    if match:
+        return match.group(0)
 
-    if intent == "unsupported":
-        primary_metric = None
-        metrics = []
+    return None
 
-    time_window = payload.get("time_window")
-    if not isinstance(time_window, str) or time_window not in _ALLOWED_TIME_WINDOWS:
-        time_window = "unknown"
 
-    comparison = payload.get("comparison")
-    if not isinstance(comparison, str) or comparison not in _ALLOWED_COMPARISONS:
-        comparison = "none"
+def _sanitize(value: str, allowed: tuple[str, ...], default: str) -> str:
+    return value if value in allowed else default
 
-    calculation = payload.get("calculation")
-    if not isinstance(calculation, str) or calculation not in _ALLOWED_CALCULATIONS:
-        calculation = "none"
 
-    question_topics: list[str] = []
-    raw_topics = payload.get("question_topics")
-    if isinstance(raw_topics, list):
-        for topic in raw_topics:
-            if isinstance(topic, str):
-                normalized = topic.strip().lower()
-                if normalized and normalized not in question_topics:
-                    question_topics.append(normalized)
+def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryParse:
+    q = normalized_query or user_query.lower().strip()
+    domain, reason, confidence = _classify_domain(q)
+    if domain != "storage":
+        return EnergyQueryParse(
+            domain="unsupported",
+            analysis_type="unsupported",
+            regions=[],
+            value_type="level",
+            comparisons=["none"],
+            chart_type="none",
+            output_mode="answer",
+            date_expression=_parse_date_expression(q),
+            confidence=confidence,
+            ambiguous=False,
+            reason=reason,
+        )
 
-    requires_multiple_sources = bool(payload.get("requires_multiple_sources", False))
-    if len(metrics) >= 2:
-        requires_multiple_sources = True
+    regions = _parse_regions(q) or ["lower48"]
+    value_type = _parse_value_type(q)
+    comparisons = _parse_comparisons(q)
+    analysis_type = _parse_analysis_type(q, value_type, comparisons, regions)
+    chart_type = _parse_chart_type(q, analysis_type)
+    output_mode = _parse_output_mode(q, chart_type)
+    date_expression = _parse_date_expression(q)
 
-    ambiguous = bool(payload.get("ambiguous", False))
-    confidence = _clamp_confidence(payload.get("confidence"))
-    if intent == "ambiguous" or confidence < 0.55:
-        ambiguous = True
+    analysis_type = _sanitize(analysis_type, STORAGE_ANALYSIS_TYPES, "unsupported")
+    value_type = _sanitize(value_type, VALUE_TYPES, "level")
+    chart_type = _sanitize(chart_type, CHART_TYPES, "none")
+    output_mode = _sanitize(output_mode, OUTPUT_MODES, "answer")
+    comparisons = [comp for comp in comparisons if comp in COMPARISONS] or ["none"]
 
-    reason_value = payload.get("reason")
-    reason = str(reason_value)[:240] if reason_value is not None else None
-
-    return LLMQueryParseOutput(
-        intent=intent,
-        primary_metric=primary_metric,
-        metrics=metrics,
-        filters=_normalize_filters(payload.get("filters")),
-        time_window=time_window,
-        comparison=comparison,
-        calculation=calculation,
-        question_topics=question_topics,
-        requires_multiple_sources=requires_multiple_sources,
-        reason=reason,
+    return EnergyQueryParse(
+        domain="storage",
+        analysis_type=analysis_type,
+        regions=regions,
+        value_type=value_type,
+        comparisons=comparisons,
+        chart_type=chart_type,
+        output_mode=output_mode,
+        date_expression=date_expression,
+        filters={"regions": regions},
         confidence=confidence,
-        ambiguous=ambiguous,
+        ambiguous=False,
+        reason=reason,
     )
 
 
-def _is_transient_error(error: Exception) -> bool:
-    transient_names = {
-        "APIConnectionError",
-        "APITimeoutError",
-        "RateLimitError",
-        "InternalServerError",
-    }
-    return error.__class__.__name__ in transient_names or isinstance(error, (ConnectionError, TimeoutError))
-
-
-def llm_parse_query(user_query: str, normalized_query: str) -> LLMQueryParseOutput:
-    model = os.getenv(
-        "ATLAS_QUERY_PARSER_MODEL",
-        os.getenv("ATLAS_ROUTER_MODEL", "gpt-5.2"),
-    )
-    try:
-        max_attempts = max(1, int(os.getenv("ATLAS_QUERY_PARSER_MAX_ATTEMPTS", "2")))
-    except ValueError:
-        max_attempts = 2
-    backoff_seconds = (0.15, 0.35)
-
-    last_error: Optional[Exception] = None
-
-    for attempt in range(1, max_attempts + 1):
-        try:
-            raw_payload = _request_structured_parse(
-                user_query=user_query,
-                normalized_query=normalized_query,
-                model=model,
-            )
-            return _sanitize_payload(raw_payload)
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-            if _is_transient_error(exc) and attempt < max_attempts:
-                logger.warning(
-                    "Transient LLM query parser error on attempt %s/%s (%s)",
-                    attempt,
-                    max_attempts,
-                    exc.__class__.__name__,
-                )
-                time.sleep(backoff_seconds[min(attempt - 1, len(backoff_seconds) - 1)])
-                continue
-            break
-
-    raise LLMQueryParserError(
-        f"Failed to parse query with model={model} after {max_attempts} attempts"
-    ) from last_error
+def llm_parse_query(user_query: str, normalized_query: str) -> EnergyQueryParse:
+    return parse_energy_query(user_query=user_query, normalized_query=normalized_query)

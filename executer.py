@@ -98,8 +98,8 @@ class MetricExecutor:
             call = calls[0]
             req = ExecuteRequest(
                 metric=call.metric,
-                start=start,
-                end=end,
+                start=call.start_date or start,
+                end=call.end_date or end,
                 filters=call.filters or {},
             )
             results[call.metric] = self.execute(req)
@@ -111,8 +111,8 @@ class MetricExecutor:
             for call in calls:
                 req = ExecuteRequest(
                     metric=call.metric,
-                    start=start,
-                    end=end,
+                    start=call.start_date or start,
+                    end=call.end_date or end,
                     filters=call.filters or {},
                 )
                 future = pool.submit(self.execute, req)

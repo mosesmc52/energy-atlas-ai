@@ -55,18 +55,21 @@ def parse_args() -> argparse.Namespace:
 
 def parse_and_print(query: str, *, show_plan: bool, compact: bool) -> None:
     from agents.llm_query_parser import llm_parse_query
-    from agents.router import normalize_query
-    from agents.source_planner import build_source_plan
+    from agents.router import normalize_query, route_query
 
     normalized_query = normalize_query(query)
     parsed = llm_parse_query(user_query=query, normalized_query=normalized_query)
+    route = route_query(query)
     output: dict[str, Any] = {
         "query": query,
         "normalized_query": normalized_query,
         "parser_output": parsed,
+        "route": route,
     }
     if show_plan:
-        output["source_plan"] = build_source_plan(parsed)
+        from agents.source_planner import build_source_plan
+
+        output["source_plan"] = build_source_plan(route)
 
     json_kwargs = {"default": _jsonable, "sort_keys": True}
     if not compact:

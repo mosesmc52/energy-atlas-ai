@@ -294,15 +294,20 @@ def parse_signal_question(question: str) -> Optional[ParsedSignal]:
             )
 
     route = route_query(question)
-    if route.intent not in {"unsupported", "ambiguous"} and route.primary_metric:
+    if (
+        route.domain != "unsupported"
+        and route.analysis_type != "unsupported"
+        and not route.ambiguous
+        and route.primary_metric
+    ):
         return ParsedSignal(
             signal_id="routed_metric_query",
             question=question,
             metric=route.primary_metric,
             filters=route.filters or {},
             config={
-                "route_intent": route.intent,
-                "route_source": route.source,
+                "route_analysis_type": route.analysis_type,
+                "route_domain": route.domain,
             },
         )
 
@@ -702,7 +707,12 @@ class SignalEvaluator:
 
     def _evaluate_routed_metric_query(self, parsed: ParsedSignal) -> SignalEvaluation:
         route = route_query(parsed.question)
-        if route.intent in {"unsupported", "ambiguous"} or route.primary_metric is None:
+        if (
+            route.domain == "unsupported"
+            or route.analysis_type == "unsupported"
+            or route.ambiguous
+            or route.primary_metric is None
+        ):
             reason = route.reason or "This question did not map to a supported metric route."
             return SignalEvaluation(
                 question=parsed.question,
@@ -714,8 +724,8 @@ class SignalEvaluator:
 
         result = self._execute_metric(
             route.primary_metric,
-            start=route.start,
-            end=route.end,
+            start=route.start_date or "",
+            end=route.end_date or "",
             filters=route.filters,
         )
         df = result.df.copy()
@@ -744,8 +754,8 @@ class SignalEvaluator:
                 explanation=ranking_summary,
                 metric=route.primary_metric,
                 metadata={
-                    "route_intent": route.intent,
-                    "route_source": route.source,
+                    "route_analysis_type": route.analysis_type,
+                    "route_domain": route.domain,
                     "filters": route.filters or {},
                     "metric_source": result.source.reference,
                     "evaluated_at": self._evaluated_at(),
@@ -833,8 +843,8 @@ class SignalEvaluator:
             as_of=latest_date,
             metric=route.primary_metric,
             metadata={
-                "route_intent": route.intent,
-                "route_source": route.source,
+                "route_analysis_type": route.analysis_type,
+                "route_domain": route.domain,
                 "filters": route.filters or {},
                 "metric_source": result.source.reference,
                 "evaluated_at": self._evaluated_at(),
