@@ -19,6 +19,35 @@ _NUMBER_WORDS = {
     "twelve": 12,
 }
 
+_MONTHS = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sep": 9,
+    "sept": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+
+_MONTH_PATTERN = "|".join(sorted(_MONTHS, key=len, reverse=True))
+
 
 def _parse_count(token: str) -> Optional[int]:
     t = str(token or "").strip().lower()
@@ -37,6 +66,12 @@ def has_explicit_date_reference(query: str) -> bool:
     if re.search(r"\bsince\s+(20\d{2})\b", q):
         return True
     if re.search(r"\bfrom\s+(20\d{2})\s+(?:to|through|-)\s+(20\d{2})\b", q):
+        return True
+    if re.search(
+        rf"\bfrom\s+({_MONTH_PATTERN})\s+(20\d{{2}})\s+(?:to|through|-)\s+"
+        rf"({_MONTH_PATTERN})\s+(20\d{{2}})\b",
+        q,
+    ):
         return True
     if re.search(r"last\s+(\d+)\s+(day|days|month|months|year|years)", q):
         return True
@@ -95,6 +130,20 @@ def resolve_date_range(query: str) -> Tuple[str, str]:
         start = date(start_year, 1, 1)
         end = date(end_year, 12, 31)
         return start.isoformat(), end.isoformat()
+
+    m = re.search(
+        rf"\bfrom\s+({_MONTH_PATTERN})\s+(20\d{{2}})\s+(?:to|through|-)\s+"
+        rf"({_MONTH_PATTERN})\s+(20\d{{2}})\b",
+        q,
+    )
+    if m:
+        start_month = _MONTHS[m.group(1)]
+        start_year = int(m.group(2))
+        end_month = _MONTHS[m.group(3)]
+        end_year = int(m.group(4))
+        start = pd.Timestamp(year=start_year, month=start_month, day=1)
+        end = pd.Timestamp(year=end_year, month=end_month, day=1) + pd.offsets.MonthEnd(1)
+        return start.date().isoformat(), end.date().isoformat()
 
     # ---- last/past N days / months / years ----
     m = re.search(

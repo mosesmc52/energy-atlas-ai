@@ -90,8 +90,12 @@ def _classify_domain(q: str) -> tuple[str, str, float]:
         return "storage", "Storage language detected.", 0.9
     if _contains_any(q, WEEKLY_CHANGE_TERMS):
         return "storage", "Storage weekly-change language detected.", 0.78
+    if "gas" in q and ("region" in q or _contains_any(q, tuple(alias for aliases in REGION_ALIASES.values() for alias in aliases))):
+        return "storage", "Storage region language detected.", 0.74
     if "region" in q and any(term in q for term in ("normal", "above", "below")):
         return "storage", "Regional storage comparison language detected.", 0.72
+    if any(term in q for term in ("seasonal average", "seasonal normal", "versus the seasonal", "vs the seasonal")):
+        return "storage", "Storage seasonal comparison language detected.", 0.72
     if _contains_any(q, NON_STORAGE_NATGAS_TERMS):
         return "unsupported", "Only the storage domain is active right now.", 0.9
     return "unsupported", "No supported storage domain language detected.", 0.7
@@ -134,11 +138,11 @@ def _parse_comparisons(q: str) -> list[str]:
         comparisons.append("prior_week")
     if any(term in q for term in ("last year", "year ago", "same week last year")):
         comparisons.append("last_year")
-    if any(term in q for term in ("5-year average", "5 year average", "five-year average", "five year average")):
+    if any(term in q for term in ("5-year average", "5 year average", "five-year average", "five year average", "seasonal average")):
         comparisons.append("five_year_avg")
     if any(term in q for term in ("range", "band", "min/max", "min max", "five-year range", "5-year range")):
         comparisons.append("five_year_range")
-    if any(term in q for term in ("normal", "seasonal", "same week history", "above normal", "below normal")):
+    if any(term in q for term in ("normal", "seasonal", "same week history")) and "five_year_avg" not in comparisons:
         comparisons.append("seasonal_normal")
     return comparisons or ["none"]
 

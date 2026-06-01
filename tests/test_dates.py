@@ -36,6 +36,14 @@ class TestDates(unittest.TestCase):
         self.assertEqual(start, expected_start)
         self.assertEqual(end, expected_end)
 
+    def test_month_name_range_resolves_to_full_month_bounds(self) -> None:
+        start, end = resolve_date_range(
+            "Compare East storage from January 2020 through December 2023."
+        )
+
+        self.assertEqual(start, "2020-01-01")
+        self.assertEqual(end, "2023-12-31")
+
 
 if __name__ == "__main__":
     unittest.main()
