@@ -15,13 +15,6 @@ class MetricCapability:
 
 
 _REGISTRY: dict[str, MetricCapability] = {
-    "iso_gas_dependency": MetricCapability(
-        metric="iso_gas_dependency",
-        fallback_metric="ng_electricity",
-        fallback_note=(
-            "Direct ISO gas-share data unavailable; using natural gas power-burn trend as proxy."
-        ),
-    ),
     "ng_electricity": MetricCapability(
         metric="ng_electricity",
         fallback_metric="ng_consumption_by_sector",

@@ -8,10 +8,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 from schemas.answer import SourceRef
 from agents.source_planner import SourcePlan
-from tools.cftc_adapter import CFTCAdapter, CFTCResult
-from tools.des_adapter import DESResult, DallasEnergySurveyAdapter
 from tools.eia_adapter import EIAAdapter, EIAResult
-from tools.gridstatus_adapter import GridStatusAdapter, GridStatusResult
 
 
 @dataclass
@@ -38,14 +35,8 @@ class MetricExecutor:
         self,
         *,
         eia: EIAAdapter,
-        grid: GridStatusAdapter,
-        des: DallasEnergySurveyAdapter | None = None,
-        cftc: CFTCAdapter | None = None,
     ):
         self.eia = eia
-        self.grid = grid
-        self.des = des or DallasEnergySurveyAdapter()
-        self.cftc = cftc or CFTCAdapter()
 
         self._metric_to_handler = {
             # --- EIA ---
@@ -64,46 +55,6 @@ class MetricExecutor:
             "weather_degree_days_forecast_vs_5y": self._eia_weather_degree_days_forecast_vs_5y,
             "weather_regional_demand_drivers": self._eia_weather_regional_demand_drivers,
             "weekly_energy_atlas_summary": self._eia_weekly_energy_atlas_summary,
-            # --- Dallas Fed Energy Survey ---
-            "des_business_activity_index": self._des_metric,
-            "des_company_outlook_index": self._des_metric,
-            "des_outlook_uncertainty_index": self._des_metric,
-            "des_oil_production_index": self._des_metric,
-            "des_gas_production_index": self._des_metric,
-            "des_capex_index": self._des_metric,
-            "des_employment_index": self._des_metric,
-            "des_input_cost_index": self._des_metric,
-            "des_finding_development_costs_index": self._des_metric,
-            "des_lease_operating_expense_index": self._des_metric,
-            "des_prices_received_services_index": self._des_metric,
-            "des_equipment_utilization_index": self._des_metric,
-            "des_operating_margin_index": self._des_metric,
-            "des_wti_price_expectation_6m": self._des_metric,
-            "des_wti_price_expectation_1y": self._des_metric,
-            "des_wti_price_expectation_2y": self._des_metric,
-            "des_wti_price_expectation_5y": self._des_metric,
-            "des_hh_price_expectation_6m": self._des_metric,
-            "des_hh_price_expectation_1y": self._des_metric,
-            "des_hh_price_expectation_2y": self._des_metric,
-            "des_hh_price_expectation_5y": self._des_metric,
-            "des_breakeven_oil_us": self._des_metric,
-            "des_breakeven_gas_us": self._des_metric,
-            "des_breakeven_oil_permian": self._des_metric,
-            "des_breakeven_oil_eagle_ford": self._des_metric,
-            "des_special_questions_text": self._des_metric,
-            "des_comments_text": self._des_metric,
-            "des_report_summary_text": self._des_metric,
-            # --- CFTC ---
-            "managed_money_long": self._cftc_metric,
-            "managed_money_short": self._cftc_metric,
-            "managed_money_net": self._cftc_metric,
-            "managed_money_net_percentile_156w": self._cftc_metric,
-            "open_interest": self._cftc_metric,
-            # --- GridStatus (v1) ---
-            "iso_fuel_mix": self._grid_iso_fuel_mix,
-            "iso_load": self._grid_iso_load,
-            "iso_gas_dependency": self._grid_iso_gas_dependency,
-            "iso_renewables": self._grid_iso_renewables,
         }
 
     def execute(self, req: ExecuteRequest) -> MetricResult:
@@ -114,16 +65,6 @@ class MetricExecutor:
 
         # ---- execute adapter handler ----
         runtime_filters = dict(req.filters or {})
-        if req.metric.startswith("des_"):
-            runtime_filters["_metric"] = req.metric
-        if req.metric in {
-            "managed_money_long",
-            "managed_money_short",
-            "managed_money_net",
-            "managed_money_net_percentile_156w",
-            "open_interest",
-        }:
-            runtime_filters["_metric"] = req.metric
         res = handler(start=req.start, end=req.end, filters=runtime_filters)
 
         # Normalize to MetricResult
@@ -189,7 +130,7 @@ class MetricExecutor:
         """
         if isinstance(res, MetricResult):
             return res
-        if isinstance(res, (EIAResult, GridStatusResult, DESResult, CFTCResult)):
+        if isinstance(res, EIAResult):
             return MetricResult(df=res.df, source=res.source, meta=res.meta)
         # fallback: duck-typing if needed
         if hasattr(res, "df") and hasattr(res, "source"):
@@ -830,123 +771,5 @@ class MetricExecutor:
                     "Derived weekly summary combining weather-driven demand impact, storage surprise vs "
                     "recent average proxy, LNG/supply shifts, and Henry Hub price result."
                 ),
-            },
-        )
-
-    def _des_metric(
-        self, *, start: str, end: str, filters: Dict[str, Any]
-    ) -> DESResult:
-        metric = str(filters.get("_metric"))
-        return self.des.get_metric(metric, start_date=start, end_date=end)
-
-    def _cftc_metric(
-        self, *, start: str, end: str, filters: Dict[str, Any]
-    ) -> CFTCResult:
-        metric = str(filters.get("_metric"))
-        return self.cftc.get_metric(metric, start=start, end=end)
-
-    # -----------------------
-    # Metric handlers (GridStatus v1)
-    # -----------------------
-
-    def _grid_iso_fuel_mix(
-        self, *, start: str, end: str, filters: Dict[str, Any]
-    ) -> GridStatusResult:
-        iso = str(filters.get("iso") or "ercot")
-        try:
-            return self.grid.iso_fuel_mix(iso=iso, start=start, end=end)
-        except Exception as exc:  # noqa: BLE001
-            return self._gridstatus_error_result(
-                metric="iso_fuel_mix",
-                iso=iso,
-                start=start,
-                end=end,
-                error=exc,
-            )
-
-    def _grid_iso_load(
-        self, *, start: str, end: str, filters: Dict[str, Any]
-    ) -> GridStatusResult:
-        iso = str(filters.get("iso") or "ercot")
-        try:
-            return self.grid.iso_load(iso=iso, start=start, end=end)
-        except Exception as exc:  # noqa: BLE001
-            return self._gridstatus_error_result(
-                metric="iso_load",
-                iso=iso,
-                start=start,
-                end=end,
-                error=exc,
-            )
-
-    def _grid_iso_gas_dependency(
-        self, *, start: str, end: str, filters: Dict[str, Any]
-    ) -> GridStatusResult:
-        iso = str(filters.get("iso") or "ercot")
-        heat_rate = float(filters.get("heat_rate_mmbtu_per_mwh", 7.5))
-        try:
-            return self.grid.iso_gas_dependency(
-                iso=iso,
-                start=start,
-                end=end,
-                heat_rate_mmbtu_per_mwh=heat_rate,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self._gridstatus_error_result(
-                metric="iso_gas_dependency",
-                iso=iso,
-                start=start,
-                end=end,
-                error=exc,
-                extra={"heat_rate_mmbtu_per_mwh": heat_rate},
-            )
-
-    def _grid_iso_renewables(
-        self, *, start: str, end: str, filters: Dict[str, Any]
-    ) -> GridStatusResult:
-        iso = str(filters.get("iso") or "ercot")
-        try:
-            return self.grid.iso_renewables(iso=iso, start=start, end=end)
-        except Exception as exc:  # noqa: BLE001
-            return self._gridstatus_error_result(
-                metric="iso_renewables",
-                iso=iso,
-                start=start,
-                end=end,
-                error=exc,
-            )
-
-    def _gridstatus_error_result(
-        self,
-        *,
-        metric: str,
-        iso: str,
-        start: str,
-        end: str,
-        error: Exception,
-        extra: Dict[str, Any] | None = None,
-    ) -> GridStatusResult:
-        details = str(error).strip() or repr(error)
-        parameters: Dict[str, Any] = {
-            "metric": metric,
-            "iso": iso,
-            "start": start,
-            "end": end,
-            "error": details,
-        }
-        if extra:
-            parameters.update(extra)
-
-        return GridStatusResult(
-            df=pd.DataFrame(columns=["date", "value"]),
-            source=SourceRef(
-                source_type="gridstatus",
-                label=f"GridStatus {metric} unavailable",
-                reference=f"gridstatus:error_{metric}",
-                parameters=parameters,
-            ),
-            meta={
-                "error": details,
-                "fallback": "empty_dataframe",
             },
         )

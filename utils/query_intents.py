@@ -12,14 +12,6 @@ SEASONAL_NORM_PHRASES = (
     "compared to normal",
 )
 
-ISO_GAS_SHARE_PHRASES = (
-    "percentage of electricity generation",
-    "percent of electricity generation",
-    "what percentage of electricity generation",
-    "electricity generation from natural gas",
-    "share of electricity from natural gas",
-)
-
 CURRENT_LIKE_TOKENS = ("current", "latest", "right now", "today")
 
 EXPLICIT_WINDOW_PATTERN = (
@@ -83,13 +75,3 @@ def is_power_burn_seasonal_question(text: str) -> bool:
     return has_power_context and has_baseline_context and (
         has_gas_usage_context or ("seasonal demand" in q or "historical seasonal" in q)
     )
-
-
-def is_iso_gas_share_question(text: str) -> bool:
-    q = (text or "").lower()
-    return any(phrase in q for phrase in ISO_GAS_SHARE_PHRASES)
-
-
-def is_renewables_power_sector_demand_question(text: str) -> bool:
-    q = (text or "").lower()
-    return "renewables" in q and "power sector" in q and "demand" in q

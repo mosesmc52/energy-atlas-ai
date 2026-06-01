@@ -18,11 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agents.router import route_query
 from executer import ExecuteRequest, MetricExecutor
-from tools.cftc_adapter import CFTCAdapter
-from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
-from tools.gridstatus_adapter import GridStatusAdapter
 from alerts.models import AlertOperator, AlertTriggerType, AlertValueMode
 
 
@@ -166,11 +163,6 @@ METRIC_REGISTRY: dict[str, dict[str, Any]] = {
         "zscore_supported": False,
         "geography": "none",
     },
-    "iso_gas_dependency": {
-        "label": "Power Grid Gas Share",
-        "zscore_supported": True,
-        "geography": "none",
-    },
 }
 
 
@@ -211,17 +203,8 @@ def build_signal_evaluator() -> "SignalEvaluator":
         cache_dir=cache_root / "eia",
         weather_csv_path=weather_csv_path,
     )
-    grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    des_adapter = DallasEnergySurveyAdapter(
-        raw_dir=cache_root / "des" / "raw",
-        processed_dir=cache_root / "des" / "processed",
-    )
-    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
     executor = MetricExecutor(
         eia=eia_adapter,
-        grid=grid_adapter,
-        des=des_adapter,
-        cftc=cftc_adapter,
     )
     return SignalEvaluator(executor=executor, eia=eia_adapter)
 
@@ -238,17 +221,8 @@ def build_metric_forecaster() -> TrendForecaster:
         cache_dir=cache_root / "eia",
         weather_csv_path=weather_csv_path,
     )
-    grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    des_adapter = DallasEnergySurveyAdapter(
-        raw_dir=cache_root / "des" / "raw",
-        processed_dir=cache_root / "des" / "processed",
-    )
-    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
     executor = MetricExecutor(
         eia=eia_adapter,
-        grid=grid_adapter,
-        des=des_adapter,
-        cftc=cftc_adapter,
     )
     return TrendForecaster(executor=executor)
 
@@ -644,8 +618,6 @@ class SignalEvaluator:
     def _pick_value_column(df: pd.DataFrame, metric: str) -> Optional[str]:
         if "value" in df.columns:
             return "value"
-        if metric == "iso_gas_dependency" and "gas_share" in df.columns:
-            return "gas_share"
         numeric_cols = [
             c for c in df.columns if c != "date" and pd.api.types.is_numeric_dtype(df[c])
         ]
@@ -674,7 +646,7 @@ class SignalEvaluator:
     @staticmethod
     def _titleize_metric(metric: str) -> str:
         text = (metric or "").replace("_", " ").strip()
-        acronyms = {"lng": "LNG", "ng": "Natural Gas", "iso": "ISO"}
+        acronyms = {"lng": "LNG", "ng": "Natural Gas"}
         return " ".join(acronyms.get(part.lower(), part.capitalize()) for part in text.split()) or "Metric"
 
     def _sector_ranking_summary(self, df: pd.DataFrame) -> Optional[str]:

@@ -17,12 +17,9 @@ class DataPreview(BaseModel):
 class SourceRef(BaseModel):
     source_type: Literal[
         "eia_api",
-        "gridstatus",
-        "dallasfed",
         "aeo_table",
         "aeo_document",
         "ferc_form",
-        "cftc",
         "newsletter",
         "simulation",
         "manual",

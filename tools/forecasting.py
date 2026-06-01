@@ -215,9 +215,6 @@ class TrendForecaster:
             return "value"
 
         metric_defaults = {
-            "iso_gas_dependency": "gas_share",
-            "iso_fuel_mix": "total_generation_mw",
-            "iso_renewables": "renewable_generation",
             "weather_degree_days_forecast_vs_5y": "demand_delta_bcfd",
             "weather_regional_demand_drivers": "demand_delta_bcfd",
         }

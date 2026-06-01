@@ -4,11 +4,6 @@ from agents.metric_capabilities import get_metric_capability
 
 
 class TestMetricCapabilities(unittest.TestCase):
-    def test_iso_gas_dependency_has_proxy_fallback(self) -> None:
-        capability = get_metric_capability("iso_gas_dependency")
-        self.assertEqual(capability.fallback_metric, "ng_electricity")
-        self.assertIsNotNone(capability.fallback_note)
-
     def test_unknown_metric_returns_default_capability(self) -> None:
         capability = get_metric_capability("unknown_metric")
         self.assertEqual(capability.metric, "unknown_metric")

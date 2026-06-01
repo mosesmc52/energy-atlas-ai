@@ -5,7 +5,6 @@ import logging
 from typing import Optional
 
 from agents.llm_query_parser import LLMQueryParseOutput
-from agents.llm_router import METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -43,20 +42,7 @@ METRIC_TO_ADAPTER = {
     "ng_pipeline": "pipeline",
     "weather_degree_days_forecast_vs_5y": "weather",
     "weekly_energy_atlas_summary": "derived",
-    "iso_load": "gridstatus",
-    "iso_fuel_mix": "gridstatus",
-    "iso_gas_dependency": "gridstatus",
-    "iso_renewables": "gridstatus",
-    "managed_money_long": "cftc",
-    "managed_money_short": "cftc",
-    "managed_money_net": "cftc",
-    "managed_money_net_percentile_156w": "cftc",
-    "open_interest": "cftc",
 }
-
-for _metric in METRICS:
-    if _metric.startswith("des_"):
-        METRIC_TO_ADAPTER[_metric] = "dallas_fed"
 
 
 def _valid_metric(metric: str) -> bool:
@@ -109,7 +95,6 @@ def build_source_plan(parsed: LLMQueryParseOutput) -> SourcePlan:
 
     # Multi-source expansion rules
     if allow_expansion and "ng_electricity" in metrics and parsed.intent in {"derived", "explain"}:
-        _append_call(calls, metric="iso_load", filters=dict(parsed.filters or {}), calculation="summary")
         _append_call(calls, metric="weather_degree_days_forecast_vs_5y", filters=dict(parsed.filters or {}), calculation="summary")
 
     if allow_expansion and "weekly_energy_atlas_summary" in metrics:

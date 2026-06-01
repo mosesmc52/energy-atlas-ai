@@ -1,6 +1,6 @@
 # energy-atlas-ai
 
-Energy Atlas AI is a search-first assistant for exploring and analyzing U.S. energy data from EIA, GridStatus, Dallas Fed, CFTC, and official outlook sources.
+Energy Atlas AI is a search-first assistant for exploring and analyzing U.S. energy data from EIA and official outlook sources.
 
 ## System dependencies
 

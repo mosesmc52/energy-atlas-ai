@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Literal, Optional
 from agents.llm_query_parser import LLMQueryParserError, llm_parse_query
 from agents.llm_router import (
     DATASET_FILTERS,
-    ISO_FILTERS,
     METRICS,
     REGION_FILTERS,
     RESOURCE_CATEGORY_FILTERS,
@@ -16,7 +15,6 @@ from agents.source_planner import build_source_plan
 from utils.dates import resolve_date_range
 
 ALLOWED_METRICS = set(METRICS)
-ALLOWED_ISOS = set(ISO_FILTERS)
 ALLOWED_REGIONS = set(REGION_FILTERS)
 ALLOWED_RESOURCE_CATEGORIES = set(RESOURCE_CATEGORY_FILTERS)
 ALLOWED_DATASETS = set(DATASET_FILTERS)
@@ -126,8 +124,6 @@ def _sanitize_filters(
 ) -> Optional[Dict[str, Any]]:
     out = dict(filters or {})
 
-    if "iso" in out and out["iso"] not in ALLOWED_ISOS:
-        out.pop("iso", None)
     if "region" in out and out["region"] not in ALLOWED_REGIONS:
         out.pop("region", None)
     if "resource_category" in out:

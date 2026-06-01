@@ -7,11 +7,10 @@ from executer import ExecuteRequest, MetricExecutor
 class TestMetricExecutor(unittest.TestCase):
     def test_consumption_passes_state_filter_to_eia_adapter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.ng_consumption_lower48.return_value = Mock(
             df=None, source=None, meta={"cache": {}}
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -30,11 +29,10 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_production_passes_state_filter_to_eia_adapter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.ng_production_lower48.return_value = Mock(
             df=None, source=None, meta={"cache": {}}
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -53,9 +51,8 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_imports_passes_region_filter_to_eia_adapter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.lng_imports.return_value = Mock(df=None, source=None, meta={"cache": {}})
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -74,9 +71,8 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_exports_passes_region_filter_to_eia_adapter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.lng_exports.return_value = Mock(df=None, source=None, meta={"cache": {}})
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -95,11 +91,10 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_reserves_passes_state_and_resource_category_to_eia_adapter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.ng_exploration_reserves_lower48.return_value = Mock(
             df=None, source=None, meta={"cache": {}}
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -119,9 +114,8 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_pipeline_passes_dataset_filter_to_eia_adapter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.ng_pipeline.return_value = Mock(df=None, source=None, meta={})
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -140,7 +134,6 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_storage_change_group_by_region_fetches_each_storage_region(self) -> None:
         eia = Mock()
-        grid = Mock()
 
         def make_result(*, region: str, **kwargs):
             return Mock(
@@ -152,7 +145,7 @@ class TestMetricExecutor(unittest.TestCase):
             )
 
         eia.storage_working_gas_change_weekly.side_effect = make_result
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         result = executor.execute(
             ExecuteRequest(
@@ -169,7 +162,6 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_storage_level_can_include_weekly_change(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.storage_working_gas.return_value = Mock(
             df=__import__("pandas").DataFrame(
                 [
@@ -187,7 +179,7 @@ class TestMetricExecutor(unittest.TestCase):
             source=Mock(reference="ref:change"),
             meta={"cache": {"hit": True}},
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         result = executor.execute(
             ExecuteRequest(
@@ -204,11 +196,10 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_weather_forecast_metric_passes_region_filter(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
             df=None, source=None, meta={"cache": {}}
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -228,11 +219,10 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_weather_forecast_metric_passes_requested_normal_years(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
             df=None, source=None, meta={"cache": {}}
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         executor.execute(
             ExecuteRequest(
@@ -252,7 +242,6 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_weather_regional_demand_drivers_builds_ranked_regions(self) -> None:
         eia = Mock()
-        grid = Mock()
 
         def make_regional_weather(*, region: str, **kwargs):  # noqa: ANN001
             del kwargs
@@ -283,7 +272,7 @@ class TestMetricExecutor(unittest.TestCase):
             )
 
         eia.weather_degree_days_forecast_vs_5y.side_effect = make_regional_weather
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         result = executor.execute(
             ExecuteRequest(
@@ -301,7 +290,6 @@ class TestMetricExecutor(unittest.TestCase):
 
     def test_supply_balance_regime_metric_combines_component_signals(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.ng_production_lower48.return_value = Mock(
             df=__import__("pandas").DataFrame(
                 [
@@ -329,7 +317,7 @@ class TestMetricExecutor(unittest.TestCase):
             source=Mock(reference="ref:weather"),
             meta={"cache": {"hit": True}},
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         result = executor.execute(
             ExecuteRequest(
@@ -348,47 +336,8 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertIn("regime", result.df.columns)
         self.assertEqual(result.df.iloc[-1]["regime"], "expanding")
 
-    def test_iso_gas_dependency_gracefully_falls_back_on_gridstatus_error(self) -> None:
-        eia = Mock()
-        grid = Mock()
-        grid.iso_gas_dependency.side_effect = StopIteration()
-        executor = MetricExecutor(eia=eia, grid=grid)
-
-        result = executor.execute(
-            ExecuteRequest(
-                metric="iso_gas_dependency",
-                start="2026-01-01",
-                end="2026-01-31",
-                filters={"iso": "ercot"},
-            )
-        )
-
-        self.assertEqual(result.source.reference, "gridstatus:error_iso_gas_dependency")
-        self.assertEqual(len(result.df), 0)
-        self.assertIn("error", result.source.parameters)
-
-    def test_iso_renewables_gracefully_falls_back_on_gridstatus_error(self) -> None:
-        eia = Mock()
-        grid = Mock()
-        grid.iso_renewables.side_effect = RuntimeError("service unavailable")
-        executor = MetricExecutor(eia=eia, grid=grid)
-
-        result = executor.execute(
-            ExecuteRequest(
-                metric="iso_renewables",
-                start="2026-01-01",
-                end="2026-01-31",
-                filters={"iso": "ercot"},
-            )
-        )
-
-        self.assertEqual(result.source.reference, "gridstatus:error_iso_renewables")
-        self.assertEqual(len(result.df), 0)
-        self.assertIn("service unavailable", str(result.source.parameters.get("error")))
-
     def test_weekly_energy_atlas_summary_combines_weather_storage_supply_and_price(self) -> None:
         eia = Mock()
-        grid = Mock()
         eia.weather_degree_days_forecast_vs_5y.return_value = Mock(
             df=__import__("pandas").DataFrame(
                 [
@@ -443,7 +392,7 @@ class TestMetricExecutor(unittest.TestCase):
             source=Mock(reference="ref:price"),
             meta={"cache": {"hit": True}},
         )
-        executor = MetricExecutor(eia=eia, grid=grid)
+        executor = MetricExecutor(eia=eia)
 
         result = executor.execute(
             ExecuteRequest(

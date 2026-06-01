@@ -77,11 +77,8 @@ from django.conf import settings
 from executer import MetricExecutor
 from schemas.answer import StructuredAnswer
 from schemas.chart_spec import ChartSpec
-from tools.cftc_adapter import CFTCAdapter
-from tools.des_adapter import DallasEnergySurveyAdapter
 from tools.eia_adapter import EIAAdapter
 from tools.forecasting import TrendForecaster
-from tools.gridstatus_adapter import GridStatusAdapter
 from utils.dates import resolve_date_range
 from utils.sheets_logger import GoogleSheetsQuestionLogger
 
@@ -456,17 +453,8 @@ def build_container():
         cache_dir=cache_root / "eia",
         weather_csv_path=weather_csv_path,
     )
-    grid_adapter = GridStatusAdapter(cache_dir=str(cache_root / "gridstatus"))
-    des_adapter = DallasEnergySurveyAdapter(
-        raw_dir=cache_root / "des" / "raw",
-        processed_dir=cache_root / "des" / "processed",
-    )
-    cftc_adapter = CFTCAdapter(cache_dir=cache_root / "cftc")
     executor = MetricExecutor(
         eia=eia_adapter,
-        grid=grid_adapter,
-        des=des_adapter,
-        cftc=cftc_adapter,
     )
     signal_evaluator = build_signal_evaluator()
     forecaster = TrendForecaster(executor=executor)

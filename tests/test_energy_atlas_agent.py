@@ -188,50 +188,6 @@ class TestEnergyAtlasAgent(unittest.TestCase):
         _, kwargs = forecaster.forecast_dataframe.call_args
         self.assertEqual(kwargs["horizon_days"], 14)
 
-    def test_iso_gas_dependency_falls_back_to_ng_electricity_when_empty(self) -> None:
-        executor = Mock()
-        empty_iso_result = Mock(
-            df=pd.DataFrame(columns=["date", "gas_share"]),
-            source=Mock(reference="ref:iso"),
-            meta={"metric": "iso_gas_dependency"},
-        )
-        proxy_result = Mock(
-            df=pd.DataFrame([{"date": "2026-04-01", "value": 100.0}]),
-            source=Mock(reference="ref:ng_electricity"),
-            meta={"metric": "ng_electricity"},
-        )
-        executor.execute.side_effect = [empty_iso_result, proxy_result]
-        route_fn = Mock(
-            return_value=HybridRouteResult(
-                intent="single_metric",
-                primary_metric="iso_gas_dependency",
-                metrics=["iso_gas_dependency"],
-                start="2026-01-01",
-                end="2026-04-24",
-                filters={"iso": "ercot"},
-                confidence=0.9,
-                ambiguous=False,
-                source="rule",
-            )
-        )
-        payload = Mock()
-        answer_builder_fn = Mock(return_value=payload)
-        agent = EnergyAtlasAgent(
-            executor=executor,
-            route_fn=route_fn,
-            answer_builder_fn=answer_builder_fn,
-        )
-
-        outcome = agent.run(
-            user_query="What percentage of electricity generation is coming from natural gas?"
-        )
-
-        self.assertIs(outcome.payload, payload)
-        self.assertEqual(executor.execute.call_count, 2)
-        proxy_used = answer_builder_fn.call_args.kwargs["result"]
-        self.assertEqual(proxy_used.meta.get("metric"), "ng_electricity")
-        self.assertEqual(proxy_used.meta.get("proxy_for_metric"), "iso_gas_dependency")
-
     def test_ng_electricity_falls_back_to_sector_consumption_when_empty(self) -> None:
         executor = Mock()
         empty_power_burn_result = Mock(

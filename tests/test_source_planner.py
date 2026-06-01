@@ -26,7 +26,6 @@ class TestSourcePlanner(unittest.TestCase):
         metrics = [c.metric for c in plan.calls]
         self.assertEqual(plan.intent, "derived")
         self.assertIn("ng_electricity", metrics)
-        self.assertIn("iso_load", metrics)
         self.assertIn("weather_degree_days_forecast_vs_5y", metrics)
         self.assertTrue(plan.requires_multiple_sources)
 
@@ -86,26 +85,6 @@ class TestSourcePlanner(unittest.TestCase):
         metrics = [c.metric for c in plan.calls]
         self.assertIn("henry_hub_spot", metrics)
         self.assertIn("working_gas_storage_lower48", metrics)
-
-    def test_ercot_gas_burn_includes_iso_dependency_with_filter(self) -> None:
-        parsed = LLMQueryParseOutput(
-            intent="single_metric",
-            primary_metric="iso_gas_dependency",
-            metrics=["iso_gas_dependency"],
-            filters={"iso": "ercot"},
-            time_window="this_week",
-            comparison="none",
-            calculation="summary",
-            question_topics=["power", "demand"],
-            requires_multiple_sources=False,
-            reason=None,
-            confidence=0.84,
-            ambiguous=False,
-        )
-        plan = build_source_plan(parsed)
-        self.assertEqual(plan.calls[0].metric, "iso_gas_dependency")
-        self.assertEqual(plan.calls[0].filters, {"iso": "ercot"})
-
 
 if __name__ == "__main__":
     unittest.main()

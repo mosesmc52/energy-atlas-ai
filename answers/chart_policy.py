@@ -85,40 +85,12 @@ METRIC_TITLES = {
     "ng_consumption_lower48": "Natural Gas Consumption (Lower 48)",
     "ng_consumption_by_sector": "Natural Gas Consumption by Sector",
     "ng_production_lower48": "Natural Gas Production (Lower 48)",
-    "iso_load": "ISO Load",
-    "iso_gas_dependency": "ISO Gas Dependency",
-    "iso_renewables": "ISO Renewables (Wind + Solar)",
-    "iso_fuel_mix": "ISO Fuel Mix",
-    "des_business_activity_index": "Dallas Fed Business Activity Index",
-    "des_company_outlook_index": "Dallas Fed Company Outlook Index",
-    "des_outlook_uncertainty_index": "Dallas Fed Outlook Uncertainty Index",
-    "des_oil_production_index": "Dallas Fed Oil Production Index",
-    "des_gas_production_index": "Dallas Fed Gas Production Index",
-    "des_capex_index": "Dallas Fed Capital Expenditures Index",
-    "des_wti_price_expectation_1y": "Dallas Fed WTI Price Expectations",
-    "des_hh_price_expectation_1y": "Dallas Fed Henry Hub Price Expectations",
-    "des_breakeven_oil_us": "Dallas Fed Break-even Oil Price",
-    "des_breakeven_gas_us": "Dallas Fed Break-even Gas Price",
-    "managed_money_long": "CFTC Managed Money Long",
-    "managed_money_short": "CFTC Managed Money Short",
-    "managed_money_net": "CFTC Managed Money Net",
-    "managed_money_net_percentile_156w": "CFTC Managed Money Net Percentile",
-    "open_interest": "CFTC Open Interest",
     "weather_degree_days_forecast_vs_5y": "Forecast HDD/CDD vs 5-Year Average",
     "weather_regional_demand_drivers": "Regional Weather-Driven Gas Demand",
 }
 
 METRIC_Y_LABELS = {
     "henry_hub_spot": "$/MMBtu",
-    "des_wti_price_expectation_1y": "$/bbl",
-    "des_hh_price_expectation_1y": "$/MMBtu",
-    "des_breakeven_oil_us": "$/bbl",
-    "des_breakeven_gas_us": "$/MMBtu",
-    "managed_money_long": "Contracts",
-    "managed_money_short": "Contracts",
-    "managed_money_net": "Contracts",
-    "managed_money_net_percentile_156w": "Percentile",
-    "open_interest": "Contracts",
     "weather_degree_days_forecast_vs_5y": "Bcf/d",
     "weather_regional_demand_drivers": "Bcf/d",
 }
@@ -198,24 +170,6 @@ def _default_y(metric: str, df) -> list[str]:
         "ng_consumption_lower48": ["value"],
         "ng_consumption_by_sector": ["value"],
         "ng_production_lower48": ["value"],
-        "iso_load": ["value"],
-        "iso_gas_dependency": ["gas_share", "gas_generation"],
-        "iso_renewables": ["renewable_generation"],
-        "des_business_activity_index": ["value"],
-        "des_company_outlook_index": ["value"],
-        "des_outlook_uncertainty_index": ["value"],
-        "des_oil_production_index": ["value"],
-        "des_gas_production_index": ["value"],
-        "des_capex_index": ["value"],
-        "des_wti_price_expectation_1y": ["value"],
-        "des_hh_price_expectation_1y": ["value"],
-        "des_breakeven_oil_us": ["value"],
-        "des_breakeven_gas_us": ["value"],
-        "managed_money_long": ["value"],
-        "managed_money_short": ["value"],
-        "managed_money_net": ["value"],
-        "managed_money_net_percentile_156w": ["value"],
-        "open_interest": ["value"],
         "weather_degree_days_forecast_vs_5y": ["demand_delta_bcfd"],
         "weather_regional_demand_drivers": ["demand_delta_bcfd"],
     }
@@ -349,56 +303,7 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
             y_label="Frequency",
         )
 
-    if metric == "iso_renewables":
-        share_view = _has_any(q, ("share", "mix", "percent", "percentage"))
-        breakdown_view = _has_any(
-            q,
-            (
-                "wind and solar",
-                "solar and wind",
-                "wind solar",
-                "breakdown",
-                "by source",
-                "split",
-            ),
-        )
-
-        if share_view and "renewable_share" in df.columns:
-            return ChartSpec(
-                chart_type="line",
-                title=f"{title}: Share",
-                x="date",
-                y=["renewable_share"],
-                x_label="Date",
-                y_label="Renewable Share",
-                notes="v1 renewables include wind + solar only.",
-            )
-
-        if breakdown_view:
-            ys = [c for c in ("wind_generation", "solar_generation") if c in df.columns]
-            if ys:
-                return ChartSpec(
-                    chart_type="stacked_area",
-                    title=f"{title}: Wind + Solar Breakdown",
-                    x="date",
-                    y=ys,
-                    x_label="Date",
-                    y_label="Generation (MW)",
-                    notes="v1 renewables include wind + solar only.",
-                )
-
-        if "renewable_generation" in df.columns:
-            return ChartSpec(
-                chart_type="line",
-                title=title,
-                x="date",
-                y=["renewable_generation"],
-                x_label="Date",
-                y_label="Renewable Generation",
-                notes="v1 renewables include wind + solar only.",
-            )
-
-    if metric == "iso_fuel_mix" or has_composition:
+    if has_composition:
         fuels = _top_fuels(df, limit=5)
         if not fuels:
             fuels = _default_y(metric, df)
@@ -458,7 +363,7 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
             y_label="Bcf",
         )
 
-    if metric == "iso_gas_dependency" or has_multi_series:
+    if has_multi_series:
         y = [
             c
             for c in ("gas_share", "gas_generation", "gas_burn_mmbtu_per_hour")
@@ -484,8 +389,6 @@ def chart_policy(*, metric: str, mode: str, df, query: str = "") -> ChartSpec | 
         "ng_electricity",
         "ng_consumption_lower48",
         "ng_production_lower48",
-        "iso_load",
-        "iso_renewables",
     }:
         y = _default_y(metric, df)
         if not y:

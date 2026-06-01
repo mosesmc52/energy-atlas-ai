@@ -40,18 +40,18 @@ class TestLLMRouterStructured(unittest.TestCase):
         result = self._call_with_payload(
             {
                 "intent": "single_metric",
-                "primary_metric": "iso_load",
-                "metrics": ["iso_load"],
-                "filters": {"iso": "ercot"},
-                "reason": "Load in ERCOT",
+                "primary_metric": "henry_hub_spot",
+                "metrics": ["henry_hub_spot"],
+                "filters": None,
+                "reason": "Henry Hub price",
                 "confidence": 0.92,
                 "ambiguous": False,
             }
         )
         self.assertEqual(result.intent, "single_metric")
-        self.assertEqual(result.primary_metric, "iso_load")
-        self.assertEqual(result.metrics, ["iso_load"])
-        self.assertEqual(result.filters, {"iso": "ercot"})
+        self.assertEqual(result.primary_metric, "henry_hub_spot")
+        self.assertEqual(result.metrics, ["henry_hub_spot"])
+        self.assertIsNone(result.filters)
 
     def test_ambiguous_forces_ambiguous_flag(self) -> None:
         result = self._call_with_payload(
@@ -202,7 +202,7 @@ class TestLLMRouterStructured(unittest.TestCase):
                 "intent": "derived",
                 "primary_metric": "working_gas_storage_change_weekly",
                 "metrics": ["working_gas_storage_change_weekly"],
-                "filters": {"region": "lower48", "iso": "not_real"},
+                "filters": {"region": "lower48", "dataset": "not_real"},
                 "reason": "Derived week-over-week storage tightness",
                 "confidence": 1.7,
                 "ambiguous": False,
@@ -216,9 +216,9 @@ class TestLLMRouterStructured(unittest.TestCase):
         result = self._call_with_payload(
             {
                 "intent": "unsupported",
-                "primary_metric": "iso_load",
-                "metrics": ["iso_load"],
-                "filters": {"iso": "ercot"},
+                "primary_metric": "henry_hub_spot",
+                "metrics": ["henry_hub_spot"],
+                "filters": None,
                 "reason": "Topic not covered",
                 "confidence": 0.5,
                 "ambiguous": False,

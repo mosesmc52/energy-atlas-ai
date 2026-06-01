@@ -13,9 +13,7 @@ class SeriesSpec(BaseModel):
         "eia_api",
         "aeo_projection",
         "ferc",
-        "cftc",
         "simulation",
-        "gridstatus",
     ]
     metric: str = Field(..., description="Canonical metric name")
     filters: Optional[dict] = Field(

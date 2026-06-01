@@ -11,7 +11,6 @@ from openai import OpenAI
 
 from agents.llm_router import (
     DATASET_FILTERS,
-    ISO_FILTERS,
     INTENTS,
     METRICS,
     REGION_FILTERS,
@@ -80,7 +79,6 @@ class LLMQueryParserError(RuntimeError):
 
 _ALLOWED_INTENTS = set(INTENTS)
 _ALLOWED_METRICS = set(METRICS)
-_ALLOWED_ISOS = set(ISO_FILTERS)
 _ALLOWED_REGIONS = set(REGION_FILTERS)
 _ALLOWED_TIME_WINDOWS = set(TIME_WINDOWS)
 _ALLOWED_COMPARISONS = set(COMPARISONS)
@@ -109,12 +107,6 @@ def _build_parse_schema() -> Dict[str, Any]:
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "iso": {
-                                "anyOf": [
-                                    {"type": "string", "enum": list(ISO_FILTERS)},
-                                    {"type": "null"},
-                                ]
-                            },
                             "region": {
                                 "anyOf": [
                                     {"type": "string", "enum": list(REGION_FILTERS)},
@@ -144,7 +136,6 @@ def _build_parse_schema() -> Dict[str, Any]:
                             },
                         },
                         "required": [
-                            "iso",
                             "region",
                             "resource_category",
                             "dataset",
@@ -286,12 +277,9 @@ def _normalize_filters(filters: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(filters, dict):
         return None
     out: Dict[str, Any] = {}
-    iso = filters.get("iso")
     region = filters.get("region")
     resource_category = filters.get("resource_category")
     dataset = filters.get("dataset")
-    if isinstance(iso, str) and iso in _ALLOWED_ISOS:
-        out["iso"] = iso
     if isinstance(region, str) and region in _ALLOWED_REGIONS:
         out["region"] = region
     if isinstance(resource_category, str) and resource_category in RESOURCE_CATEGORY_FILTERS:

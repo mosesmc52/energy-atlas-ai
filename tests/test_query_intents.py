@@ -3,9 +3,7 @@ import unittest
 from utils.query_intents import (
     has_seasonal_norm_phrase,
     is_current_like_without_explicit_window,
-    is_iso_gas_share_question,
     is_power_burn_seasonal_question,
-    is_renewables_power_sector_demand_question,
 )
 
 
@@ -36,21 +34,6 @@ class TestQueryIntents(unittest.TestCase):
                 "What is current natural gas power burn versus seasonal norms?"
             )
         )
-
-    def test_iso_gas_share_question_detected(self) -> None:
-        self.assertTrue(
-            is_iso_gas_share_question(
-                "What percentage of electricity generation is coming from natural gas?"
-            )
-        )
-
-    def test_renewables_power_sector_demand_question_detected(self) -> None:
-        self.assertTrue(
-            is_renewables_power_sector_demand_question(
-                "Are renewables increasing or decreasing natural gas demand in the power sector?"
-            )
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
