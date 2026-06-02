@@ -51,6 +51,8 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "east",
         "midwest",
         "south_central",
+        "south_central_salt",
+        "south_central_nonsalt",
         "mountain",
         "pacific",
     }

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pandas as pd
 from schemas.answer import SourceRef
-from agents.source_planner import SourcePlan
+from agents.router import EnergyRouteResult
 from tools.eia_adapter import EIAAdapter, EIAResult
 
 
@@ -24,6 +23,77 @@ class ExecuteRequest:
     start: str
     end: str
     filters: Dict[str, Any] | None = None
+
+
+def _normalize_storage_regions(filters: dict) -> list[str]:
+    raw_regions = filters.get("regions")
+    if raw_regions is None:
+        raw_region = filters.get("region")
+        raw_regions = [raw_region] if raw_region else ["lower48"]
+    elif isinstance(raw_regions, str):
+        raw_regions = [raw_regions]
+
+    regions: list[str] = []
+    for raw_region in raw_regions or []:
+        region = str(raw_region or "").strip().lower()
+        if not region:
+            continue
+        if region == "all":
+            regions.extend(sorted(EIAAdapter.STORAGE_REGIONS - {"lower48"}))
+            continue
+        if region not in EIAAdapter.STORAGE_REGIONS:
+            raise ValueError(
+                f"Invalid storage region '{region}'. Expected one of: {sorted(EIAAdapter.STORAGE_REGIONS)}"
+            )
+        if region not in regions:
+            regions.append(region)
+
+    return regions or ["lower48"]
+
+
+def _concat_storage_region_results(results: list[EIAResult]) -> EIAResult:
+    frames: list[pd.DataFrame] = []
+    source_references: list[str] = []
+    region_meta: dict[str, Any] = {}
+
+    for result in results:
+        raw_params = result.source.parameters or {}
+        params = raw_params if isinstance(raw_params, dict) else {}
+        region = str(params.get("region") or "").strip().lower()
+        source_references.append(result.source.reference)
+        if region:
+            region_meta[region] = result.meta or {}
+
+        if result.df is None or result.df.empty:
+            continue
+        frame = result.df.copy()
+        if "region" not in frame.columns:
+            frame["region"] = region
+        frames.append(frame[["date", "value", "region"]].copy())
+
+    df = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["date", "value", "region"])
+    )
+    regions = [region for region in region_meta if region]
+    source = SourceRef(
+        source_type="eia_api",
+        label="EIA Natural Gas Storage by Region",
+        reference="eia-ng-client:natural_gas.storage_by_region",
+        parameters={
+            "regions": regions,
+            "source_references": source_references,
+        },
+    )
+    return EIAResult(
+        df=df,
+        source=source,
+        meta={
+            "regions": region_meta,
+            "source_references": source_references,
+        },
+    )
 
 
 class MetricExecutor:
@@ -88,41 +158,41 @@ class MetricExecutor:
 
         return result
 
-    def execute_plan(self, plan: SourcePlan, *, start: str, end: str) -> Dict[str, MetricResult]:
-        results: Dict[str, MetricResult] = {}
-        calls = list(plan.calls or [])
-        if not calls:
-            return results
+    def execute_storage_route(self, route: EnergyRouteResult) -> MetricResult:
+        if route.domain != "storage":
+            raise ValueError(f"Unsupported route domain for storage execution: {route.domain}")
+        if not route.primary_metric:
+            raise ValueError("Storage route is missing a primary metric.")
 
-        if len(calls) == 1:
-            call = calls[0]
-            req = ExecuteRequest(
-                metric=call.metric,
-                start=call.start_date or start,
-                end=call.end_date or end,
-                filters=call.filters or {},
+        filters = dict(route.filters or {})
+        filters["regions"] = list(route.regions or filters.get("regions") or [])
+        if route.analysis_type in {"regional_compare", "ranking"}:
+            filters["regions"] = ["all"]
+
+        result = self.execute(
+            ExecuteRequest(
+                metric=route.primary_metric,
+                start=route.start_date or "",
+                end=route.end_date or "",
+                filters=filters,
             )
-            results[call.metric] = self.execute(req)
-            return results
-
-        max_workers = min(4, len(calls))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            future_to_metric = {}
-            for call in calls:
-                req = ExecuteRequest(
-                    metric=call.metric,
-                    start=call.start_date or start,
-                    end=call.end_date or end,
-                    filters=call.filters or {},
-                )
-                future = pool.submit(self.execute, req)
-                future_to_metric[future] = call.metric
-
-            for future in as_completed(future_to_metric):
-                metric = future_to_metric[future]
-                results[metric] = future.result()
-
-        return results
+        )
+        if result.meta is None:
+            result.meta = {}
+        result.meta.update(
+            {
+                "domain": "storage",
+                "analysis_type": route.analysis_type,
+                "value_type": route.value_type,
+                "comparisons": list(route.comparisons or []),
+                "chart_type": route.chart_type,
+                "output_mode": route.output_mode,
+                "regions": list(route.regions or []),
+                "start_date": route.start_date,
+                "end_date": route.end_date,
+            }
+        )
+        return result
 
     def _to_metric_result(self, res: Any) -> MetricResult:
         """
@@ -146,7 +216,15 @@ class MetricExecutor:
     def _eia_storage_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        region = str(filters.get("region") or "lower48")
+        regions = _normalize_storage_regions(filters)
+        if len(regions) > 1:
+            results = [
+                self.eia.storage_working_gas(start=start, end=end, region=region)
+                for region in regions
+            ]
+            return _concat_storage_region_results(results)
+
+        region = regions[0]
         base = self.eia.storage_working_gas(start=start, end=end, region=region)
         if not bool(filters.get("include_weekly_change")):
             return base
@@ -193,51 +271,18 @@ class MetricExecutor:
     def _eia_storage_change_weekly(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        if str(filters.get("group_by") or "") == "region":
-            regional_frames: list[pd.DataFrame] = []
-            sources: list[str] = []
-            region_meta: dict[str, Any] = {}
-            for region in sorted(EIAAdapter.STORAGE_REGIONS - {"lower48"}):
-                regional_result = self.eia.storage_working_gas_change_weekly(
+        regions = _normalize_storage_regions(filters)
+        if len(regions) > 1:
+            results = [
+                self.eia.storage_working_gas_change_weekly(
                     start=start, end=end, region=region
                 )
-                frame = regional_result.df.copy()
-                if frame is None or frame.empty:
-                    continue
-                frame["region"] = region
-                regional_frames.append(frame)
-                sources.append(regional_result.source.reference)
-                region_meta[region] = (regional_result.meta or {}).get("cache")
+                for region in regions
+            ]
+            return _concat_storage_region_results(results)
 
-            df = (
-                pd.concat(regional_frames, ignore_index=True)
-                if regional_frames
-                else pd.DataFrame(columns=["date", "value", "region"])
-            )
-            src = SourceRef(
-                source_type="eia_api",
-                label="EIA Natural Gas Storage: Weekly Change by Region",
-                reference="eia-ng-client:derived_natural_gas.storage_change_weekly_by_region",
-                parameters={
-                    "regions": sorted(EIAAdapter.STORAGE_REGIONS - {"lower48"}),
-                    "start": start,
-                    "end": end,
-                    "group_by": "region",
-                    "source_storage_references": sources,
-                },
-            )
-            return EIAResult(
-                df=df,
-                source=src,
-                meta={
-                    "cache": {"regions": region_meta},
-                    "note": "Derived as row-to-row weekly difference of working gas storage levels by EIA storage region.",
-                },
-            )
-
-        region = str(filters.get("region") or "lower48")
         return self.eia.storage_working_gas_change_weekly(
-            start=start, end=end, region=region
+            start=start, end=end, region=regions[0]
         )
 
     def _eia_henry_hub_spot(

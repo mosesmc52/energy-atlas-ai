@@ -25,7 +25,17 @@ from answers.response_formatters.natural_gas import (
     format_period_comparison,
     format_natural_gas_commentary,
 )
-from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
+try:
+    from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
+except Exception as exc:
+    if not isinstance(exc, (ImportError, ModuleNotFoundError)) and exc.__class__.__name__ != "ImproperlyConfigured":
+        raise
+
+    def get_builtin_signal_registry() -> dict:
+        return {}
+
+    def is_builtin_signal_id(signal_id: str) -> bool:
+        return False
 from openai import OpenAI
 from schemas.answer import (
     AnswerAlert,
@@ -2014,6 +2024,430 @@ def _storage_same_week_yearly_comparison_df(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("comparison_year").reset_index(drop=True)
 
 
+def _route_domain(route) -> str:
+    return str(getattr(route, "domain", "") or "")
+
+
+def _route_analysis_type(route) -> str:
+    return str(getattr(route, "analysis_type", "") or "")
+
+
+def _route_value_type(route) -> str:
+    return str(getattr(route, "value_type", "") or "")
+
+
+def _route_comparisons(route) -> list[str]:
+    return list(getattr(route, "comparisons", []) or [])
+
+
+def _route_regions(route) -> list[str]:
+    return list(getattr(route, "regions", []) or [])
+
+
+def _route_chart_type(route) -> str:
+    return str(getattr(route, "chart_type", "") or "")
+
+
+def _route_output_mode(route) -> str:
+    return str(getattr(route, "output_mode", "") or "")
+
+
+def _storage_region_label(region: str | None) -> str:
+    label = str(region or "lower48").replace("_", " ").title()
+    return "Lower 48" if label == "Lower48" else label
+
+
+def _storage_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or not {"date", "value"}.issubset(df.columns):
+        return pd.DataFrame(columns=["date", "value"])
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["date", "value"])
+    sort_cols = ["date"]
+    if "region" in d.columns:
+        d["region"] = d["region"].astype(str)
+        sort_cols = ["region", "date"]
+    return d.sort_values(sort_cols).reset_index(drop=True)
+
+
+def _storage_latest_by_region_df(df: pd.DataFrame) -> pd.DataFrame:
+    d = _storage_prepare_df(df)
+    if d.empty:
+        return d
+    if "region" not in d.columns:
+        return d.tail(1).reset_index(drop=True)
+    return (
+        d.sort_values(["region", "date"])
+        .groupby("region", as_index=False, sort=False)
+        .tail(1)
+        .reset_index(drop=True)
+    )
+
+
+def _storage_same_week_baseline_by_region(
+    df: pd.DataFrame,
+    *,
+    normal_years: int = 5,
+) -> pd.DataFrame:
+    d = _storage_prepare_df(df)
+    if d.empty:
+        return d.assign(five_year_avg=np.nan, five_year_min=np.nan, five_year_max=np.nan)
+
+    if "region" not in d.columns:
+        d["region"] = "lower48"
+        added_region = True
+    else:
+        added_region = False
+
+    rows: list[dict[str, Any]] = []
+    for _, group in d.groupby("region", sort=False):
+        group = group.sort_values("date").copy()
+        group["iso_week"] = group["date"].dt.isocalendar().week.astype(int)
+        group["year"] = group["date"].dt.year.astype(int)
+        for _, row in group.iterrows():
+            hist = group.loc[
+                (group["iso_week"] == int(row["iso_week"]))
+                & (group["year"] >= int(row["year"]) - normal_years)
+                & (group["year"] < int(row["year"]))
+            ]
+            hist_values = pd.to_numeric(hist["value"], errors="coerce").dropna()
+            out = row.drop(labels=["iso_week", "year"]).to_dict()
+            if hist_values.empty:
+                out.update(
+                    {
+                        "five_year_avg": np.nan,
+                        "five_year_min": np.nan,
+                        "five_year_max": np.nan,
+                    }
+                )
+            else:
+                out.update(
+                    {
+                        "five_year_avg": float(hist_values.mean()),
+                        "five_year_min": float(hist_values.min()),
+                        "five_year_max": float(hist_values.max()),
+                    }
+                )
+            rows.append(out)
+
+    result = pd.DataFrame(rows)
+    if added_region and "region" in result.columns:
+        result = result.drop(columns=["region"])
+    return result.sort_values(["region", "date"] if "region" in result.columns else ["date"]).reset_index(drop=True)
+
+
+def _storage_deviation_from_normal_df(df: pd.DataFrame) -> pd.DataFrame:
+    d = _storage_same_week_baseline_by_region(df)
+    if d.empty or "five_year_avg" not in d.columns:
+        return pd.DataFrame(columns=["date", "value", "deviation_bcf"])
+    d["deviation_bcf"] = pd.to_numeric(d["value"], errors="coerce") - pd.to_numeric(
+        d["five_year_avg"], errors="coerce"
+    )
+    return d.dropna(subset=["date", "value", "five_year_avg", "deviation_bcf"]).reset_index(drop=True)
+
+
+def _storage_period_change_summary(df: pd.DataFrame) -> dict:
+    d = _storage_prepare_df(df)
+    if d.empty:
+        return {}
+    if "region" in d.columns:
+        latest_rows = _storage_latest_by_region_df(d)
+        return {
+            "latest_by_region": latest_rows,
+            "latest_date": latest_rows["date"].max().date().isoformat(),
+        }
+    start = d.iloc[0]
+    latest = d.iloc[-1]
+    start_value = _safe_float(start["value"])
+    latest_value = _safe_float(latest["value"])
+    return {
+        "start_date": start["date"].date().isoformat(),
+        "start_value": start_value,
+        "latest_date": latest["date"].date().isoformat(),
+        "latest_value": latest_value,
+        "net_change": (
+            latest_value - start_value
+            if latest_value is not None and start_value is not None
+            else None
+        ),
+    }
+
+
+def _storage_chart_spec_from_route(
+    route: Any,
+    df: pd.DataFrame,
+) -> ChartSpec | None:
+    if _route_output_mode(route) == "answer" or _route_chart_type(route) == "none":
+        return None
+
+    analysis_type = _route_analysis_type(route)
+    chart_type = _route_chart_type(route)
+    if not chart_type:
+        chart_type = {
+            "time_series": "line",
+            "regional_compare": "bar",
+            "ranking": "bar",
+            "weekly_change": "line",
+            "seasonal_compare": "seasonal_line",
+        }.get(analysis_type, "line")
+
+    if analysis_type == "seasonal_compare":
+        return ChartSpec(
+            chart_type="seasonal_line",
+            title="Working Gas in Storage vs 5-Year Average",
+            x="date",
+            y=["value", "five_year_avg"],
+            x_label="Date",
+            y_label="Bcf",
+        )
+
+    if analysis_type in {"regional_compare", "ranking"}:
+        y_field = "deviation_bcf" if "deviation_bcf" in df.columns else "value"
+        if y_field == "deviation_bcf":
+            title = "Storage Deviation from 5-Year Average by Region"
+        elif _route_value_type(route) == "weekly_change":
+            title = "Weekly Change in Working Gas Storage by Region"
+        else:
+            title = "Current Working Gas in Storage by Region"
+        return ChartSpec(
+            chart_type="bar",
+            title=title,
+            x="region",
+            y=[y_field],
+            x_label="Region",
+            y_label="Bcf vs 5Y Avg" if y_field == "deviation_bcf" else "Bcf",
+        )
+
+    if analysis_type == "weekly_change":
+        return ChartSpec(
+            chart_type="line" if chart_type != "bar" else "bar",
+            title="Weekly Change in Working Gas Storage",
+            x="date" if chart_type != "bar" else "region",
+            y=["value"],
+            x_label="Date" if chart_type != "bar" else "Region",
+            y_label="Bcf",
+        )
+
+    if analysis_type == "deviation_from_normal" and "deviation_bcf" in df.columns:
+        return ChartSpec(
+            chart_type="line" if chart_type != "bar" else "bar",
+            title="Storage Deviation from 5-Year Average",
+            x="date" if chart_type != "bar" else "region",
+            y=["deviation_bcf"],
+            x_label="Date" if chart_type != "bar" else "Region",
+            y_label="Bcf vs 5Y Avg",
+        )
+
+    return ChartSpec(
+        chart_type="line",
+        title="Working Gas in Storage",
+        x="date",
+        y=["value"],
+        x_label="Date",
+        y_label="Bcf",
+    )
+
+
+def _storage_payload(
+    *,
+    query: str,
+    result: EIAResult,
+    mode: str,
+    answer_text: str,
+    chart_df: pd.DataFrame,
+    chart_spec: ChartSpec | None,
+    source_date: str | None,
+) -> AnswerPayload:
+    return AnswerPayload(
+        query=query,
+        mode=mode,
+        answer_text=answer_text,
+        structured_response=None,
+        report_context_used=False,
+        report_context_reason="storage_route",
+        report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+        data_preview=_maybe_data_preview(chart_df),
+        chart_data_preview=_make_preview(chart_df) if chart_df is not None else None,
+        chart_spec=chart_spec,
+        sources=[result.source],
+    )
+
+
+def _storage_single_latest_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _storage_latest_by_region_df(df)
+    if latest.empty:
+        return "No data was returned for the requested period."
+    row = latest.iloc[0]
+    date = row["date"].date().isoformat()
+    region = _storage_region_label(row.get("region") or (_route_regions(route) or ["lower48"])[0])
+    value = float(row["value"])
+    if _route_value_type(route) == "weekly_change":
+        flow = "injection" if value > 0 else "withdrawal" if value < 0 else "change"
+        return f"As of {date}, {region} posted a weekly {flow} of {_format_number(abs(value))} Bcf."
+    return f"As of {date}, {region} working gas in storage was {_format_number(value)} Bcf."
+
+
+def _storage_time_series_answer(df: pd.DataFrame, route: Any) -> str:
+    d = _storage_prepare_df(df)
+    if d.empty:
+        return "No data was returned for the requested period."
+    if "region" in d.columns and d["region"].nunique() > 1:
+        latest = _storage_latest_by_region_df(d).sort_values("value", ascending=False)
+        date = latest["date"].max().date().isoformat()
+        pairs = [
+            f"{_storage_region_label(row['region'])}: {_format_number(float(row['value']))} Bcf"
+            for _, row in latest.iterrows()
+        ]
+        return f"As of {date}, latest regional storage was " + "; ".join(pairs) + "."
+
+    summary = _storage_period_change_summary(d)
+    region = _storage_region_label((_route_regions(route) or ["lower48"])[0])
+    return (
+        f"From {summary.get('start_date')} to {summary.get('latest_date')}, {region} storage moved "
+        f"from {_format_number(summary.get('start_value'))} Bcf to {_format_number(summary.get('latest_value'))} Bcf, "
+        f"a net change of {_format_number(summary.get('net_change'))} Bcf."
+    )
+
+
+def _storage_regional_rank_answer(df: pd.DataFrame, *, value_field: str = "value") -> str:
+    latest = _storage_latest_by_region_df(df)
+    if latest.empty or "region" not in latest.columns or value_field not in latest.columns:
+        return "No data was returned for the requested period."
+    ranked = latest.dropna(subset=[value_field]).sort_values(value_field, ascending=False)
+    if ranked.empty:
+        return "No data was returned for the requested period."
+    top = ranked.iloc[0]
+    date = top["date"].date().isoformat()
+    unit = "Bcf" if value_field == "value" else "Bcf versus the five-year average"
+    return (
+        f"As of {date}, {_storage_region_label(top['region'])} ranked highest at "
+        f"{_format_number(float(top[value_field]))} {unit}."
+    )
+
+
+def _storage_weekly_change_answer(df: pd.DataFrame) -> str:
+    d = _storage_prepare_df(df)
+    if d.empty:
+        return "No data was returned for the requested period."
+    if "region" in d.columns and d["region"].nunique() > 1:
+        return _storage_regional_rank_answer(_storage_latest_by_region_df(d), value_field="value")
+    if len(d) == 1:
+        value = float(d.iloc[-1]["value"])
+        flow = "injection" if value > 0 else "withdrawal" if value < 0 else "change"
+        return f"As of {d.iloc[-1]['date'].date().isoformat()}, the latest weekly {flow} was {_format_number(abs(value))} Bcf."
+    latest = float(d.iloc[-1]["value"])
+    previous = float(d.iloc[-2]["value"])
+    latest_flow = "injection" if latest > 0 else "withdrawal" if latest < 0 else "change"
+    if latest > previous:
+        direction = "accelerating"
+    elif latest < previous:
+        direction = "slowing"
+    else:
+        direction = "unchanged"
+    return (
+        f"As of {d.iloc[-1]['date'].date().isoformat()}, the latest weekly {latest_flow} was "
+        f"{_format_number(abs(latest))} Bcf versus {_format_number(abs(previous))} Bcf the prior week, "
+        f"so weekly changes are {direction}."
+    )
+
+
+def _storage_seasonal_compare_answer(df: pd.DataFrame, route: Any) -> str:
+    d = _storage_same_week_baseline_by_region(df)
+    d = d.dropna(subset=["five_year_avg"])
+    if d.empty:
+        return "Not enough same-week history was returned to compute a five-year average."
+    latest = _storage_latest_by_region_df(d).iloc[0]
+    value = float(latest["value"])
+    avg = float(latest["five_year_avg"])
+    diff = value - avg
+    pct = (diff / avg * 100.0) if avg else None
+    region = _storage_region_label(latest.get("region") or (_route_regions(route) or ["lower48"])[0])
+    pct_text = f", or {_format_number(pct)}%" if pct is not None else ""
+    return (
+        f"As of {latest['date'].date().isoformat()}, {region} storage was {_format_number(value)} Bcf versus a "
+        f"five-year average of {_format_number(avg)} Bcf, a difference of {_format_number(diff)} Bcf{pct_text}."
+    )
+
+
+def _storage_deviation_answer(df: pd.DataFrame) -> str:
+    d = _storage_deviation_from_normal_df(df)
+    if d.empty:
+        return "Not enough same-week history was returned to compute storage deviation from normal."
+    if "region" in d.columns and d["region"].nunique() > 1:
+        return _storage_regional_rank_answer(d, value_field="deviation_bcf")
+    if len(d) == 1:
+        row = d.iloc[-1]
+        return (
+            f"As of {row['date'].date().isoformat()}, storage was "
+            f"{_format_number(float(row['deviation_bcf']))} Bcf versus the five-year average."
+        )
+    latest = d.iloc[-1]
+    previous = d.iloc[-2]
+    latest_dev = float(latest["deviation_bcf"])
+    previous_dev = float(previous["deviation_bcf"])
+    status = "shrinking" if abs(latest_dev) < abs(previous_dev) else "widening" if abs(latest_dev) > abs(previous_dev) else "unchanged"
+    noun = "deficit" if latest_dev < 0 else "surplus"
+    return (
+        f"The storage {noun} is {status} because the deviation moved from "
+        f"{_format_number(previous_dev)} Bcf to {_format_number(latest_dev)} Bcf."
+    )
+
+
+def _build_storage_answer_payload(
+    *,
+    query: str,
+    result: EIAResult,
+    route: Any,
+    mode: str,
+    source_date: str | None,
+) -> AnswerPayload:
+    df = _storage_prepare_df(result.df)
+    analysis_type = _route_analysis_type(route)
+    comparisons = _route_comparisons(route)
+
+    chart_df = df
+    if analysis_type in {"regional_compare"}:
+        chart_df = _storage_latest_by_region_df(df).sort_values("value", ascending=False)
+        answer_text = _storage_regional_rank_answer(chart_df)
+    elif analysis_type == "ranking":
+        if any(c in comparisons for c in {"five_year_avg", "seasonal_normal"}):
+            chart_df = _storage_latest_by_region_df(_storage_deviation_from_normal_df(df)).sort_values(
+                "deviation_bcf", ascending=False
+            )
+            answer_text = _storage_regional_rank_answer(chart_df, value_field="deviation_bcf")
+        else:
+            chart_df = _storage_latest_by_region_df(df).sort_values("value", ascending=False)
+            answer_text = _storage_regional_rank_answer(chart_df)
+    elif analysis_type == "weekly_change":
+        if _route_chart_type(route) == "bar" and "region" in df.columns:
+            chart_df = _storage_latest_by_region_df(df).sort_values("value", ascending=False)
+        answer_text = _storage_weekly_change_answer(df)
+    elif analysis_type == "seasonal_compare":
+        chart_df = _storage_same_week_baseline_by_region(df).dropna(subset=["five_year_avg"])
+        answer_text = _storage_seasonal_compare_answer(df, route)
+    elif analysis_type == "deviation_from_normal":
+        chart_df = _storage_deviation_from_normal_df(df)
+        answer_text = _storage_deviation_answer(df)
+    elif analysis_type == "time_series":
+        chart_df = df.sort_values(["region", "date"] if "region" in df.columns else ["date"])
+        answer_text = _storage_time_series_answer(df, route)
+    else:
+        chart_df = _storage_latest_by_region_df(df)
+        answer_text = _storage_single_latest_answer(df, route)
+
+    chart_spec = _storage_chart_spec_from_route(route, chart_df)
+    return _storage_payload(
+        query=query,
+        result=result,
+        mode=mode,
+        answer_text=answer_text,
+        chart_df=chart_df,
+        chart_spec=chart_spec,
+        source_date=source_date,
+    )
+
+
 def _storage_level_and_change_structured_answer(
     *,
     df: pd.DataFrame,
@@ -2278,8 +2712,10 @@ def build_answer_with_openai(
     *,
     query: str,
     result: EIAResult,
+    route: Any | None = None,
     mode: str = "observed",
     model: str = "gpt-5.2",
+    **_: Any,
 ) -> AnswerPayload:
     df = result.df
     src = result.source
@@ -2292,6 +2728,16 @@ def build_answer_with_openai(
     if region_label == "Lower48":
         region_label = "Lower 48"
     source_date = src.retrieved_at.date().isoformat() if src.retrieved_at else None
+
+    if route is not None and _route_domain(route) == "storage":
+        return _build_storage_answer_payload(
+            query=query,
+            result=result,
+            route=route,
+            mode=mode,
+            source_date=source_date,
+        )
+
     report_context_text = ""
     report_context_sources: list[AnswerSourceSummary] = []
     report_context_used = False

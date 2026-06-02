@@ -1,7 +1,49 @@
 import unittest
 from unittest.mock import Mock
 
+import pandas as pd
+
+from agents.router import EnergyRouteResult
 from executer import ExecuteRequest, MetricExecutor
+from schemas.answer import SourceRef
+from tools.eia_adapter import EIAResult
+
+
+def _storage_route(**overrides) -> EnergyRouteResult:
+    values = {
+        "domain": "storage",
+        "analysis_type": "time_series",
+        "primary_metric": "working_gas_storage_lower48",
+        "metrics": ["working_gas_storage_lower48"],
+        "regions": ["lower48"],
+        "start_date": "2021-01-01",
+        "end_date": "2026-06-01",
+        "date_expression": None,
+        "value_type": "level",
+        "comparisons": ["none"],
+        "chart_type": "line",
+        "output_mode": "chart_and_answer",
+        "filters": {"regions": ["lower48"]},
+        "confidence": 0.9,
+        "ambiguous": False,
+        "reason": None,
+        "normalized_query": "storage",
+    }
+    values.update(overrides)
+    return EnergyRouteResult(**values)
+
+
+def _storage_result(region: str, value: float = 10.0) -> EIAResult:
+    return EIAResult(
+        df=pd.DataFrame([{"date": "2024-01-05", "value": value}]),
+        source=SourceRef(
+            source_type="eia_api",
+            label=f"Storage {region}",
+            reference=f"ref:{region}",
+            parameters={"region": region},
+        ),
+        meta={"cache": {"hit": True}},
+    )
 
 
 class TestMetricExecutor(unittest.TestCase):
@@ -132,17 +174,11 @@ class TestMetricExecutor(unittest.TestCase):
             dataset="pipeline_state2_state_capacity",
         )
 
-    def test_storage_change_group_by_region_fetches_each_storage_region(self) -> None:
+    def test_storage_change_regions_fetch_each_storage_region(self) -> None:
         eia = Mock()
 
         def make_result(*, region: str, **kwargs):
-            return Mock(
-                df=__import__("pandas").DataFrame(
-                    [{"date": "2024-01-05", "value": 10.0, "region": region}]
-                ).drop(columns=["region"]),
-                source=Mock(reference=f"ref:{region}"),
-                meta={"cache": {"hit": True}},
-            )
+            return _storage_result(region)
 
         eia.storage_working_gas_change_weekly.side_effect = make_result
         executor = MetricExecutor(eia=eia)
@@ -152,13 +188,90 @@ class TestMetricExecutor(unittest.TestCase):
                 metric="working_gas_storage_change_weekly",
                 start="2024-01-01",
                 end="2024-12-31",
-                filters={"group_by": "region"},
+                filters={"regions": ["all"]},
             )
         )
 
-        self.assertEqual(eia.storage_working_gas_change_weekly.call_count, 5)
-        self.assertEqual(set(result.df["region"]), {"east", "midwest", "south_central", "mountain", "pacific"})
-        self.assertEqual(result.source.reference, "eia-ng-client:derived_natural_gas.storage_change_weekly_by_region")
+        self.assertEqual(eia.storage_working_gas_change_weekly.call_count, 7)
+        self.assertEqual(
+            set(result.df["region"]),
+            {
+                "east",
+                "midwest",
+                "south_central",
+                "south_central_salt",
+                "south_central_nonsalt",
+                "mountain",
+                "pacific",
+            },
+        )
+        self.assertEqual(result.source.reference, "eia-ng-client:natural_gas.storage_by_region")
+
+    def test_storage_level_multiple_regions_concatenates_region_column(self) -> None:
+        eia = Mock()
+
+        def make_result(*, region: str, **kwargs):
+            return _storage_result(region, value=20.0 if region == "east" else 30.0)
+
+        eia.storage_working_gas.side_effect = make_result
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="working_gas_storage_lower48",
+                start="2021-01-01",
+                end="2026-06-01",
+                filters={"regions": ["east", "midwest"]},
+            )
+        )
+
+        self.assertEqual(eia.storage_working_gas.call_count, 2)
+        self.assertEqual(set(result.df["region"]), {"east", "midwest"})
+        self.assertEqual(list(result.df.columns), ["date", "value", "region"])
+
+    def test_execute_storage_route_attaches_route_metadata(self) -> None:
+        eia = Mock()
+        eia.storage_working_gas.side_effect = lambda region, **kwargs: _storage_result(region)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            regions=["east", "midwest"],
+            filters={"regions": ["east", "midwest"]},
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(set(result.df["region"]), {"east", "midwest"})
+        self.assertEqual(result.meta["domain"], "storage")
+        self.assertEqual(result.meta["analysis_type"], "time_series")
+        self.assertEqual(result.meta["regions"], ["east", "midwest"])
+        self.assertEqual(result.meta["start_date"], "2021-01-01")
+
+    def test_regional_compare_storage_route_expands_regions_without_lower48(self) -> None:
+        eia = Mock()
+        eia.storage_working_gas.side_effect = lambda region, **kwargs: _storage_result(region)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            regions=["lower48"],
+            chart_type="bar",
+            filters={"regions": ["lower48"]},
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(
+            set(result.df["region"]),
+            {
+                "east",
+                "midwest",
+                "south_central",
+                "south_central_salt",
+                "south_central_nonsalt",
+                "mountain",
+                "pacific",
+            },
+        )
+        self.assertNotIn("lower48", set(result.df["region"]))
 
     def test_storage_level_can_include_weekly_change(self) -> None:
         eia = Mock()

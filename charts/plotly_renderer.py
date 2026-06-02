@@ -460,6 +460,226 @@ def _apply_storage_change_dashboard_style(
     )
 
 
+def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame:
+    scoped = d.copy()
+    if "date" in scoped.columns:
+        scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+        scoped = scoped.dropna(subset=["date"])
+        scoped = scoped.sort_values(["region", "date"])
+    scoped[value_field] = pd.to_numeric(scoped[value_field], errors="coerce")
+    scoped = scoped.dropna(subset=["region", value_field])
+    if scoped.empty:
+        return scoped
+    if "date" not in scoped.columns:
+        return scoped.sort_values(value_field, ascending=False)
+    return scoped.groupby("region", as_index=False, sort=False).tail(1).reset_index(drop=True)
+
+
+def _render_storage_region_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    if spec.chart_type not in {"line", "area"} or not {"date", "value", "region"}.issubset(d.columns):
+        return None
+
+    scoped = d.copy()
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+    scoped = scoped.dropna(subset=["date", "value", "region"]).sort_values(["region", "date"])
+    if scoped.empty:
+        return None
+
+    fig = px.line(
+        scoped,
+        x="date",
+        y="value",
+        color="region",
+        title=spec.title,
+        template="plotly_white",
+    )
+    fig.update_traces(
+        line=dict(width=3),
+        hovertemplate="%{x|%Y-%m-%d}<br>%{fullData.name}<br>%{y:,.0f} Bcf<extra></extra>",
+    )
+    if spec.chart_type == "area":
+        fig.update_traces(fill="tozeroy")
+    fig.update_layout(
+        height=650,
+        margin=dict(l=30, r=20, t=120, b=40),
+        xaxis_title=spec.x_label or "Date",
+        yaxis_title=spec.y_label or "Bcf",
+        hovermode="x unified",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02),
+        title=dict(x=0.02, xanchor="left", font=dict(size=20), pad=dict(b=18)),
+    )
+    return fig
+
+
+def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    if spec.chart_type != "bar" or not {"region", "value"}.issubset(d.columns):
+        return None
+    scoped = _storage_latest_by_region(d, "value").sort_values("value", ascending=False)
+    if scoped.empty:
+        return None
+
+    horizontal = len(scoped) > 5
+    if horizontal:
+        scoped = scoped.sort_values("value", ascending=True)
+        fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=scoped["value"],
+                    y=scoped["region"],
+                    orientation="h",
+                    hovertemplate="%{y}<br>%{x:,.0f} Bcf<extra></extra>",
+                )
+            ]
+        )
+        x_title, y_title = spec.y_label or "Bcf", spec.x_label or "Region"
+    else:
+        fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=scoped["region"],
+                    y=scoped["value"],
+                    hovertemplate="%{x}<br>%{y:,.0f} Bcf<extra></extra>",
+                )
+            ]
+        )
+        x_title, y_title = spec.x_label or "Region", spec.y_label or "Bcf"
+    fig.update_layout(
+        title=spec.title,
+        template="plotly_white",
+        height=500,
+        margin=dict(l=70 if horizontal else 30, r=20, t=120, b=40),
+        xaxis_title=x_title,
+        yaxis_title=y_title,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
+    )
+    return fig
+
+
+def _render_storage_deviation_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    if spec.chart_type != "bar" or not {"region", "deviation_bcf"}.issubset(d.columns):
+        return None
+    scoped = _storage_latest_by_region(d, "deviation_bcf").sort_values("deviation_bcf", ascending=True)
+    if scoped.empty:
+        return None
+    colors = ["#d62728" if v < 0 else "#2ca02c" for v in scoped["deviation_bcf"]]
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=scoped["deviation_bcf"],
+                y=scoped["region"],
+                orientation="h",
+                marker_color=colors,
+                hovertemplate="%{y}<br>%{x:+,.0f} Bcf vs 5Y Avg<extra></extra>",
+            )
+        ]
+    )
+    fig.add_vline(x=0, line_width=1.5, line_color="rgba(0,0,0,0.45)")
+    fig.update_layout(
+        title=spec.title,
+        template="plotly_white",
+        height=500,
+        margin=dict(l=80, r=20, t=120, b=40),
+        xaxis_title=spec.y_label or "Bcf vs 5Y Avg",
+        yaxis_title=spec.x_label or "Region",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
+    )
+    return fig
+
+
+def _render_storage_seasonal_line(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    if spec.chart_type != "seasonal_line" or not {"date", "value", "five_year_avg"}.issubset(d.columns):
+        return None
+    scoped = d.copy()
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    for col in ("value", "five_year_avg", "five_year_min", "five_year_max"):
+        if col in scoped.columns:
+            scoped[col] = pd.to_numeric(scoped[col], errors="coerce")
+    scoped = scoped.dropna(subset=["date", "value", "five_year_avg"]).sort_values("date")
+    if scoped.empty:
+        return None
+
+    fig = go.Figure()
+    if {"five_year_min", "five_year_max"}.issubset(scoped.columns):
+        band = scoped.dropna(subset=["five_year_min", "five_year_max"])
+        if not band.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=band["date"],
+                    y=band["five_year_max"],
+                    mode="lines",
+                    line=dict(width=0),
+                    name="5Y max",
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=band["date"],
+                    y=band["five_year_min"],
+                    mode="lines",
+                    fill="tonexty",
+                    fillcolor="rgba(148,163,184,0.25)",
+                    line=dict(width=0),
+                    name="5Y range",
+                    hovertemplate="%{x|%Y-%m-%d}<br>5Y range<extra></extra>",
+                )
+            )
+    fig.add_trace(
+        go.Scatter(
+            x=scoped["date"],
+            y=scoped["five_year_avg"],
+            mode="lines",
+            name="5-year average",
+            line=dict(width=3, dash="dash", color="#64748b"),
+            hovertemplate="%{x|%Y-%m-%d}<br>5-year avg: %{y:,.0f} Bcf<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=scoped["date"],
+            y=scoped["value"],
+            mode="lines",
+            name="Storage",
+            line=dict(width=3, color="#2563eb"),
+            hovertemplate="%{x|%Y-%m-%d}<br>Storage: %{y:,.0f} Bcf<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=spec.title,
+        template="plotly_white",
+        height=650,
+        margin=dict(l=30, r=20, t=120, b=40),
+        xaxis_title=spec.x_label or "Date",
+        yaxis_title=spec.y_label or "Bcf",
+        hovermode="x unified",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02),
+    )
+    return fig
+
+
+def _render_storage_chart(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    for renderer in (
+        _render_storage_seasonal_line,
+        _render_storage_deviation_bar,
+        _render_storage_region_bar,
+        _render_storage_region_timeseries,
+    ):
+        fig = renderer(spec, d)
+        if fig is not None:
+            return fig
+    return None
+
+
 def render_plotly(
     spec: ChartSpec,
     df: pd.DataFrame,
@@ -471,6 +691,9 @@ def render_plotly(
         return fig
 
     d = df.copy()
+    storage_fig = _render_storage_chart(spec, d)
+    if storage_fig is not None:
+        return storage_fig
 
     if (
         spec.title == "Market Pressure Dashboard"

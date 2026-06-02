@@ -43,6 +43,7 @@ class ChartSpec(BaseModel):
         "box",
         "scatter",
         "heatmap",
+        "seasonal_line",
     ]
     title: str
 

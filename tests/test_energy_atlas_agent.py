@@ -87,6 +87,7 @@ class TestEnergyAtlasAgent(unittest.TestCase):
         self.assertIsNone(outcome.result)
         self.assertIsNone(outcome.payload)
         executor.execute.assert_not_called()
+        executor.execute_storage_route.assert_not_called()
 
     def test_runs_route_execute_and_answer_builder(self) -> None:
         executor = Mock()
@@ -95,7 +96,7 @@ class TestEnergyAtlasAgent(unittest.TestCase):
             source=Mock(reference="ref:test"),
             meta={},
         )
-        executor.execute_plan.return_value = {"working_gas_storage_lower48": metric_result}
+        executor.execute_storage_route.return_value = metric_result
         route_fn = Mock(return_value=_route())
         payload = Mock()
         answer_builder_fn = Mock(return_value=payload)
@@ -110,10 +111,11 @@ class TestEnergyAtlasAgent(unittest.TestCase):
 
         self.assertIs(outcome.result, metric_result)
         self.assertIs(outcome.payload, payload)
-        executor.execute_plan.assert_called_once()
+        executor.execute_storage_route.assert_called_once()
         answer_builder_fn.assert_called_once_with(
             query="What is current working gas in storage?",
             result=metric_result,
+            route=route_fn.return_value,
             mode="observed",
             model="gpt-5.2",
         )

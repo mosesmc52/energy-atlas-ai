@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from types import SimpleNamespace
 from tempfile import NamedTemporaryFile
 from unittest.mock import patch
 
@@ -13,6 +14,79 @@ from tools.eia_adapter import EIAResult
 
 
 class TestAnswerBuilder(unittest.TestCase):
+    def _storage_route(self, **overrides):
+        values = {
+            "domain": "storage",
+            "analysis_type": "time_series",
+            "regions": ["lower48"],
+            "value_type": "level",
+            "comparisons": ["none"],
+            "chart_type": "line",
+            "output_mode": "chart_and_answer",
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def _storage_result(self, df: pd.DataFrame) -> EIAResult:
+        return EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="EIA Storage",
+                reference="test",
+                retrieved_at=datetime(2026, 6, 1),
+            ),
+            meta={"metric": "working_gas_storage_lower48"},
+        )
+
+    def test_storage_route_time_series_answer_keeps_region_chart_data(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2021-01-01", "2026-01-02", "2021-01-01", "2026-01-02"],
+                "value": [800.0, 850.0, 900.0, 950.0],
+                "region": ["east", "east", "midwest", "midwest"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Compare East and Midwest storage since 2021",
+            result=self._storage_result(df),
+            route=self._storage_route(regions=["east", "midwest"]),
+        )
+
+        self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertIn("region", payload.chart_data_preview.columns)
+        self.assertIn("East", payload.answer_text)
+        self.assertIn("Midwest", payload.answer_text)
+
+    def test_storage_route_seasonal_compare_uses_route_not_query_text(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": [
+                    "2021-01-01",
+                    "2022-01-07",
+                    "2023-01-06",
+                    "2024-01-05",
+                    "2025-01-03",
+                    "2026-01-02",
+                ],
+                "value": [100.0, 110.0, 120.0, 130.0, 140.0, 160.0],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Show this year versus the seasonal average.",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                analysis_type="seasonal_compare",
+                comparisons=["five_year_avg"],
+                chart_type="seasonal_line",
+                regions=["lower48"],
+            ),
+        )
+
+        self.assertEqual(payload.chart_spec.chart_type, "seasonal_line")
+        self.assertIn("five-year average", payload.answer_text)
+        self.assertIn("five_year_avg", payload.chart_data_preview.columns)
+
     def test_storage_snapshot_query_rejects_deficit_widening_suggestion(self) -> None:
         self.assertFalse(
             _is_suggested_alert_relevant(

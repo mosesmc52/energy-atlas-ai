@@ -244,6 +244,49 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertEqual(fig.data[0].name, "value")
         self.assertEqual(fig.data[1].name, "weekly_change")
 
+    def test_storage_regional_bar_uses_latest_row_per_region(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-09"] * 2),
+                "value": [800.0, 810.0, 900.0, 920.0],
+                "region": ["east", "east", "midwest", "midwest"],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Current Working Gas in Storage by Region",
+            x="region",
+            y=["value"],
+            y_label="Bcf",
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(list(fig.data[0].x), ["midwest", "east"])
+        self.assertEqual(list(fig.data[0].y), [920.0, 810.0])
+
+    def test_storage_seasonal_line_renders_value_and_five_year_average(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-09"]),
+                "value": [100.0, 110.0],
+                "five_year_avg": [95.0, 102.0],
+                "five_year_min": [90.0, 98.0],
+                "five_year_max": [105.0, 115.0],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="seasonal_line",
+            title="Working Gas in Storage vs 5-Year Average",
+            x="date",
+            y=["value", "five_year_avg"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertIn("Storage", [trace.name for trace in fig.data])
+        self.assertIn("5-year average", [trace.name for trace in fig.data])
+
     def test_market_pressure_dashboard_renders_four_components(self) -> None:
         df = pd.DataFrame(
             [

@@ -7,10 +7,8 @@ from time import perf_counter
 from typing import Callable, Optional
 
 from agents.agent_policy import AgentPolicy, load_agent_policy
-from agents.metric_capabilities import get_metric_capability
 from agents.router import EnergyRouteResult, route_query
-from agents.source_planner import SourceCall, SourcePlan
-from executer import ExecuteRequest, MetricExecutor, MetricResult
+from executer import MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
 
 logger = logging.getLogger(__name__)
@@ -64,66 +62,17 @@ class EnergyAtlasAgent:
         self._route_fn = route_fn
         self._answer_builder_fn = answer_builder_fn
 
-    def _route_to_source_plan(self, route: EnergyRouteResult) -> SourcePlan:
-        calls: list[SourceCall] = []
-        metrics = list(route.metrics or [])
-        if route.primary_metric and route.primary_metric not in metrics:
-            metrics.insert(0, route.primary_metric)
-        for metric in metrics:
-            calls.append(
-                SourceCall(
-                    adapter="route",
-                    metric=metric,
-                    filters=dict(route.filters or {}),
-                    calculation=None,
-                    start_date=route.start_date,
-                    end_date=route.end_date,
-                )
-            )
-        return SourcePlan(
-            intent=route.analysis_type,
-            calls=calls,
-            comparison=None if route.comparisons == ["none"] else ",".join(route.comparisons),
-            time_window=route.analysis_type,
-            requires_multiple_sources=len(calls) > 1,
-            ambiguous=route.ambiguous,
-            reason=route.reason,
+    def _execute_storage_route(self, route: EnergyRouteResult) -> MetricResult:
+        return self.executor.execute_storage_route(route)
+
+    def _unsupported_outcome(self, *, route: EnergyRouteResult, route_ms: float) -> AgentOutcome:
+        return AgentOutcome(
+            route=route,
+            result=None,
+            payload=None,
+            forecast=None,
+            timings=AgentTimings(route_ms=route_ms, execute_ms=0.0, answer_ms=0.0),
         )
-
-    def _execute_with_fallback(self, *, route: EnergyRouteResult) -> MetricResult:
-        req = ExecuteRequest(
-            metric=route.primary_metric or "",
-            start=route.start_date or "",
-            end=route.end_date or "",
-            filters=route.filters,
-        )
-        result = self.executor.execute(req)
-
-        metric = str(route.primary_metric or "")
-        capability = get_metric_capability(metric)
-        if (
-            capability.fallback_metric
-            and (result.df is None or len(result.df) == 0)
-        ):
-            proxy_req = ExecuteRequest(
-                metric=capability.fallback_metric,
-                start=route.start_date or "",
-                end=route.end_date or "",
-                filters={},
-            )
-            proxy_result = self.executor.execute(proxy_req)
-            if proxy_result.meta is None:
-                proxy_result.meta = {}
-            proxy_result.meta.update(
-                {
-                    "proxy_for_metric": metric,
-                    "proxy_note": capability.fallback_note
-                    or f"Primary metric '{metric}' unavailable; using '{capability.fallback_metric}' as proxy.",
-                }
-            )
-            return proxy_result
-
-        return result
 
     def run(
         self,
@@ -144,49 +93,13 @@ class EnergyAtlasAgent:
                 route.end_date,
             )
 
-        if route.domain == "unsupported" or route.analysis_type == "unsupported" or route.primary_metric is None:
-            return AgentOutcome(
-                route=route,
-                result=None,
-                payload=None,
-                forecast=None,
-                timings=AgentTimings(route_ms=route_ms, execute_ms=0.0, answer_ms=0.0),
-            )
+        if route.domain == "unsupported" or route.analysis_type == "unsupported":
+            return self._unsupported_outcome(route=route, route_ms=route_ms)
+        if route.domain != "storage" or route.primary_metric is None:
+            return self._unsupported_outcome(route=route, route_ms=route_ms)
 
         execute_started = perf_counter()
-        result: MetricResult
-        used_plan_execution = False
-        try:
-            plan = self._route_to_source_plan(route)
-            if DEBUG_ENABLED:
-                logger.info(
-                    "agent_run plan intent=%s calls=%s multi=%s ambiguous=%s",
-                    plan.intent,
-                    [c.metric for c in plan.calls],
-                    plan.requires_multiple_sources,
-                    plan.ambiguous,
-                )
-            plan_results = self.executor.execute_plan(
-                plan,
-                start=route.start_date or "",
-                end=route.end_date or "",
-            )
-            if isinstance(plan_results, dict):
-                route_metric = str(route.primary_metric or "")
-                if route_metric and route_metric in plan_results:
-                    result = plan_results[route_metric]
-                    used_plan_execution = True
-                elif plan.calls and plan.calls[0].metric in plan_results:
-                    result = plan_results[plan.calls[0].metric]
-                    used_plan_execution = True
-                else:
-                    result = self._execute_with_fallback(route=route)
-            else:
-                result = self._execute_with_fallback(route=route)
-        except Exception as exc:
-            if DEBUG_ENABLED:
-                logger.exception("agent_run plan execution failed; falling back: %s", exc)
-            result = self._execute_with_fallback(route=route)
+        result = self._execute_storage_route(route)
         execute_ms = (perf_counter() - execute_started) * 1000
         if DEBUG_ENABLED:
             df_obj = getattr(result, "df", None)
@@ -195,13 +108,11 @@ class EnergyAtlasAgent:
             except Exception:
                 row_count = 0
             logger.info(
-                "agent_run execute done mode=%s rows=%s metric=%s",
-                "source_plan" if used_plan_execution else "fallback",
+                "agent_run execute done domain=%s rows=%s metric=%s",
+                route.domain,
                 row_count,
                 str((result.meta or {}).get("metric") or route.primary_metric or ""),
             )
-        if used_plan_execution and result.meta is not None:
-            result.meta["execution_mode"] = "source_plan"
 
         forecast = None
         metric = str((result.meta or {}).get("metric") or route.primary_metric or "")
@@ -224,6 +135,7 @@ class EnergyAtlasAgent:
         payload = self._answer_builder_fn(
             query=user_query,
             result=result,
+            route=route,
             mode="observed",
             model=self.model,
         )
