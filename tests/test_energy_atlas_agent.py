@@ -22,6 +22,7 @@ def _route(**overrides) -> EnergyRouteResult:
         "date_expression": None,
         "value_type": "level",
         "comparisons": ["none"],
+        "ranking_basis": "current_storage",
         "chart_type": "none",
         "output_mode": "answer",
         "filters": {"regions": ["lower48"]},
@@ -119,6 +120,31 @@ class TestEnergyAtlasAgent(unittest.TestCase):
             mode="observed",
             model="gpt-5.2",
         )
+
+    def test_storage_route_preserves_regions_list_into_executor(self) -> None:
+        executor = Mock()
+        metric_result = Mock(df=Mock(), source=Mock(reference="ref:test"), meta={})
+        executor.execute_storage_route.return_value = metric_result
+        route_fn = Mock(
+            return_value=_route(
+                analysis_type="time_series",
+                chart_type="line",
+                output_mode="chart_and_answer",
+                regions=["east", "midwest"],
+                filters={"regions": ["east", "midwest"]},
+            )
+        )
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=Mock(return_value=Mock()),
+        )
+
+        agent.run(user_query="Compare East and Midwest storage since 2021")
+
+        routed = executor.execute_storage_route.call_args.args[0]
+        self.assertEqual(routed.regions, ["east", "midwest"])
+        self.assertEqual(routed.filters["regions"], ["east", "midwest"])
 
 
 if __name__ == "__main__":

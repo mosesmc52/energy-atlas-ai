@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from answer_builder import _is_suggested_alert_relevant, build_answer_with_openai
+from charts.plotly_renderer import render_plotly
 from schemas.answer import SourceRef
 from tools.eia_adapter import EIAResult
 
@@ -21,8 +22,10 @@ class TestAnswerBuilder(unittest.TestCase):
             "regions": ["lower48"],
             "value_type": "level",
             "comparisons": ["none"],
+            "ranking_basis": "current_storage",
             "chart_type": "line",
             "output_mode": "chart_and_answer",
+            "normalized_query": "",
         }
         values.update(overrides)
         return SimpleNamespace(**values)
@@ -54,9 +57,96 @@ class TestAnswerBuilder(unittest.TestCase):
         )
 
         self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertEqual(payload.chart_spec.title, "Working Gas in Storage")
+        self.assertEqual(payload.chart_spec.y_label, "Storage (Bcf)")
         self.assertIn("region", payload.chart_data_preview.columns)
         self.assertIn("East", payload.answer_text)
         self.assertIn("Midwest", payload.answer_text)
+
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows,
+            columns=payload.chart_data_preview.columns,
+        )
+        self.assertEqual(set(chart_df["region"]), {"east", "midwest"})
+        figure = render_plotly(payload.chart_spec, chart_df)
+        self.assertEqual(len(figure.data), 2)
+        self.assertEqual({trace.name for trace in figure.data}, {"East", "Midwest"})
+
+    def test_storage_route_single_region_time_series_with_region_column_has_start_date(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2016-06-03", "2026-05-22"],
+                "value": [1800.0, 2400.0],
+                "region": ["lower48", "lower48"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Plot storage over the last 10 years.",
+            result=self._storage_result(df),
+            route=self._storage_route(regions=["lower48"]),
+        )
+
+        self.assertIn("From 2016-06-03 to 2026-05-22", payload.answer_text)
+        self.assertIn("from 1,800 Bcf to 2,400 Bcf", payload.answer_text)
+        self.assertIn("a net change of 600 Bcf", payload.answer_text)
+
+    def test_storage_route_time_series_three_regions_keeps_all_traces(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": [
+                    "2021-01-01",
+                    "2026-01-02",
+                    "2021-01-01",
+                    "2026-01-02",
+                    "2021-01-01",
+                    "2026-01-02",
+                ],
+                "value": [800.0, 850.0, 900.0, 950.0, 700.0, 720.0],
+                "region": ["east", "east", "midwest", "midwest", "pacific", "pacific"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Compare East, Midwest, and Pacific storage since 2021",
+            result=self._storage_result(df),
+            route=self._storage_route(regions=["east", "midwest", "pacific"]),
+        )
+
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows,
+            columns=payload.chart_data_preview.columns,
+        )
+        self.assertEqual(set(chart_df["region"]), {"east", "midwest", "pacific"})
+        figure = render_plotly(payload.chart_spec, chart_df)
+        self.assertEqual(len(figure.data), 3)
+        self.assertEqual(
+            {trace.name for trace in figure.data},
+            {"East", "Midwest", "Pacific"},
+        )
+
+    def test_storage_route_chart_preview_preserves_multiple_regions_beyond_ten_rows(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2021-01-01", periods=12, freq="W").tolist()
+                + pd.date_range("2021-01-01", periods=12, freq="W").tolist(),
+                "value": list(range(100, 112)) + list(range(200, 212)),
+                "region": ["east"] * 12 + ["midwest"] * 12,
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Compare East and Midwest storage since 2021",
+            result=self._storage_result(df),
+            route=self._storage_route(regions=["east", "midwest"]),
+        )
+
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows,
+            columns=payload.chart_data_preview.columns,
+        )
+        self.assertEqual(len(chart_df), 24)
+        self.assertEqual(set(chart_df["region"]), {"east", "midwest"})
+        figure = render_plotly(payload.chart_spec, chart_df)
+        self.assertEqual(len(figure.data), 2)
+        self.assertEqual({trace.name for trace in figure.data}, {"East", "Midwest"})
 
     def test_storage_route_seasonal_compare_uses_route_not_query_text(self) -> None:
         df = pd.DataFrame(
@@ -86,6 +176,103 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertEqual(payload.chart_spec.chart_type, "seasonal_line")
         self.assertIn("five-year average", payload.answer_text)
         self.assertIn("five_year_avg", payload.chart_data_preview.columns)
+        self.assertNotIn("Not enough same-week history", payload.answer_text)
+
+    def test_storage_route_deviation_from_normal_uses_six_year_history(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": [
+                    "2021-01-01",
+                    "2022-01-07",
+                    "2023-01-06",
+                    "2024-01-05",
+                    "2025-01-03",
+                    "2026-01-02",
+                ],
+                "value": [100.0, 105.0, 110.0, 115.0, 120.0, 150.0],
+                "region": ["east"] * 6,
+            }
+        )
+        payload = build_answer_with_openai(
+            query="How far above normal is East storage?",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                analysis_type="deviation_from_normal",
+                comparisons=["five_year_avg"],
+                regions=["east"],
+            ),
+        )
+
+        self.assertIn("above", payload.answer_text.lower())
+        self.assertNotIn("Not enough same-week history", payload.answer_text)
+        self.assertIn("five_year_avg", payload.chart_data_preview.columns)
+        self.assertIn("deviation_bcf", payload.chart_data_preview.columns)
+
+    def test_storage_route_ranking_by_deviation_from_normal_uses_deviation_chart(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": [
+                    "2021-01-01",
+                    "2022-01-07",
+                    "2023-01-06",
+                    "2024-01-05",
+                    "2025-01-03",
+                    "2026-01-02",
+                ]
+                * 3,
+                "value": [
+                    400.0,
+                    410.0,
+                    420.0,
+                    430.0,
+                    440.0,
+                    300.0,
+                    500.0,
+                    505.0,
+                    510.0,
+                    515.0,
+                    520.0,
+                    470.0,
+                    600.0,
+                    610.0,
+                    620.0,
+                    630.0,
+                    640.0,
+                    720.0,
+                ],
+                "region": ["mountain"] * 6 + ["east"] * 6 + ["pacific"] * 6,
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Which region is most below normal?",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                analysis_type="ranking",
+                regions=["mountain", "east", "pacific"],
+                comparisons=["five_year_avg"],
+                ranking_basis="deviation_from_normal",
+                chart_type="bar",
+                normalized_query="which region is most below normal?",
+            ),
+        )
+
+        self.assertEqual(payload.chart_spec.chart_type, "bar")
+        self.assertEqual(
+            payload.chart_spec.title,
+            "Storage Deviation from 5-Year Average by Region",
+        )
+        self.assertIn("below normal", payload.answer_text.lower())
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows,
+            columns=payload.chart_data_preview.columns,
+        )
+        self.assertIn("deviation_bcf", chart_df.columns)
+        self.assertEqual(chart_df.iloc[0]["region"], "mountain")
+        self.assertLess(chart_df.iloc[0]["deviation_bcf"], 0)
+
+        figure = render_plotly(payload.chart_spec, chart_df)
+        self.assertEqual(figure.data[0].orientation, "h")
+        self.assertEqual(list(figure.data[0].y), ["Mountain", "East", "Pacific"])
 
     def test_storage_snapshot_query_rejects_deficit_widening_suggestion(self) -> None:
         self.assertFalse(

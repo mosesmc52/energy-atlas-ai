@@ -240,18 +240,24 @@ def _json_safe(v: Any) -> Any:
     return v
 
 
-def _make_preview(df: pd.DataFrame, n: int = 10) -> DataPreview:
-    tail = df.tail(n)
+def _make_preview(df: pd.DataFrame, n: int | None = 10) -> DataPreview:
+    preview_df = df if n is None else df.tail(n)
 
-    # convert the tail to python objects (keeps Timestamps as pd.Timestamp)
-    rows = tail.to_numpy(dtype=object).tolist()
+    # convert the preview to python objects (keeps Timestamps as pd.Timestamp)
+    rows = preview_df.to_numpy(dtype=object).tolist()
     rows = [[_json_safe(v) for v in row] for row in rows]
 
     return DataPreview(
-        columns=list(tail.columns),
+        columns=list(preview_df.columns),
         rows=rows,
         units=None,
     )
+
+
+def _make_chart_preview(df: pd.DataFrame | None) -> DataPreview | None:
+    if df is None:
+        return None
+    return _make_preview(df, n=None)
 
 
 def _should_include_data_preview() -> bool:
@@ -2052,6 +2058,10 @@ def _route_output_mode(route) -> str:
     return str(getattr(route, "output_mode", "") or "")
 
 
+def _route_ranking_basis(route) -> str:
+    return str(getattr(route, "ranking_basis", "") or "current_storage")
+
+
 def _storage_region_label(region: str | None) -> str:
     label = str(region or "lower48").replace("_", " ").title()
     return "Lower 48" if label == "Lower48" else label
@@ -2085,14 +2095,51 @@ def _storage_latest_by_region_df(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _storage_same_week_baseline_by_region(
+def _storage_prior_year_same_week_samples(
+    group: pd.DataFrame,
+    *,
+    target_date: pd.Timestamp,
+    normal_years: int = 5,
+    tolerance_days: int = 10,
+) -> pd.Series:
+    latest_year = int(target_date.year)
+    samples: list[float] = []
+    for year in range(latest_year - normal_years, latest_year):
+        shifted = target_date - pd.DateOffset(years=(latest_year - year))
+        candidates = group.loc[
+            (group["date"].dt.year == year)
+            & (group["date"] >= (shifted - pd.Timedelta(days=tolerance_days)))
+            & (group["date"] <= (shifted + pd.Timedelta(days=tolerance_days)))
+        ].copy()
+        if candidates.empty:
+            continue
+        candidates["days_from_target"] = (candidates["date"] - shifted).abs().dt.days
+        picked = candidates.sort_values(["days_from_target", "date"]).iloc[0]
+        value = _safe_float(picked["value"])
+        if value is not None:
+            samples.append(value)
+    return pd.Series(samples, dtype="float64")
+
+
+def _storage_current_year_vs_baseline_series(
     df: pd.DataFrame,
     *,
     normal_years: int = 5,
 ) -> pd.DataFrame:
     d = _storage_prepare_df(df)
     if d.empty:
-        return d.assign(five_year_avg=np.nan, five_year_min=np.nan, five_year_max=np.nan)
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "value",
+                "five_year_avg",
+                "five_year_min",
+                "five_year_max",
+                "deviation_bcf",
+                "deviation_pct",
+                "sample_count",
+            ]
+        )
 
     if "region" not in d.columns:
         d["region"] = "lower48"
@@ -2101,62 +2148,148 @@ def _storage_same_week_baseline_by_region(
         added_region = False
 
     rows: list[dict[str, Any]] = []
-    for _, group in d.groupby("region", sort=False):
+    for region, group in d.groupby("region", sort=False):
         group = group.sort_values("date").copy()
-        group["iso_week"] = group["date"].dt.isocalendar().week.astype(int)
-        group["year"] = group["date"].dt.year.astype(int)
-        for _, row in group.iterrows():
-            hist = group.loc[
-                (group["iso_week"] == int(row["iso_week"]))
-                & (group["year"] >= int(row["year"]) - normal_years)
-                & (group["year"] < int(row["year"]))
-            ]
-            hist_values = pd.to_numeric(hist["value"], errors="coerce").dropna()
-            out = row.drop(labels=["iso_week", "year"]).to_dict()
-            if hist_values.empty:
+        latest_year = int(group["date"].dt.year.max())
+        current_year = group.loc[group["date"].dt.year == latest_year].copy()
+        for _, row in current_year.iterrows():
+            samples = _storage_prior_year_same_week_samples(
+                group,
+                target_date=pd.Timestamp(row["date"]),
+                normal_years=normal_years,
+            )
+            out = {
+                "date": row["date"],
+                "value": float(row["value"]),
+                "region": region,
+                "sample_count": int(len(samples)),
+            }
+            if len(samples) >= 3:
+                avg = float(samples.mean())
+                min_value = float(samples.min())
+                max_value = float(samples.max())
+                deviation_bcf = float(row["value"]) - avg
+                deviation_pct = (deviation_bcf / avg * 100.0) if avg else np.nan
                 out.update(
                     {
-                        "five_year_avg": np.nan,
-                        "five_year_min": np.nan,
-                        "five_year_max": np.nan,
+                        "five_year_avg": avg,
+                        "five_year_min": min_value,
+                        "five_year_max": max_value,
+                        "deviation_bcf": deviation_bcf,
+                        "deviation_pct": deviation_pct,
                     }
                 )
             else:
                 out.update(
                     {
-                        "five_year_avg": float(hist_values.mean()),
-                        "five_year_min": float(hist_values.min()),
-                        "five_year_max": float(hist_values.max()),
+                        "five_year_avg": np.nan,
+                        "five_year_min": np.nan,
+                        "five_year_max": np.nan,
+                        "deviation_bcf": np.nan,
+                        "deviation_pct": np.nan,
                     }
                 )
             rows.append(out)
 
-    result = pd.DataFrame(rows)
+    result = pd.DataFrame(rows).sort_values(["region", "date"]).reset_index(drop=True)
     if added_region and "region" in result.columns:
         result = result.drop(columns=["region"])
-    return result.sort_values(["region", "date"] if "region" in result.columns else ["date"]).reset_index(drop=True)
+    return result
+
+
+def _storage_current_vs_five_year_baseline(
+    df: pd.DataFrame,
+    *,
+    normal_years: int = 5,
+) -> dict | None:
+    series_df = _storage_current_year_vs_baseline_series(df, normal_years=normal_years)
+    if series_df.empty:
+        return None
+    latest = _storage_latest_by_region_df(series_df).dropna(subset=["five_year_avg"])
+    if latest.empty:
+        return None
+    latest = latest.copy()
+    latest["latest_date"] = latest["date"].dt.date.astype(str)
+    latest["current_value"] = pd.to_numeric(latest["value"], errors="coerce")
+    if "region" not in latest.columns:
+        row = latest.iloc[0]
+        return {
+            "latest_date": row["latest_date"],
+            "current_value": float(row["current_value"]),
+            "five_year_avg": float(row["five_year_avg"]),
+            "five_year_min": float(row["five_year_min"]),
+            "five_year_max": float(row["five_year_max"]),
+            "deviation_bcf": float(row["deviation_bcf"]),
+            "deviation_pct": float(row["deviation_pct"]),
+            "sample_count": int(row["sample_count"]),
+        }
+    return {"rows": latest.to_dict(orient="records")}
+
+
+def _storage_same_week_baseline_by_region(
+    df: pd.DataFrame,
+    *,
+    normal_years: int = 5,
+) -> pd.DataFrame:
+    return _storage_current_year_vs_baseline_series(df, normal_years=normal_years)
 
 
 def _storage_deviation_from_normal_df(df: pd.DataFrame) -> pd.DataFrame:
-    d = _storage_same_week_baseline_by_region(df)
+    d = _storage_current_year_vs_baseline_series(df)
     if d.empty or "five_year_avg" not in d.columns:
         return pd.DataFrame(columns=["date", "value", "deviation_bcf"])
-    d["deviation_bcf"] = pd.to_numeric(d["value"], errors="coerce") - pd.to_numeric(
-        d["five_year_avg"], errors="coerce"
+    return d.dropna(
+        subset=["date", "value", "five_year_avg", "deviation_bcf"]
+    ).reset_index(drop=True)
+
+
+def _storage_region_deviation_ranking_df(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    baseline = _storage_current_vs_five_year_baseline(df)
+    if baseline is None or "rows" not in baseline:
+        return pd.DataFrame(
+            columns=[
+                "region",
+                "latest_date",
+                "current_storage_bcf",
+                "five_year_avg_bcf",
+                "deviation_bcf",
+                "deviation_pct",
+            ]
+        )
+    ranking_df = pd.DataFrame(baseline["rows"]).copy()
+    if ranking_df.empty:
+        return ranking_df
+    ranking_df = ranking_df.rename(
+        columns={
+            "current_value": "current_storage_bcf",
+            "five_year_avg": "five_year_avg_bcf",
+        }
     )
-    return d.dropna(subset=["date", "value", "five_year_avg", "deviation_bcf"]).reset_index(drop=True)
+    keep = [
+        "region",
+        "latest_date",
+        "current_storage_bcf",
+        "five_year_avg_bcf",
+        "deviation_bcf",
+        "deviation_pct",
+    ]
+    return ranking_df[keep].dropna(subset=["deviation_bcf"]).reset_index(drop=True)
 
 
 def _storage_period_change_summary(df: pd.DataFrame) -> dict:
     d = _storage_prepare_df(df)
     if d.empty:
         return {}
-    if "region" in d.columns:
+    if "region" in d.columns and d["region"].nunique() > 1:
         latest_rows = _storage_latest_by_region_df(d)
         return {
             "latest_by_region": latest_rows,
             "latest_date": latest_rows["date"].max().date().isoformat(),
         }
+    if "region" in d.columns:
+        d = d.drop(columns=["region"])
     start = d.iloc[0]
     latest = d.iloc[-1]
     start_value = _safe_float(start["value"])
@@ -2216,7 +2349,7 @@ def _storage_chart_spec_from_route(
             x="region",
             y=[y_field],
             x_label="Region",
-            y_label="Bcf vs 5Y Avg" if y_field == "deviation_bcf" else "Bcf",
+            y_label="Deviation (Bcf)" if y_field == "deviation_bcf" else "Bcf",
         )
 
     if analysis_type == "weekly_change":
@@ -2239,13 +2372,23 @@ def _storage_chart_spec_from_route(
             y_label="Bcf vs 5Y Avg",
         )
 
+    if analysis_type == "time_series" and chart_type == "line":
+        return ChartSpec(
+            chart_type="line",
+            title="Working Gas in Storage",
+            x="date",
+            y=["value"],
+            x_label="Date",
+            y_label="Storage (Bcf)",
+        )
+
     return ChartSpec(
         chart_type="line",
         title="Working Gas in Storage",
         x="date",
         y=["value"],
         x_label="Date",
-        y_label="Bcf",
+        y_label="Storage (Bcf)",
     )
 
 
@@ -2268,7 +2411,7 @@ def _storage_payload(
         report_context_reason="storage_route",
         report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
         data_preview=_maybe_data_preview(chart_df),
-        chart_data_preview=_make_preview(chart_df) if chart_df is not None else None,
+        chart_data_preview=_make_chart_preview(chart_df),
         chart_spec=chart_spec,
         sources=[result.source],
     )
@@ -2326,6 +2469,48 @@ def _storage_regional_rank_answer(df: pd.DataFrame, *, value_field: str = "value
     )
 
 
+def _storage_deviation_sort_ascending(route: Any) -> bool:
+    query = str(getattr(route, "normalized_query", "") or "")
+    descending_terms = ("above normal", "surplus", "loosest", "loose")
+    ascending_terms = ("below normal", "deficit", "tight", "tightest")
+    if any(term in query for term in descending_terms):
+        return False
+    if any(term in query for term in ascending_terms):
+        return True
+    return False
+
+
+def _storage_deviation_ranking_answer(df: pd.DataFrame, route: Any) -> str:
+    if df.empty:
+        return "No data was returned for the requested period."
+    ascending = _storage_deviation_sort_ascending(route)
+    ranked = df.sort_values("deviation_bcf", ascending=ascending).reset_index(drop=True)
+    top = ranked.iloc[0]
+    latest_date = str(top["latest_date"])
+    top_region = _storage_region_label(top["region"])
+    top_deviation = float(top["deviation_bcf"])
+    direction = "below normal" if top_deviation < 0 else "above normal"
+    if len(ranked) == 1:
+        return (
+            f"As of {latest_date}, {top_region} storage was the furthest {direction} at "
+            f"{_format_number(abs(top_deviation))} Bcf {direction} versus its same-week five-year average."
+        )
+    second = ranked.iloc[1]
+    second_region = _storage_region_label(second["region"])
+    second_deviation = float(second["deviation_bcf"])
+    if top_deviation < 0:
+        return (
+            f"As of {latest_date}, {top_region} storage was the furthest below normal at "
+            f"{_format_number(abs(top_deviation))} Bcf below its same-week five-year average. "
+            f"{second_region} ranked second at {_format_number(abs(second_deviation))} Bcf below normal."
+        )
+    return (
+        f"As of {latest_date}, {top_region} storage was the furthest above normal at "
+        f"{_format_number(abs(top_deviation))} Bcf above its same-week five-year average. "
+        f"{second_region} ranked second at {_format_number(abs(second_deviation))} Bcf above normal."
+    )
+
+
 def _storage_weekly_change_answer(df: pd.DataFrame) -> str:
     d = _storage_prepare_df(df)
     if d.empty:
@@ -2353,20 +2538,40 @@ def _storage_weekly_change_answer(df: pd.DataFrame) -> str:
 
 
 def _storage_seasonal_compare_answer(df: pd.DataFrame, route: Any) -> str:
-    d = _storage_same_week_baseline_by_region(df)
-    d = d.dropna(subset=["five_year_avg"])
-    if d.empty:
+    baseline = _storage_current_vs_five_year_baseline(df)
+    if baseline is None:
         return "Not enough same-week history was returned to compute a five-year average."
-    latest = _storage_latest_by_region_df(d).iloc[0]
-    value = float(latest["value"])
-    avg = float(latest["five_year_avg"])
-    diff = value - avg
-    pct = (diff / avg * 100.0) if avg else None
-    region = _storage_region_label(latest.get("region") or (_route_regions(route) or ["lower48"])[0])
-    pct_text = f", or {_format_number(pct)}%" if pct is not None else ""
+    if "rows" in baseline:
+        latest = pd.DataFrame(baseline["rows"]).iloc[0]
+        region = _storage_region_label(latest.get("region") or (_route_regions(route) or ["lower48"])[0])
+        latest_date = str(latest["latest_date"])
+        value = float(latest["current_value"])
+        avg = float(latest["five_year_avg"])
+        min_value = float(latest["five_year_min"])
+        max_value = float(latest["five_year_max"])
+        diff = float(latest["deviation_bcf"])
+        pct = float(latest["deviation_pct"]) if pd.notna(latest["deviation_pct"]) else None
+    else:
+        region = _storage_region_label((_route_regions(route) or ["lower48"])[0])
+        latest_date = str(baseline["latest_date"])
+        value = float(baseline["current_value"])
+        avg = float(baseline["five_year_avg"])
+        min_value = float(baseline["five_year_min"])
+        max_value = float(baseline["five_year_max"])
+        diff = float(baseline["deviation_bcf"])
+        pct = float(baseline["deviation_pct"]) if pd.notna(baseline["deviation_pct"]) else None
+    direction = "above normal" if diff > 0 else "below normal" if diff < 0 else "in line with normal"
+    pct_text = f", or {_format_number(abs(pct))}% {direction.replace(' normal', '')}" if pct is not None and diff != 0 else ""
+    comparisons = set(_route_comparisons(route))
+    if "five_year_range" in comparisons:
+        return (
+            f"As of {latest_date}, {region} storage was {_format_number(value)} Bcf versus a "
+            f"five-year same-week range of {_format_number(min_value)} to {_format_number(max_value)} Bcf."
+        )
     return (
-        f"As of {latest['date'].date().isoformat()}, {region} storage was {_format_number(value)} Bcf versus a "
-        f"five-year average of {_format_number(avg)} Bcf, a difference of {_format_number(diff)} Bcf{pct_text}."
+        f"As of {latest_date}, {region} working gas in storage was {_format_number(value)} Bcf versus a "
+        f"same-week five-year average of {_format_number(avg)} Bcf. Storage was "
+        f"{_format_number(abs(diff))} Bcf {'above' if diff > 0 else 'below' if diff < 0 else 'in line with'} normal{pct_text}."
     )
 
 
@@ -2378,9 +2583,13 @@ def _storage_deviation_answer(df: pd.DataFrame) -> str:
         return _storage_regional_rank_answer(d, value_field="deviation_bcf")
     if len(d) == 1:
         row = d.iloc[-1]
+        avg = float(row["five_year_avg"])
+        diff = float(row["deviation_bcf"])
         return (
-            f"As of {row['date'].date().isoformat()}, storage was "
-            f"{_format_number(float(row['deviation_bcf']))} Bcf versus the five-year average."
+            f"As of {row['date'].date().isoformat()}, {_storage_region_label(row.get('region')) if 'region' in row else 'storage'} "
+            f"was {_format_number(float(row['value']))} Bcf, which was "
+            f"{_format_number(abs(diff))} Bcf {'above' if diff > 0 else 'below' if diff < 0 else 'in line with'} "
+            f"the same-week five-year average of {_format_number(avg)} Bcf."
         )
     latest = d.iloc[-1]
     previous = d.iloc[-2]
@@ -2411,11 +2620,15 @@ def _build_storage_answer_payload(
         chart_df = _storage_latest_by_region_df(df).sort_values("value", ascending=False)
         answer_text = _storage_regional_rank_answer(chart_df)
     elif analysis_type == "ranking":
-        if any(c in comparisons for c in {"five_year_avg", "seasonal_normal"}):
-            chart_df = _storage_latest_by_region_df(_storage_deviation_from_normal_df(df)).sort_values(
-                "deviation_bcf", ascending=False
-            )
-            answer_text = _storage_regional_rank_answer(chart_df, value_field="deviation_bcf")
+        if _route_ranking_basis(route) == "deviation_from_normal" or any(
+            c in comparisons for c in {"five_year_avg", "seasonal_normal"}
+        ):
+            chart_df = _storage_region_deviation_ranking_df(df)
+            chart_df = chart_df.sort_values(
+                "deviation_bcf",
+                ascending=_storage_deviation_sort_ascending(route),
+            ).reset_index(drop=True)
+            answer_text = _storage_deviation_ranking_answer(chart_df, route)
         else:
             chart_df = _storage_latest_by_region_df(df).sort_values("value", ascending=False)
             answer_text = _storage_regional_rank_answer(chart_df)
@@ -2435,6 +2648,14 @@ def _build_storage_answer_payload(
     else:
         chart_df = _storage_latest_by_region_df(df)
         answer_text = _storage_single_latest_answer(df, route)
+
+    if not chart_df.empty and "region" in chart_df.columns:
+        logger.info(
+            "storage_answer chart_regions=%s rows=%s analysis=%s",
+            sorted(chart_df["region"].dropna().astype(str).unique().tolist()),
+            len(chart_df),
+            analysis_type,
+        )
 
     chart_spec = _storage_chart_spec_from_route(route, chart_df)
     return _storage_payload(
@@ -2810,7 +3031,7 @@ def build_answer_with_openai(
             report_context_reason="ranking_response_no_rag",
             report_context_sources=[],
             data_preview=_maybe_data_preview(chart_df if not chart_df.empty else df),
-            chart_data_preview=_make_preview(chart_df) if not chart_df.empty else None,
+            chart_data_preview=_make_chart_preview(chart_df) if not chart_df.empty else None,
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -2877,7 +3098,7 @@ def build_answer_with_openai(
             report_context_reason="storage_level_and_change_no_rag",
             report_context_sources=[],
             data_preview=_maybe_data_preview(chart_df),
-            chart_data_preview=_make_preview(chart_df) if chart_df is not None else None,
+            chart_data_preview=_make_chart_preview(chart_df),
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -2963,7 +3184,7 @@ def build_answer_with_openai(
             report_context_reason="regional_production_change_no_rag",
             report_context_sources=[],
             data_preview=_maybe_data_preview(chart_df if not chart_df.empty else df),
-            chart_data_preview=_make_preview(chart_df) if not chart_df.empty else None,
+            chart_data_preview=_make_chart_preview(chart_df) if not chart_df.empty else None,
             chart_spec=chart_spec,
             sources=[src],
         )
@@ -3203,7 +3424,7 @@ def build_answer_with_openai(
         report_context_reason=report_context_reason,
         report_context_sources=report_context_sources,
         data_preview=_maybe_data_preview(chart_df),
-        chart_data_preview=_make_preview(chart_df) if chart_df is not None else None,
+        chart_data_preview=_make_chart_preview(chart_df),
         chart_spec=chart_spec,
         sources=[src],
         warnings=None,

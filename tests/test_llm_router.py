@@ -54,6 +54,30 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.start_date, "2020-01-01")
         self.assertEqual(route.end_date, "2023-12-31")
 
+    def test_show_storage_over_last_five_years_implies_time_series(self) -> None:
+        route = route_query("Show Lower 48 storage over the last 5 years.")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.regions, ["lower48"])
+        self.assertEqual(route.value_type, "level")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.output_mode, "chart_and_answer")
+        self.assertEqual(route.start_date, "2021-06-02")
+        self.assertEqual(route.end_date, date.today().isoformat())
+
+    def test_how_has_midwest_storage_changed_since_2021_is_time_series(self) -> None:
+        route = route_query("How has Midwest storage changed since 2021?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.regions, ["midwest"])
+        self.assertEqual(route.value_type, "level")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.output_mode, "chart_and_answer")
+        self.assertEqual(route.start_date, "2021-01-01")
+        self.assertEqual(route.end_date, date.today().isoformat())
+
     def test_compare_current_storage_by_region(self) -> None:
         route = route_query("Compare current storage by region")
 
@@ -61,6 +85,7 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.analysis_type, "regional_compare")
         self.assertEqual(route.regions, list(STORAGE_REGIONS))
         self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.output_mode, "chart_and_answer")
 
     def test_compare_storage_to_five_year_average(self) -> None:
         route = route_query("How does Lower 48 storage compare to the five-year average?")
@@ -116,10 +141,33 @@ class TestStorageRouting(unittest.TestCase):
 
         self.assertEqual(route.domain, "storage")
         self.assertEqual(route.analysis_type, "ranking")
-        self.assertTrue(
-            {"five_year_avg", "seasonal_normal"}.intersection(route.comparisons)
-        )
+        self.assertEqual(route.ranking_basis, "deviation_from_normal")
+        self.assertIn("five_year_avg", route.comparisons)
+        self.assertEqual(route.regions, list(STORAGE_REGIONS))
         self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.output_mode, "chart_and_answer")
+
+    def test_rank_regions_by_storage_deficit_uses_deviation_basis(self) -> None:
+        route = route_query("Rank regions by storage deficit.")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.ranking_basis, "deviation_from_normal")
+        self.assertIn("five_year_avg", route.comparisons)
+        self.assertEqual(route.regions, list(STORAGE_REGIONS))
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.output_mode, "chart_and_answer")
+
+    def test_which_region_is_most_below_normal_uses_deviation_basis(self) -> None:
+        route = route_query("Which region is most below normal?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.ranking_basis, "deviation_from_normal")
+        self.assertIn("five_year_avg", route.comparisons)
+        self.assertEqual(route.regions, list(STORAGE_REGIONS))
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.output_mode, "chart_and_answer")
 
     def test_injected_this_week_by_region(self) -> None:
         route = route_query("How much gas was injected this week by region?")

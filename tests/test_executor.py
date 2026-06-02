@@ -21,6 +21,7 @@ def _storage_route(**overrides) -> EnergyRouteResult:
         "date_expression": None,
         "value_type": "level",
         "comparisons": ["none"],
+        "ranking_basis": "current_storage",
         "chart_type": "line",
         "output_mode": "chart_and_answer",
         "filters": {"regions": ["lower48"]},
@@ -229,6 +230,24 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(set(result.df["region"]), {"east", "midwest"})
         self.assertEqual(list(result.df.columns), ["date", "value", "region"])
 
+    def test_storage_level_single_region_keeps_region_column(self) -> None:
+        eia = Mock()
+        eia.storage_working_gas.side_effect = lambda region, **kwargs: _storage_result(region, value=20.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="working_gas_storage_lower48",
+                start="2021-01-01",
+                end="2026-06-01",
+                filters={"regions": ["east"]},
+            )
+        )
+
+        self.assertEqual(eia.storage_working_gas.call_count, 1)
+        self.assertEqual(set(result.df["region"]), {"east"})
+        self.assertEqual(list(result.df.columns), ["date", "value", "region"])
+
     def test_execute_storage_route_attaches_route_metadata(self) -> None:
         eia = Mock()
         eia.storage_working_gas.side_effect = lambda region, **kwargs: _storage_result(region)
@@ -245,6 +264,31 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(result.meta["analysis_type"], "time_series")
         self.assertEqual(result.meta["regions"], ["east", "midwest"])
         self.assertEqual(result.meta["start_date"], "2021-01-01")
+
+    def test_execute_storage_route_expands_fetch_window_for_baseline_queries(self) -> None:
+        eia = Mock()
+        eia.storage_working_gas.side_effect = lambda region, start, end: _storage_result(region)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="seasonal_compare",
+            regions=["lower48"],
+            start_date="2026-05-01",
+            end_date="2026-06-01",
+            comparisons=["five_year_avg"],
+            filters={"regions": ["lower48"]},
+        )
+
+        result = executor.execute_storage_route(route)
+
+        eia.storage_working_gas.assert_called_once_with(
+            start="2020-06-01",
+            end="2026-06-01",
+            region="lower48",
+        )
+        self.assertEqual(result.meta["requested_start_date"], "2026-05-01")
+        self.assertEqual(result.meta["requested_end_date"], "2026-06-01")
+        self.assertEqual(result.meta["fetch_start_date"], "2020-06-01")
+        self.assertEqual(result.meta["fetch_end_date"], "2026-06-01")
 
     def test_regional_compare_storage_route_expands_regions_without_lower48(self) -> None:
         eia = Mock()

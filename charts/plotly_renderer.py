@@ -119,12 +119,51 @@ def compute_timeseries_summary_metrics(
     ):
         return []
 
-    d = df[[date_field, value_field]].copy()
+    selected_columns = [date_field, value_field]
+    if "region" in df.columns:
+        selected_columns.append("region")
+    d = df[selected_columns].copy()
     d[date_field] = pd.to_datetime(d[date_field], errors="coerce")
     d[value_field] = pd.to_numeric(d[value_field], errors="coerce")
     d = d.dropna(subset=[date_field, value_field]).sort_values(date_field)
     if d.empty:
         return []
+
+    if "region" in d.columns:
+        d["region"] = d["region"].astype(str)
+        unique_regions = [region for region in d["region"].dropna().unique().tolist() if region]
+        if len(unique_regions) > 1:
+            latest_by_region = (
+                d.sort_values(["region", date_field])
+                .groupby("region", as_index=False, sort=False)
+                .tail(1)
+                .sort_values("region")
+            )
+            metrics: list[dict[str, float | str | None]] = []
+            for _, row in latest_by_region.iterrows():
+                region_label = str(row["region"]).replace("_", " ").title()
+                metrics.append(
+                    {
+                        "label": f"{region_label} Latest" if len(unique_regions) == 2 else region_label,
+                        "value": float(row[value_field]),
+                        "unit": unit or "",
+                        "subtitle": row[date_field].date().isoformat(),
+                    }
+                )
+            if len(unique_regions) == 2 and len(latest_by_region) == 2:
+                left = latest_by_region.iloc[0]
+                right = latest_by_region.iloc[1]
+                left_label = str(left["region"]).replace("_", " ").title()
+                right_label = str(right["region"]).replace("_", " ").title()
+                metrics.append(
+                    {
+                        "label": "Spread",
+                        "value": float(right[value_field]) - float(left[value_field]),
+                        "unit": unit or "",
+                        "subtitle": f"{right_label} - {left_label}",
+                    }
+                )
+            return metrics
 
     latest = float(d.iloc[-1][value_field])
     previous = float(d.iloc[-2][value_field]) if len(d) >= 2 else None
@@ -475,36 +514,45 @@ def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame
     return scoped.groupby("region", as_index=False, sort=False).tail(1).reset_index(drop=True)
 
 
-def _render_storage_region_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
-    if spec.chart_type not in {"line", "area"} or not {"date", "value", "region"}.issubset(d.columns):
+def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    if spec.chart_type != "line" or not {"date", "value"}.issubset(d.columns):
         return None
 
     scoped = d.copy()
     scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
     scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
-    scoped = scoped.dropna(subset=["date", "value", "region"]).sort_values(["region", "date"])
+    required = ["date", "value"]
+    if "region" in scoped.columns:
+        required.append("region")
+    scoped = scoped.dropna(subset=required)
+    sort_cols = ["date"]
+    if "region" in scoped.columns:
+        sort_cols = ["region", "date"]
+    scoped = scoped.sort_values(sort_cols)
     if scoped.empty:
         return None
 
+    color_field = "region" if "region" in scoped.columns else None
     fig = px.line(
         scoped,
         x="date",
         y="value",
-        color="region",
+        color=color_field,
         title=spec.title,
         template="plotly_white",
     )
-    fig.update_traces(
-        line=dict(width=3),
-        hovertemplate="%{x|%Y-%m-%d}<br>%{fullData.name}<br>%{y:,.0f} Bcf<extra></extra>",
-    )
-    if spec.chart_type == "area":
-        fig.update_traces(fill="tozeroy")
+    hover_template = "%{x|%Y-%m-%d}<br>%{y:,.0f} Bcf<extra></extra>"
+    if color_field:
+        hover_template = "%{x|%Y-%m-%d}<br>%{fullData.name}<br>%{y:,.0f} Bcf<extra></extra>"
+    fig.update_traces(line=dict(width=3), hovertemplate=hover_template)
+    if color_field:
+        for trace in fig.data:
+            trace.name = str(trace.name).replace("_", " ").title()
     fig.update_layout(
         height=650,
         margin=dict(l=30, r=20, t=120, b=40),
         xaxis_title=spec.x_label or "Date",
-        yaxis_title=spec.y_label or "Bcf",
+        yaxis_title=spec.y_label or "Storage (Bcf)",
         hovermode="x unified",
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -563,9 +611,12 @@ def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
 def _render_storage_deviation_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
     if spec.chart_type != "bar" or not {"region", "deviation_bcf"}.issubset(d.columns):
         return None
-    scoped = _storage_latest_by_region(d, "deviation_bcf").sort_values("deviation_bcf", ascending=True)
+    scoped = d.copy()
+    scoped["deviation_bcf"] = pd.to_numeric(scoped["deviation_bcf"], errors="coerce")
+    scoped = scoped.dropna(subset=["region", "deviation_bcf"])
     if scoped.empty:
         return None
+    scoped["region"] = scoped["region"].astype(str).str.replace("_", " ").str.title()
     colors = ["#d62728" if v < 0 else "#2ca02c" for v in scoped["deviation_bcf"]]
     fig = go.Figure(
         data=[
@@ -672,7 +723,7 @@ def _render_storage_chart(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
         _render_storage_seasonal_line,
         _render_storage_deviation_bar,
         _render_storage_region_bar,
-        _render_storage_region_timeseries,
+        _render_storage_timeseries,
     ):
         fig = renderer(spec, d)
         if fig is not None:

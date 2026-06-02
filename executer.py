@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import logging
 from typing import Any, Dict, Optional
 
 import pandas as pd
 from schemas.answer import SourceRef
 from agents.router import EnergyRouteResult
 from tools.eia_adapter import EIAAdapter, EIAResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,6 +26,29 @@ class ExecuteRequest:
     start: str
     end: str
     filters: Dict[str, Any] | None = None
+
+
+def _storage_requires_baseline_history(route: EnergyRouteResult) -> bool:
+    comparisons = set(route.comparisons or [])
+    return route.domain == "storage" and (
+        route.analysis_type in {"seasonal_compare", "deviation_from_normal"}
+        or bool(comparisons & {"five_year_avg", "five_year_range", "seasonal_normal"})
+    )
+
+
+def _expand_storage_fetch_window_for_baseline(
+    *,
+    start_date: str | None,
+    end_date: str | None,
+    years: int = 6,
+) -> tuple[str, str]:
+    resolved_end = pd.Timestamp(end_date or date.today().isoformat())
+    fetch_start = resolved_end - pd.DateOffset(years=years)
+    if start_date:
+        requested_start = pd.Timestamp(start_date)
+        if requested_start < fetch_start:
+            fetch_start = requested_start
+    return fetch_start.date().isoformat(), resolved_end.date().isoformat()
 
 
 def _normalize_storage_regions(filters: dict) -> list[str]:
@@ -76,6 +102,13 @@ def _concat_storage_region_results(results: list[EIAResult]) -> EIAResult:
         if frames
         else pd.DataFrame(columns=["date", "value", "region"])
     )
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df["region"] = df["region"].astype(str)
+        df = df.dropna(subset=["date", "value", "region"]).sort_values(
+            ["region", "date"]
+        ).reset_index(drop=True)
     regions = [region for region in region_meta if region]
     source = SourceRef(
         source_type="eia_api",
@@ -168,12 +201,30 @@ class MetricExecutor:
         filters["regions"] = list(route.regions or filters.get("regions") or [])
         if route.analysis_type in {"regional_compare", "ranking"}:
             filters["regions"] = ["all"]
+        requested_start_date = route.start_date
+        requested_end_date = route.end_date
+        fetch_start_date = route.start_date or ""
+        fetch_end_date = route.end_date or date.today().isoformat()
+        if _storage_requires_baseline_history(route):
+            fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_baseline(
+                start_date=route.start_date,
+                end_date=route.end_date,
+                years=6,
+            )
+        logger.info(
+            "storage_execute route_regions=%s filters_regions=%s metric=%s fetch=%s..%s",
+            list(route.regions or []),
+            list(filters.get("regions") or []),
+            route.primary_metric,
+            fetch_start_date,
+            fetch_end_date,
+        )
 
         result = self.execute(
             ExecuteRequest(
                 metric=route.primary_metric,
-                start=route.start_date or "",
-                end=route.end_date or "",
+                start=fetch_start_date,
+                end=fetch_end_date,
                 filters=filters,
             )
         )
@@ -190,8 +241,18 @@ class MetricExecutor:
                 "regions": list(route.regions or []),
                 "start_date": route.start_date,
                 "end_date": route.end_date,
+                "requested_start_date": requested_start_date,
+                "requested_end_date": requested_end_date,
+                "fetch_start_date": fetch_start_date,
+                "fetch_end_date": fetch_end_date,
             }
         )
+        if result.df is not None and "region" in result.df.columns:
+            logger.info(
+                "storage_execute result_regions=%s rows=%s",
+                sorted(result.df["region"].dropna().astype(str).unique().tolist()),
+                len(result.df),
+            )
         return result
 
     def _to_metric_result(self, res: Any) -> MetricResult:
@@ -217,55 +278,100 @@ class MetricExecutor:
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
         regions = _normalize_storage_regions(filters)
-        if len(regions) > 1:
-            results = [
-                self.eia.storage_working_gas(start=start, end=end, region=region)
-                for region in regions
-            ]
+        if len(regions) == 1:
+            region = regions[0]
+            base = self.eia.storage_working_gas(start=start, end=end, region=region)
+            if not bool(filters.get("include_weekly_change")):
+                frame = base.df.copy() if base.df is not None else pd.DataFrame(columns=["date", "value"])
+                if "region" not in frame.columns:
+                    frame["region"] = region
+                frame = frame[["date", "value", "region"]]
+                return EIAResult(df=frame, source=base.source, meta=base.meta)
+
+            weekly_change = self.eia.storage_working_gas_change_weekly(
+                start=start, end=end, region=region
+            )
+            left = base.df.copy()
+            right = weekly_change.df.copy()
+            if left is None or left.empty:
+                merged = pd.DataFrame(columns=["date", "value", "weekly_change", "region"])
+            else:
+                merged = left.copy()
+                if right is not None and not right.empty:
+                    right = right.rename(columns={"value": "weekly_change"})
+                    merged = merged.merge(right[["date", "weekly_change"]], on="date", how="left")
+                else:
+                    merged["weekly_change"] = pd.NA
+                merged["region"] = region
+
+            return EIAResult(
+                df=merged,
+                source=SourceRef(
+                    source_type="eia_api",
+                    label=f"EIA Natural Gas Storage: Working Gas and Weekly Change ({region.replace('_', ' ').title()})",
+                    reference="eia-ng-client:natural_gas.storage_with_weekly_change",
+                    parameters={
+                        "region": region,
+                        "start": start,
+                        "end": end,
+                        "include_weekly_change": True,
+                        "source_storage_reference": base.source.reference,
+                        "source_change_reference": weekly_change.source.reference,
+                    },
+                ),
+                meta={
+                    "cache": {
+                        "storage": (base.meta or {}).get("cache"),
+                        "weekly_change": (weekly_change.meta or {}).get("cache"),
+                    },
+                    "note": "Working gas storage merged with derived weekly change for the same region.",
+                },
+            )
+
+        results = []
+        for region in regions:
+            regional_result = self.eia.storage_working_gas(start=start, end=end, region=region)
+            frame = regional_result.df.copy() if regional_result.df is not None else pd.DataFrame(columns=["date", "value"])
+            if not frame.empty:
+                frame["region"] = region
+            results.append(
+                EIAResult(df=frame, source=regional_result.source, meta=regional_result.meta)
+            )
+        if not bool(filters.get("include_weekly_change")):
             return _concat_storage_region_results(results)
 
-        region = regions[0]
-        base = self.eia.storage_working_gas(start=start, end=end, region=region)
-        if not bool(filters.get("include_weekly_change")):
-            return base
-
-        weekly_change = self.eia.storage_working_gas_change_weekly(
-            start=start, end=end, region=region
+        weekly_change_results = []
+        for region in regions:
+            regional_result = self.eia.storage_working_gas_change_weekly(
+                start=start, end=end, region=region
+            )
+            right = regional_result.df.copy() if regional_result.df is not None else pd.DataFrame(columns=["date", "value"])
+            right["region"] = region
+            weekly_change_results.append(
+                EIAResult(df=right, source=regional_result.source, meta=regional_result.meta)
+            )
+        right_df = _concat_storage_region_results(weekly_change_results).df.rename(
+            columns={"value": "weekly_change"}
         )
-        left = base.df.copy()
-        right = weekly_change.df.copy()
-        if left is None or left.empty:
-            merged = pd.DataFrame(columns=["date", "value", "weekly_change"])
-        else:
-            merged = left.copy()
-            if right is not None and not right.empty:
-                right = right.rename(columns={"value": "weekly_change"})
-                merged = merged.merge(right[["date", "weekly_change"]], on="date", how="left")
-            else:
-                merged["weekly_change"] = pd.NA
-
+        merged = _concat_storage_region_results(results).df.merge(
+            right_df[["date", "region", "weekly_change"]],
+            on=["date", "region"],
+            how="left",
+        )
         return EIAResult(
             df=merged,
             source=SourceRef(
                 source_type="eia_api",
-                label=f"EIA Natural Gas Storage: Working Gas and Weekly Change ({region.replace('_', ' ').title()})",
-                reference="eia-ng-client:natural_gas.storage_with_weekly_change",
+                label="EIA Natural Gas Storage: Working Gas and Weekly Change by Region",
+                reference="eia-ng-client:natural_gas.storage_with_weekly_change_by_region",
                 parameters={
-                    "region": region,
+                    "regions": regions,
                     "start": start,
                     "end": end,
                     "include_weekly_change": True,
-                    "source_storage_reference": base.source.reference,
-                    "source_change_reference": weekly_change.source.reference,
                 },
             ),
-            meta={
-                "cache": {
-                    "storage": (base.meta or {}).get("cache"),
-                    "weekly_change": (weekly_change.meta or {}).get("cache"),
-                },
-                "note": "Working gas storage merged with derived weekly change for the same region.",
-            },
+            meta={"regions": regions},
         )
 
     def _eia_storage_change_weekly(
@@ -273,17 +379,28 @@ class MetricExecutor:
     ) -> EIAResult:
         regions = _normalize_storage_regions(filters)
         if len(regions) > 1:
-            results = [
-                self.eia.storage_working_gas_change_weekly(
+            results = []
+            for region in regions:
+                regional_result = self.eia.storage_working_gas_change_weekly(
                     start=start, end=end, region=region
                 )
-                for region in regions
-            ]
+                frame = regional_result.df.copy() if regional_result.df is not None else pd.DataFrame(columns=["date", "value"])
+                if not frame.empty:
+                    frame["region"] = region
+                results.append(
+                    EIAResult(df=frame, source=regional_result.source, meta=regional_result.meta)
+                )
             return _concat_storage_region_results(results)
 
-        return self.eia.storage_working_gas_change_weekly(
-            start=start, end=end, region=regions[0]
+        region = regions[0]
+        result = self.eia.storage_working_gas_change_weekly(
+            start=start, end=end, region=region
         )
+        frame = result.df.copy() if result.df is not None else pd.DataFrame(columns=["date", "value"])
+        if "region" not in frame.columns:
+            frame["region"] = region
+        frame = frame[["date", "value", "region"]]
+        return EIAResult(df=frame, source=result.source, meta=result.meta)
 
     def _eia_henry_hub_spot(
         self, *, start: str, end: str, filters: Dict[str, Any]

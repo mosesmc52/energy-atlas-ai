@@ -178,6 +178,32 @@ class TestPlotlyRenderer(unittest.TestCase):
 
         self.assertIn("5Y Avg", labels)
 
+    def test_compute_timeseries_summary_metrics_compares_regions(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2021-01-01",
+                        "2021-01-08",
+                        "2021-01-01",
+                        "2021-01-08",
+                    ]
+                ),
+                "value": [100.0, 110.0, 200.0, 210.0],
+                "region": ["east", "east", "midwest", "midwest"],
+            }
+        )
+
+        metrics = compute_timeseries_summary_metrics(df, unit="Bcf")
+
+        self.assertEqual(len(metrics), 3)
+        self.assertEqual(
+            [metric["label"] for metric in metrics],
+            ["East Latest", "Midwest Latest", "Spread"],
+        )
+        self.assertEqual([metric["value"] for metric in metrics], [110.0, 210.0, 100.0])
+        self.assertEqual(metrics[2]["subtitle"], "Midwest - East")
+
     def test_storage_change_chart_gets_dashboard_styling(self) -> None:
         df = pd.DataFrame(
             {
@@ -220,8 +246,63 @@ class TestPlotlyRenderer(unittest.TestCase):
         fig = render_plotly(spec, df)
 
         self.assertEqual(len(fig.data), 2)
-        self.assertEqual({trace.name for trace in fig.data}, {"east", "midwest"})
+        self.assertEqual({trace.name for trace in fig.data}, {"East", "Midwest"})
         self.assertFalse(should_render_timeseries_summary_cards(spec))
+        self.assertIn("Bcf", fig.data[0].hovertemplate)
+
+    def test_storage_line_chart_keeps_three_region_traces(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2026-03-07",
+                        "2026-03-14",
+                        "2026-03-07",
+                        "2026-03-14",
+                        "2026-03-07",
+                        "2026-03-14",
+                    ]
+                ),
+                "region": ["east", "east", "midwest", "midwest", "pacific", "pacific"],
+                "value": [15.0, 20.0, 10.0, 18.0, 12.0, 17.0],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="line",
+            title="Working Gas in Storage",
+            x="date",
+            y=["value"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(len(fig.data), 3)
+        self.assertEqual(
+            {trace.name for trace in fig.data},
+            {"East", "Midwest", "Pacific"},
+        )
+
+    def test_storage_single_series_line_uses_bcf_hover(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-03-07", "2026-03-14"]),
+                "value": [800.0, 850.0],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="line",
+            title="Working Gas in Storage",
+            x="date",
+            y=["value"],
+            x_label="Date",
+            y_label="Storage (Bcf)",
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(len(fig.data), 1)
+        self.assertIn("Bcf", fig.data[0].hovertemplate)
+        self.assertEqual(fig.layout.yaxis.title.text, "Storage (Bcf)")
 
     def test_storage_level_and_change_chart_renders_two_series(self) -> None:
         df = pd.DataFrame(
@@ -264,6 +345,29 @@ class TestPlotlyRenderer(unittest.TestCase):
 
         self.assertEqual(list(fig.data[0].x), ["midwest", "east"])
         self.assertEqual(list(fig.data[0].y), [920.0, 810.0])
+
+    def test_storage_deviation_bar_preserves_rank_order_and_zero_line(self) -> None:
+        df = pd.DataFrame(
+            {
+                "region": ["mountain", "pacific", "east"],
+                "deviation_bcf": [-120.0, -85.0, -40.0],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Storage Deviation from 5-Year Average by Region",
+            x="region",
+            y=["deviation_bcf"],
+            x_label="Region",
+            y_label="Deviation (Bcf)",
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(fig.data[0].orientation, "h")
+        self.assertEqual(list(fig.data[0].x), [-120.0, -85.0, -40.0])
+        self.assertEqual(list(fig.data[0].y), ["Mountain", "Pacific", "East"])
+        self.assertGreaterEqual(len(fig.layout.shapes), 1)
 
     def test_storage_seasonal_line_renders_value_and_five_year_average(self) -> None:
         df = pd.DataFrame(

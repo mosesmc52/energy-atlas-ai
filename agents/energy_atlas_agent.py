@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 import os
 from time import perf_counter
@@ -63,7 +63,16 @@ class EnergyAtlasAgent:
         self._answer_builder_fn = answer_builder_fn
 
     def _execute_storage_route(self, route: EnergyRouteResult) -> MetricResult:
-        return self.executor.execute_storage_route(route)
+        filters = dict(route.filters or {})
+        filters["regions"] = list(route.regions or filters.get("regions") or [])
+        prepared_route = replace(route, filters=filters)
+        if DEBUG_ENABLED:
+            logger.info(
+                "agent_run storage route regions=%s filters_regions=%s",
+                list(prepared_route.regions or []),
+                list(filters.get("regions") or []),
+            )
+        return self.executor.execute_storage_route(prepared_route)
 
     def _unsupported_outcome(self, *, route: EnergyRouteResult, route_ms: float) -> AgentOutcome:
         return AgentOutcome(
