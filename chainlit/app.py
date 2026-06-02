@@ -97,6 +97,17 @@ _GLOBAL_DEPS: dict[str, object] | None = None
 _RESPONSE_CACHE_LOCK = threading.Lock()
 _RESPONSE_CACHE: dict[str, tuple[float, AgentOutcome]] = {}
 
+_STORAGE_DOWNLOAD_URLS = {
+    "lower48": "https://www.eia.gov/dnav/ng/xls/NG_STOR_WKLY_S1_W.xls",
+    "east": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SWO_R31_BCFw.xls",
+    "midwest": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SWO_R32_BCFw.xls",
+    "south_central": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SWO_R33_BCFw.xls",
+    "mountain": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SWO_R34_BCFw.xls",
+    "pacific": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SWO_R35_BCFw.xls",
+    "south_central_salt": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SSO_R33_BCFw.xls",
+    "south_central_nonsalt": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SNO_R33_BCFw.xls",
+}
+
 
 async def _track_chainlit_event(event: str, **params: object) -> None:
     payload = {
@@ -109,6 +120,59 @@ async def _track_chainlit_event(event: str, **params: object) -> None:
         await cl.send_window_message(payload)
     except Exception as e:  # noqa: BLE001
         logger.debug("Unable to send Chainlit analytics event %s: %s", event, e)
+
+
+def _storage_download_links_for_source(source) -> list[tuple[str, str]]:
+    if source is None or getattr(source, "source_type", None) != "eia_api":
+        return []
+
+    reference = str(getattr(source, "reference", "") or "")
+    parameters = getattr(source, "parameters", None)
+    params = parameters if isinstance(parameters, dict) else {}
+
+    single_region_refs = {
+        "eia-ng-client:natural_gas.storage",
+        "eia-ng-client:derived_natural_gas.storage_change_weekly",
+        "eia-ng-client:natural_gas.storage_with_weekly_change",
+    }
+    multi_region_refs = {
+        "eia-ng-client:natural_gas.storage_by_region",
+        "eia-ng-client:natural_gas.storage_with_weekly_change_by_region",
+    }
+
+    if reference in single_region_refs:
+        region = str(params.get("region") or "lower48").strip().lower()
+        url = _STORAGE_DOWNLOAD_URLS.get(region)
+        if url:
+            return [("Download data", url)]
+        return []
+
+    if reference in multi_region_refs:
+        raw_regions = params.get("regions") or []
+        if isinstance(raw_regions, str):
+            raw_regions = [raw_regions]
+        links: list[tuple[str, str]] = []
+        for raw_region in raw_regions:
+            region = str(raw_region or "").strip().lower()
+            url = _STORAGE_DOWNLOAD_URLS.get(region)
+            if not url:
+                continue
+            label = str(region).replace("_", " ").title()
+            links.append((label, url))
+        return links
+
+    return []
+
+
+def _format_source_line(source) -> str:
+    label = str(getattr(source, "label", "") or "").strip()
+    if not label:
+        return ""
+    links = _storage_download_links_for_source(source)
+    if not links:
+        return f"• {label}"
+    markdown_links = ", ".join(f"[{text}]({url})" for text, url in links)
+    return f"• {label} ({markdown_links})"
 
 
 def _general_energy_answer(question: str, previous_context: str = "") -> str:
@@ -954,7 +1018,8 @@ async def on_message(message: cl.Message):
         sources_elapsed_ms = 0.0
         if payload.sources and payload.structured_response is None:
             sources_started = perf_counter() if DEBUG_ENABLED else 0.0
-            lines = [f"• {s.label}" for s in payload.sources]
+            lines = [_format_source_line(s) for s in payload.sources]
+            lines = [line for line in lines if line]
 
             await cl.Message(content="**Sources**\n" + "\n".join(lines)).send()
             if DEBUG_ENABLED:
