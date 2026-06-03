@@ -504,14 +504,16 @@ def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame
     if "date" in scoped.columns:
         scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
         scoped = scoped.dropna(subset=["date"])
-        scoped = scoped.sort_values(["region", "date"])
+        group_field = "region" if "region" in scoped.columns else "state"
+        scoped = scoped.sort_values([group_field, "date"])
     scoped[value_field] = pd.to_numeric(scoped[value_field], errors="coerce")
-    scoped = scoped.dropna(subset=["region", value_field])
+    group_field = "region" if "region" in scoped.columns else "state"
+    scoped = scoped.dropna(subset=[group_field, value_field])
     if scoped.empty:
         return scoped
     if "date" not in scoped.columns:
         return scoped.sort_values(value_field, ascending=False)
-    return scoped.groupby("region", as_index=False, sort=False).tail(1).reset_index(drop=True)
+    return scoped.groupby(group_field, as_index=False, sort=False).tail(1).reset_index(drop=True)
 
 
 def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
@@ -522,17 +524,21 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
     scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
     scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
     required = ["date", "value"]
+    color_field = None
     if "region" in scoped.columns:
         required.append("region")
+        color_field = "region"
+    elif "state" in scoped.columns:
+        required.append("state")
+        color_field = "state"
     scoped = scoped.dropna(subset=required)
     sort_cols = ["date"]
-    if "region" in scoped.columns:
-        sort_cols = ["region", "date"]
+    if color_field:
+        sort_cols = [color_field, "date"]
     scoped = scoped.sort_values(sort_cols)
     if scoped.empty:
         return None
 
-    color_field = "region" if "region" in scoped.columns else None
     fig = px.line(
         scoped,
         x="date",
@@ -541,13 +547,17 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
         title=spec.title,
         template="plotly_white",
     )
-    hover_template = "%{x|%Y-%m-%d}<br>%{y:,.0f} Bcf<extra></extra>"
+    unit = "%" if "%" in str(spec.y_label or "") else "MMcf" if "MMcf" in str(spec.y_label or "") else "Bcf"
+    hover_template = f"%{{x|%Y-%m-%d}}<br>%{{y:,.0f}} {unit}<extra></extra>"
     if color_field:
-        hover_template = "%{x|%Y-%m-%d}<br>%{fullData.name}<br>%{y:,.0f} Bcf<extra></extra>"
+        hover_template = f"%{{x|%Y-%m-%d}}<br>%{{fullData.name}}<br>%{{y:,.0f}} {unit}<extra></extra>"
     fig.update_traces(line=dict(width=3), hovertemplate=hover_template)
     if color_field:
         for trace in fig.data:
-            trace.name = str(trace.name).replace("_", " ").title()
+            if color_field == "state":
+                trace.name = "U.S." if str(trace.name) == "united_states_total" else str(trace.name).upper()
+            else:
+                trace.name = str(trace.name).replace("_", " ").title()
     fig.update_layout(
         height=650,
         margin=dict(l=30, r=20, t=120, b=40),
@@ -563,11 +573,20 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
 
 
 def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
-    if spec.chart_type != "bar" or not {"region", "value"}.issubset(d.columns):
+    group_field = "region" if "region" in d.columns else "state" if "state" in d.columns else None
+    if spec.chart_type != "bar" or group_field is None or "value" not in d.columns:
         return None
     scoped = _storage_latest_by_region(d, "value").sort_values("value", ascending=False)
     if scoped.empty:
         return None
+    unit = "%" if "%" in str(spec.y_label or "") else "MMcf" if "MMcf" in str(spec.y_label or "") else "Bcf"
+    display_field = group_field
+    scoped[display_field] = scoped[display_field].astype(str)
+    if group_field == "region":
+        scoped[display_field] = scoped[display_field].str.replace("_", " ").str.title()
+    else:
+        scoped[display_field] = scoped[display_field].replace({"united_states_total": "U.S."}).str.upper()
+        scoped.loc[scoped[display_field] == "U.S.", display_field] = "U.S."
 
     horizontal = len(scoped) > 5
     if horizontal:
@@ -576,24 +595,24 @@ def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
             data=[
                 go.Bar(
                     x=scoped["value"],
-                    y=scoped["region"],
+                    y=scoped[display_field],
                     orientation="h",
-                    hovertemplate="%{y}<br>%{x:,.0f} Bcf<extra></extra>",
+                    hovertemplate=f"%{{y}}<br>%{{x:,.0f}} {unit}<extra></extra>",
                 )
             ]
         )
-        x_title, y_title = spec.y_label or "Bcf", spec.x_label or "Region"
+        x_title, y_title = spec.y_label or unit, spec.x_label or ("State" if group_field == "state" else "Region")
     else:
         fig = go.Figure(
             data=[
                 go.Bar(
-                    x=scoped["region"],
+                    x=scoped[display_field],
                     y=scoped["value"],
-                    hovertemplate="%{x}<br>%{y:,.0f} Bcf<extra></extra>",
+                    hovertemplate=f"%{{x}}<br>%{{y:,.0f}} {unit}<extra></extra>",
                 )
             ]
         )
-        x_title, y_title = spec.x_label or "Region", spec.y_label or "Bcf"
+        x_title, y_title = spec.x_label or ("State" if group_field == "state" else "Region"), spec.y_label or unit
     fig.update_layout(
         title=spec.title,
         template="plotly_white",

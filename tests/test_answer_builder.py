@@ -19,7 +19,12 @@ class TestAnswerBuilder(unittest.TestCase):
         values = {
             "domain": "storage",
             "analysis_type": "time_series",
+            "storage_dataset": "weekly_working_gas",
+            "storage_frequency": "weekly",
+            "storage_metric_type": "working_gas",
             "regions": ["lower48"],
+            "states": [],
+            "states_all": False,
             "value_type": "level",
             "comparisons": ["none"],
             "ranking_basis": "current_storage",
@@ -273,6 +278,122 @@ class TestAnswerBuilder(unittest.TestCase):
         figure = render_plotly(payload.chart_spec, chart_df)
         self.assertEqual(figure.data[0].orientation, "h")
         self.assertEqual(list(figure.data[0].y), ["Mountain", "East", "Pacific"])
+
+    def test_all_operators_storage_time_series_keeps_state_lines(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2020-01-01", "2020-02-01", "2020-01-01", "2020-02-01"],
+                "value": [100.0, 110.0, 200.0, 220.0],
+                "state": ["tx", "tx", "la", "la"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Compare monthly injections in Texas and Louisiana since 2020.",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="injections",
+                states=["tx", "la"],
+                regions=[],
+                analysis_type="time_series",
+                chart_type="line",
+            ),
+        )
+
+        self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertEqual(payload.chart_spec.y_label, "MMcf")
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows,
+            columns=payload.chart_data_preview.columns,
+        )
+        self.assertEqual(set(chart_df["state"]), {"tx", "la"})
+        figure = render_plotly(payload.chart_spec, chart_df)
+        self.assertEqual({trace.name for trace in figure.data}, {"TX", "LA"})
+
+    def test_all_operators_ranking_works_with_states_all_without_enumerated_route_states(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2026-01-01", "2026-01-01", "2026-01-01"],
+                "value": [500.0, 700.0, 650.0],
+                "state": ["tx", "la", "pa"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Which state has the most base gas in storage?",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="base_gas",
+                states=[],
+                states_all=True,
+                regions=[],
+                analysis_type="ranking",
+                chart_type="bar",
+            ),
+        )
+
+        self.assertIn("LA ranked highest", payload.answer_text)
+        self.assertEqual(payload.chart_spec.chart_type, "bar")
+        self.assertEqual(payload.chart_spec.title, "Base Gas in Storage by State")
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows,
+            columns=payload.chart_data_preview.columns,
+        )
+        self.assertEqual(set(chart_df["state"]), {"tx", "la", "pa"})
+
+    def test_all_operators_pct_metric_uses_percent_unit(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2026-01-01"],
+                "value": [12.5],
+                "state": ["pa"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="What is working gas % change from year ago in Pennsylvania?",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="working_gas_yoy_pct_change",
+                states=["pa"],
+                regions=[],
+                analysis_type="latest",
+                chart_type="none",
+            ),
+        )
+
+        self.assertIn("PA", payload.answer_text)
+        self.assertIn("%", payload.answer_text)
+        self.assertNotIn("MMcf", payload.answer_text)
+
+    def test_all_operators_national_series_uses_united_states_total_label(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2015-01-01", "2026-01-01"],
+                "value": [1000.0, 1200.0],
+                "state": ["united_states_total", "united_states_total"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Show national base gas in storage since 2015.",
+            result=self._storage_result(df),
+            route=self._storage_route(
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="base_gas",
+                states=["united_states_total"],
+                states_all=False,
+                regions=[],
+                analysis_type="time_series",
+                chart_type="line",
+            ),
+        )
+
+        self.assertIn("United States Total", payload.answer_text)
+        self.assertEqual(payload.chart_spec.chart_type, "line")
 
     def test_storage_snapshot_query_rejects_deficit_widening_suggestion(self) -> None:
         self.assertFalse(
