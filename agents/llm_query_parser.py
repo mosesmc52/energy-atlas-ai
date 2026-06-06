@@ -175,6 +175,49 @@ ALL_OPERATORS_TERMS = (
     "% change",
 )
 
+YOY_CUES = (
+    "year ago",
+    "from year ago",
+    "year-over-year",
+    "year over year",
+    "yoy",
+)
+
+YOY_PERCENT_CUES = (
+    "percent",
+    "percentage",
+    "pct",
+    "%",
+    "percent change",
+    "percentage change",
+    "pct change",
+    "% change",
+    "percent increase",
+    "percentage increase",
+    "pct increase",
+    "% increase",
+    "percent decrease",
+    "percentage decrease",
+    "pct decrease",
+    "% decrease",
+)
+
+YOY_VOLUME_CHANGE_CUES = (
+    "volume change",
+    "change from year ago",
+    "working gas change",
+    "year-over-year increase",
+    "year-over-year decrease",
+    "year over year increase",
+    "year over year decrease",
+    "yoy increase",
+    "yoy decrease",
+    "increase from year ago",
+    "decrease from year ago",
+    "larger than year ago",
+    "lower than year ago",
+)
+
 
 def _contains_any(q: str, terms: tuple[str, ...]) -> bool:
     return any(term in q for term in terms)
@@ -252,7 +295,37 @@ def _parse_storage_frequency(q: str) -> str:
     return "weekly"
 
 
+def _has_explicit_time_series_request(q: str) -> bool:
+    if any(term in q for term in ("plot", "chart", "trend", "over time", "history", "historical", "over the last", "since")):
+        return True
+    if re.search(r"\bfrom\s+(?:[a-z]+\s+)?20\d{2}\b", q):
+        return True
+    return bool(re.search(r"\b20\d{2}\b", q))
+
+
 def _parse_storage_metric_type(q: str) -> str:
+    # Storage metric guidance:
+    # - "working gas in storage" -> working_gas
+    # - "working gas volume change from year ago" -> working_gas_yoy_volume_change
+    # - "working gas percent change from year ago" -> working_gas_yoy_pct_change
+    # - "year-over-year increase/decrease in working gas" -> volume change unless percent/pct/% is explicit
+    # - For underground_storage_all_operators, do not treat "year ago" as seasonal_compare intent
+    has_yoy_cue = any(term in q for term in YOY_CUES)
+    has_percent_cue = any(term in q for term in YOY_PERCENT_CUES)
+    has_volume_change_cue = any(term in q for term in YOY_VOLUME_CHANGE_CUES)
+    has_working_gas = "working gas" in q
+    has_ranking_state_cue = any(term in q for term in ("which state", "rank states", "largest", "highest", "most", "biggest"))
+
+    if has_percent_cue and has_yoy_cue:
+        return "working_gas_yoy_pct_change"
+    if has_working_gas and has_percent_cue and has_ranking_state_cue and any(
+        term in q for term in ("increase", "decrease", "change")
+    ):
+        return "working_gas_yoy_pct_change"
+    if has_yoy_cue and has_volume_change_cue and not has_percent_cue:
+        return "working_gas_yoy_volume_change"
+    if has_working_gas and has_yoy_cue and not has_percent_cue:
+        return "working_gas_yoy_volume_change"
     if any(term in q for term in ("working gas percent change from year ago", "working gas % change from year ago", "percent change from year ago", "% change from year ago", "yoy percent change", "yoy pct change")):
         return "working_gas_yoy_pct_change"
     if any(term in q for term in ("working gas volume change from year ago", "change from year ago", "year ago volume change", "yoy volume change")):
@@ -310,6 +383,13 @@ def _parse_comparisons(q: str) -> list[str]:
     return comparisons or ["none"]
 
 
+def _is_yoy_storage_metric(metric_type: str) -> bool:
+    return metric_type in {
+        "working_gas_yoy_volume_change",
+        "working_gas_yoy_pct_change",
+    }
+
+
 def _parse_analysis_type(
     q: str,
     value_type: str,
@@ -326,7 +406,7 @@ def _parse_analysis_type(
         return "time_series"
     if any(comp in comparisons for comp in ("five_year_avg", "five_year_range", "seasonal_normal", "last_year")):
         return "seasonal_compare"
-    if any(term in q for term in ("plot", "chart", "trend", "over time", "since", "from ")) or re.search(r"\b20\d{2}\b", q):
+    if _has_explicit_time_series_request(q):
         return "time_series"
     if storage_dataset == "weekly_working_gas" and value_type == "weekly_change":
         return "weekly_change"
@@ -421,6 +501,8 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         storage_metric_type = "working_gas"
     value_type = _parse_value_type(q)
     comparisons = _parse_comparisons(q)
+    if storage_dataset == "underground_storage_all_operators" and _is_yoy_storage_metric(storage_metric_type):
+        comparisons = ["none"]
     analysis_type = _parse_analysis_type(
         q,
         value_type,

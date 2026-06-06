@@ -70,11 +70,70 @@ TIME_SERIES_INFERENCE_TERMS = (
     "changed since",
     "over the last",
     "since",
-    "from",
     "trend",
     "history",
     "historical",
     "over time",
+)
+
+YOY_CUES = (
+    "year ago",
+    "from year ago",
+    "year-over-year",
+    "year over year",
+    "yoy",
+)
+
+YOY_PERCENT_CUES = (
+    "percent",
+    "percentage",
+    "pct",
+    "%",
+    "percent change",
+    "percentage change",
+    "pct change",
+    "% change",
+    "percent increase",
+    "percentage increase",
+    "pct increase",
+    "% increase",
+    "percent decrease",
+    "percentage decrease",
+    "pct decrease",
+    "% decrease",
+)
+
+YOY_VOLUME_CHANGE_CUES = (
+    "volume change",
+    "change from year ago",
+    "working gas change",
+    "year-over-year increase",
+    "year-over-year decrease",
+    "year over year increase",
+    "year over year decrease",
+    "yoy increase",
+    "yoy decrease",
+    "increase from year ago",
+    "decrease from year ago",
+    "larger than year ago",
+    "lower than year ago",
+)
+
+YOY_LATEST_CUES = (
+    "what is",
+    "current",
+    "latest",
+    "how much",
+    "what was",
+)
+
+YOY_RANKING_CUES = (
+    "which state",
+    "rank states",
+    "largest",
+    "highest",
+    "most",
+    "biggest",
 )
 
 NORMAL_RANKING_TERMS = (
@@ -293,6 +352,49 @@ def _parse_storage_metric_type_from_text(
     return parsed_metric_type or "working_gas"
 
 
+def _has_explicit_time_series_request(normalized_query: str) -> bool:
+    if _has_term(normalized_query, TIME_SERIES_INFERENCE_TERMS):
+        return True
+    if re.search(r"\bfrom\s+(?:[a-z]+\s+)?20\d{2}\b", normalized_query):
+        return True
+    return bool(re.search(r"\b20\d{2}\b", normalized_query))
+
+
+def infer_underground_storage_yoy_metric_type(
+    normalized_query: str,
+    storage_dataset: str,
+    current_metric_type: str,
+) -> str:
+    if storage_dataset != "underground_storage_all_operators":
+        return current_metric_type
+
+    has_yoy_cue = _has_term(normalized_query, YOY_CUES)
+    has_percent_cue = _has_term(normalized_query, YOY_PERCENT_CUES)
+    has_volume_change_cue = _has_term(normalized_query, YOY_VOLUME_CHANGE_CUES)
+    has_working_gas = "working gas" in normalized_query
+    has_ranking_cue = _has_term(normalized_query, YOY_RANKING_CUES)
+    has_percent_increase_decrease = has_percent_cue and any(
+        term in normalized_query for term in ("increase", "decrease", "change")
+    )
+
+    if has_percent_cue and has_yoy_cue:
+        return "working_gas_yoy_pct_change"
+    if has_working_gas and has_percent_increase_decrease and has_ranking_cue:
+        return "working_gas_yoy_pct_change"
+    if has_yoy_cue and has_volume_change_cue and not has_percent_cue:
+        return "working_gas_yoy_volume_change"
+    if has_working_gas and has_yoy_cue and not has_percent_cue:
+        return "working_gas_yoy_volume_change"
+    return current_metric_type
+
+
+def _is_yoy_storage_metric(storage_metric_type: str) -> bool:
+    return storage_metric_type in {
+        "working_gas_yoy_volume_change",
+        "working_gas_yoy_pct_change",
+    }
+
+
 def _parse_states_from_text(normalized_query: str) -> list[str]:
     if _has_national_storage_request(normalized_query):
         return ["united_states_total"]
@@ -362,7 +464,7 @@ def infer_storage_analysis_type_from_text(
     has_ranking_intent = _has_term(normalized_query, RANKING_INTENT_TERMS)
     has_weekly_change = _has_term(normalized_query, WEEKLY_CHANGE_TERMS)
     has_change_direction = _has_term(normalized_query, CHANGE_DIRECTION_TERMS)
-    has_time_series_inference = _has_term(normalized_query, TIME_SERIES_INFERENCE_TERMS)
+    has_time_series_inference = _has_explicit_time_series_request(normalized_query)
 
     if analysis_type == "ranking" and has_normal_ranking and has_ranking_intent:
         resolved_comparisons = _append_comparison(resolved_comparisons, "five_year_avg")
@@ -530,6 +632,11 @@ def route_query(user_query: str) -> EnergyRouteResult:
                 term in normalized for term in ("by state", "compare states", "rank states", "which state", "all states")
             ):
                 states_all = True
+            storage_metric_type = infer_underground_storage_yoy_metric_type(
+                normalized,
+                storage_dataset,
+                storage_metric_type,
+            )
         else:
             storage_dataset = "weekly_working_gas"
             storage_frequency = "weekly"
@@ -578,15 +685,34 @@ def route_query(user_query: str) -> EnergyRouteResult:
                     regions = list(STORAGE_REGIONS)
         else:
             value_type = "level"
+            if _is_yoy_storage_metric(storage_metric_type):
+                comparisons = ["none"]
+                has_yoy_ranking = _has_term(normalized, YOY_RANKING_CUES)
+                has_yoy_time_series = _has_explicit_time_series_request(normalized)
+                has_yoy_latest = _has_term(normalized, YOY_LATEST_CUES)
+                if has_yoy_ranking:
+                    analysis_type = "ranking"
+                    chart_type = "bar"
+                    output_mode = "chart_and_answer"
+                    states_all = True
+                    states = []
+                elif has_yoy_time_series:
+                    analysis_type = "time_series"
+                    chart_type = "line"
+                    output_mode = "chart_and_answer"
+                elif has_yoy_latest:
+                    analysis_type = "latest"
+                    chart_type = "none"
+                    output_mode = "answer"
             if analysis_type in {"ranking", "regional_compare"} and not states and not national_storage_request:
                 states_all = True
             if national_storage_request:
                 states = ["united_states_total"]
                 states_all = False
-            has_explicit_time_series = any(term in normalized for term in TIME_SERIES_INFERENCE_TERMS) or bool(
-                re.search(r"\b20\d{2}\b", normalized)
-            )
-            if has_explicit_time_series:
+            has_explicit_time_series = _has_explicit_time_series_request(normalized)
+            if _is_yoy_storage_metric(storage_metric_type):
+                pass
+            elif has_explicit_time_series:
                 analysis_type = "time_series"
                 chart_type = "line"
                 output_mode = "chart_and_answer"

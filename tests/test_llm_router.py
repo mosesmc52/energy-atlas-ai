@@ -291,6 +291,73 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.storage_frequency, "monthly")
         self.assertEqual(route.storage_metric_type, "working_gas_yoy_pct_change")
         self.assertEqual(route.states, ["pa"])
+        self.assertFalse(route.states_all)
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.chart_type, "none")
+        self.assertEqual(route.output_mode, "answer")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_pct_change_monthly")
+        self.assertEqual(route.comparisons, ["none"])
+
+    def test_working_gas_volume_change_from_year_ago_in_texas_is_yoy_latest(self) -> None:
+        route = route_query("What is the working gas volume change from a year ago in Texas?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.storage_frequency, "monthly")
+        self.assertEqual(route.storage_metric_type, "working_gas_yoy_volume_change")
+        self.assertEqual(route.states, ["tx"])
+        self.assertFalse(route.states_all)
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.chart_type, "none")
+        self.assertEqual(route.output_mode, "answer")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_volume_change_monthly")
+        self.assertEqual(route.comparisons, ["none"])
+
+    def test_which_state_has_largest_year_over_year_increase_in_working_gas(self) -> None:
+        route = route_query("Which state has the largest year-over-year increase in working gas?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.storage_frequency, "monthly")
+        self.assertEqual(route.storage_metric_type, "working_gas_yoy_volume_change")
+        self.assertEqual(route.states, [])
+        self.assertTrue(route.states_all)
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.output_mode, "chart_and_answer")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_volume_change_monthly")
+        self.assertEqual(route.comparisons, ["none"])
+
+    def test_which_state_has_largest_percent_increase_in_working_gas(self) -> None:
+        route = route_query("Which state has the largest percent increase in working gas?")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_yoy_pct_change")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.states, [])
+        self.assertTrue(route.states_all)
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_pct_change_monthly")
+        self.assertEqual(route.comparisons, ["none"])
+
+    def test_working_gas_change_from_year_ago_in_texas_since_2015_is_yoy_time_series(self) -> None:
+        route = route_query("Show working gas change from year ago in Texas since 2015.")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_yoy_volume_change")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.states, ["tx"])
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_volume_change_monthly")
+        self.assertEqual(route.comparisons, ["none"])
+
+    def test_plot_working_gas_percent_change_from_year_ago_in_pennsylvania_since_2018(self) -> None:
+        route = route_query("Plot working gas percent change from year ago in Pennsylvania since 2018.")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_yoy_pct_change")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.states, ["pa"])
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_pct_change_monthly")
+        self.assertEqual(route.comparisons, ["none"])
 
 
 if __name__ == "__main__":
