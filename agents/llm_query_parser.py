@@ -9,7 +9,11 @@ from agents.llm_router import (
     COMPARISONS,
     OUTPUT_MODES,
     STORAGE_ANALYSIS_TYPES,
+    STORAGE_DATASETS,
+    STORAGE_FREQUENCIES,
+    STORAGE_METRIC_TYPES,
     STORAGE_REGIONS,
+    UNDERGROUND_STORAGE_STATES,
     VALUE_TYPES,
 )
 
@@ -18,7 +22,12 @@ from agents.llm_router import (
 class EnergyQueryParse:
     domain: str
     analysis_type: str
+    storage_dataset: str = "weekly_working_gas"
+    storage_frequency: str = "weekly"
+    storage_metric_type: str = "working_gas"
     regions: list[str] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
+    states_all: bool = False
     value_type: str = "level"
     comparisons: list[str] = field(default_factory=lambda: ["none"])
     chart_type: str = "none"
@@ -80,6 +89,135 @@ REGION_ALIASES = {
     "south_central_nonsalt": ("nonsalt", "non-salt", "non salt", "south central nonsalt"),
 }
 
+STATE_ALIASES = {
+    "al": ("alabama",),
+    "ak": ("alaska",),
+    "az": ("arizona",),
+    "ar": ("arkansas",),
+    "ca": ("california",),
+    "co": ("colorado",),
+    "ct": ("connecticut",),
+    "de": ("delaware",),
+    "fl": ("florida",),
+    "ga": ("georgia",),
+    "ia": ("iowa",),
+    "id": ("idaho",),
+    "il": ("illinois",),
+    "in": ("indiana",),
+    "ks": ("kansas",),
+    "ky": ("kentucky",),
+    "la": ("louisiana",),
+    "ma": ("massachusetts",),
+    "md": ("maryland",),
+    "mi": ("michigan",),
+    "mn": ("minnesota",),
+    "ms": ("mississippi",),
+    "mo": ("missouri",),
+    "mt": ("montana",),
+    "ne": ("nebraska",),
+    "nv": ("nevada",),
+    "nj": ("new jersey",),
+    "nm": ("new mexico",),
+    "ny": ("new york",),
+    "oh": ("ohio",),
+    "ok": ("oklahoma",),
+    "or": ("oregon",),
+    "pa": ("pennsylvania",),
+    "tx": ("texas",),
+    "ut": ("utah",),
+    "va": ("virginia",),
+    "wa": ("washington",),
+    "wv": ("west virginia",),
+    "wy": ("wyoming",),
+    "united_states_total": ("united states", "u.s.", " us ", "national", "u.s. total"),
+}
+
+MONTHLY_FREQUENCY_TERMS = ("monthly", "month", "by month")
+ANNUAL_FREQUENCY_TERMS = ("annual", "yearly", "by year")
+
+WEEKLY_STORAGE_TERMS = (
+    "weekly storage",
+    "working gas weekly",
+    "weekly injection",
+    "weekly withdrawal",
+    "weekly storage report",
+    "weekly report",
+    "storage regions",
+)
+
+ALL_OPERATORS_TERMS = (
+    "monthly",
+    "annual",
+    "state",
+    "by state",
+    "compare states",
+    "rank states",
+    "which state",
+    "base gas",
+    "cushion gas",
+    "total natural gas in storage",
+    "natural gas in storage",
+    "total gas in storage",
+    "total storage",
+    "all operators",
+    "net withdrawals",
+    "net withdrawal",
+    "net withdrawls",
+    "withdrawals",
+    "withdrawls",
+    "withdrawal",
+    "injections",
+    "injected",
+    "injection",
+    "year ago",
+    "yoy",
+    "percent change",
+    "% change",
+)
+
+YOY_CUES = (
+    "year ago",
+    "from year ago",
+    "year-over-year",
+    "year over year",
+    "yoy",
+)
+
+YOY_PERCENT_CUES = (
+    "percent",
+    "percentage",
+    "pct",
+    "%",
+    "percent change",
+    "percentage change",
+    "pct change",
+    "% change",
+    "percent increase",
+    "percentage increase",
+    "pct increase",
+    "% increase",
+    "percent decrease",
+    "percentage decrease",
+    "pct decrease",
+    "% decrease",
+)
+
+YOY_VOLUME_CHANGE_CUES = (
+    "volume change",
+    "change from year ago",
+    "working gas change",
+    "year-over-year increase",
+    "year-over-year decrease",
+    "year over year increase",
+    "year over year decrease",
+    "yoy increase",
+    "yoy decrease",
+    "increase from year ago",
+    "decrease from year ago",
+    "larger than year ago",
+    "lower than year ago",
+)
+
 
 def _contains_any(q: str, terms: tuple[str, ...]) -> bool:
     return any(term in q for term in terms)
@@ -113,6 +251,16 @@ def _parse_regions(q: str) -> list[str]:
     return regions
 
 
+def _parse_states(q: str) -> list[str]:
+    matches: list[tuple[int, str]] = []
+    padded = f" {q} "
+    for state, aliases in STATE_ALIASES.items():
+        positions = [padded.find(alias) for alias in aliases if alias in padded]
+        if positions:
+            matches.append((min(positions), state))
+    return [state for _, state in sorted(matches, key=lambda item: item[0])]
+
+
 def _asks_all_regions(q: str) -> bool:
     all_region_phrases = (
         "by region",
@@ -124,6 +272,94 @@ def _asks_all_regions(q: str) -> bool:
         "ranking",
     )
     return any(phrase in q for phrase in all_region_phrases)
+
+
+def _asks_all_states(q: str) -> bool:
+    phrases = (
+        "by state",
+        "all states",
+        "across states",
+        "compare states",
+        "which state",
+        "rank states",
+        "ranking states",
+    )
+    return any(phrase in q for phrase in phrases)
+
+
+def _parse_storage_frequency(q: str) -> str:
+    if _contains_any(q, ANNUAL_FREQUENCY_TERMS):
+        return "annual"
+    if _contains_any(q, MONTHLY_FREQUENCY_TERMS):
+        return "monthly"
+    return "weekly"
+
+
+def _has_explicit_time_series_request(q: str) -> bool:
+    if any(term in q for term in ("plot", "chart", "trend", "over time", "history", "historical", "over the last", "since")):
+        return True
+    if re.search(r"\bfrom\s+(?:[a-z]+\s+)?20\d{2}\b", q):
+        return True
+    return bool(re.search(r"\b20\d{2}\b", q))
+
+
+def _parse_storage_metric_type(q: str) -> str:
+    # Storage metric guidance:
+    # - "working gas in storage" -> working_gas
+    # - "working gas volume change from year ago" -> working_gas_yoy_volume_change
+    # - "working gas percent change from year ago" -> working_gas_yoy_pct_change
+    # - "year-over-year increase/decrease in working gas" -> volume change unless percent/pct/% is explicit
+    # - For underground_storage_all_operators, do not treat "year ago" as seasonal_compare intent
+    has_yoy_cue = any(term in q for term in YOY_CUES)
+    has_percent_cue = any(term in q for term in YOY_PERCENT_CUES)
+    has_volume_change_cue = any(term in q for term in YOY_VOLUME_CHANGE_CUES)
+    has_working_gas = "working gas" in q
+    has_ranking_state_cue = any(term in q for term in ("which state", "rank states", "largest", "highest", "most", "biggest"))
+
+    if has_percent_cue and has_yoy_cue:
+        return "working_gas_yoy_pct_change"
+    if has_working_gas and has_percent_cue and has_ranking_state_cue and any(
+        term in q for term in ("increase", "decrease", "change")
+    ):
+        return "working_gas_yoy_pct_change"
+    if has_yoy_cue and has_volume_change_cue and not has_percent_cue:
+        return "working_gas_yoy_volume_change"
+    if has_working_gas and has_yoy_cue and not has_percent_cue:
+        return "working_gas_yoy_volume_change"
+    if any(term in q for term in ("working gas percent change from year ago", "working gas % change from year ago", "percent change from year ago", "% change from year ago", "yoy percent change", "yoy pct change")):
+        return "working_gas_yoy_pct_change"
+    if any(term in q for term in ("working gas volume change from year ago", "change from year ago", "year ago volume change", "yoy volume change")):
+        return "working_gas_yoy_volume_change"
+    if any(term in q for term in ("net withdrawals", "net withdrawal", "net withdrawls")):
+        return "net_withdrawals"
+    if any(term in q for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal")):
+        return "withdrawals"
+    if any(term in q for term in ("injections", "injected", "injection")):
+        return "injections"
+    if any(term in q for term in ("base gas", "cushion gas")):
+        return "base_gas"
+    if any(term in q for term in ("natural gas in storage", "total gas in storage", "total storage")):
+        return "total_gas"
+    return "working_gas"
+
+
+def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions: list[str], metric_type: str) -> str:
+    has_weekly_terms = _contains_any(q, WEEKLY_STORAGE_TERMS)
+    has_all_operator_terms = _contains_any(q, ALL_OPERATORS_TERMS)
+    has_state_terms = bool(states) or _asks_all_states(q)
+    has_weekly_regions = bool(regions) and any(region != "lower48" for region in regions)
+
+    if has_state_terms:
+        return "underground_storage_all_operators"
+    if frequency in {"monthly", "annual"}:
+        return "underground_storage_all_operators"
+    if metric_type != "working_gas":
+        return "underground_storage_all_operators"
+    if has_all_operator_terms and not has_weekly_terms:
+        return "underground_storage_all_operators"
+    if has_weekly_regions:
+        return "weekly_working_gas"
+    return "weekly_working_gas"
 
 
 def _parse_value_type(q: str) -> str:
@@ -147,18 +383,32 @@ def _parse_comparisons(q: str) -> list[str]:
     return comparisons or ["none"]
 
 
-def _parse_analysis_type(q: str, value_type: str, comparisons: list[str], regions: list[str]) -> str:
-    if any(term in q for term in ("which region", "rank", "ranking", "most above", "most below")):
+def _is_yoy_storage_metric(metric_type: str) -> bool:
+    return metric_type in {
+        "working_gas_yoy_volume_change",
+        "working_gas_yoy_pct_change",
+    }
+
+
+def _parse_analysis_type(
+    q: str,
+    value_type: str,
+    comparisons: list[str],
+    regions: list[str],
+    states: list[str],
+    storage_dataset: str,
+) -> str:
+    if any(term in q for term in ("which region", "which state", "rank", "ranking", "most above", "most below")):
         return "ranking"
-    if _asks_all_regions(q):
+    if _asks_all_regions(q) or _asks_all_states(q):
         return "regional_compare"
-    if len(regions) > 1:
+    if len(regions) > 1 or len(states) > 1:
         return "time_series"
     if any(comp in comparisons for comp in ("five_year_avg", "five_year_range", "seasonal_normal", "last_year")):
         return "seasonal_compare"
-    if any(term in q for term in ("plot", "chart", "trend", "over time", "since", "from ")) or re.search(r"\b20\d{2}\b", q):
+    if _has_explicit_time_series_request(q):
         return "time_series"
-    if value_type == "weekly_change":
+    if storage_dataset == "weekly_working_gas" and value_type == "weekly_change":
         return "weekly_change"
     if any(term in q for term in ("why", "explain", "driver", "driving")):
         return "explain"
@@ -227,14 +477,48 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         )
 
     regions = _parse_regions(q) or ["lower48"]
+    states = _parse_states(q)
+    states_all = False
+    storage_frequency = _parse_storage_frequency(q)
+    storage_metric_type = _parse_storage_metric_type(q)
+    storage_dataset = _parse_storage_dataset(
+        q,
+        frequency=storage_frequency,
+        states=states,
+        regions=regions,
+        metric_type=storage_metric_type,
+    )
+    if storage_dataset == "underground_storage_all_operators":
+        regions = []
+        if storage_frequency == "weekly":
+            storage_frequency = "monthly"
+        if not states and _asks_all_states(q):
+            states_all = True
+    else:
+        states = []
+        states_all = False
+        storage_frequency = "weekly"
+        storage_metric_type = "working_gas"
     value_type = _parse_value_type(q)
     comparisons = _parse_comparisons(q)
-    analysis_type = _parse_analysis_type(q, value_type, comparisons, regions)
+    if storage_dataset == "underground_storage_all_operators" and _is_yoy_storage_metric(storage_metric_type):
+        comparisons = ["none"]
+    analysis_type = _parse_analysis_type(
+        q,
+        value_type,
+        comparisons,
+        regions,
+        states,
+        storage_dataset,
+    )
     chart_type = _parse_chart_type(q, analysis_type)
     output_mode = _parse_output_mode(q, chart_type)
     date_expression = _parse_date_expression(q)
 
     analysis_type = _sanitize(analysis_type, STORAGE_ANALYSIS_TYPES, "unsupported")
+    storage_dataset = _sanitize(storage_dataset, STORAGE_DATASETS, "weekly_working_gas")
+    storage_frequency = _sanitize(storage_frequency, STORAGE_FREQUENCIES, "weekly")
+    storage_metric_type = _sanitize(storage_metric_type, STORAGE_METRIC_TYPES, "working_gas")
     value_type = _sanitize(value_type, VALUE_TYPES, "level")
     chart_type = _sanitize(chart_type, CHART_TYPES, "none")
     output_mode = _sanitize(output_mode, OUTPUT_MODES, "answer")
@@ -243,13 +527,25 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     return EnergyQueryParse(
         domain="storage",
         analysis_type=analysis_type,
+        storage_dataset=storage_dataset,
+        storage_frequency=storage_frequency,
+        storage_metric_type=storage_metric_type,
         regions=regions,
+        states=states,
+        states_all=states_all,
         value_type=value_type,
         comparisons=comparisons,
         chart_type=chart_type,
         output_mode=output_mode,
         date_expression=date_expression,
-        filters={"regions": regions},
+        filters={
+            "regions": regions,
+            "states": states,
+            "states_all": states_all,
+            "storage_dataset": storage_dataset,
+            "storage_frequency": storage_frequency,
+            "storage_metric_type": storage_metric_type,
+        },
         confidence=confidence,
         ambiguous=False,
         reason=reason,

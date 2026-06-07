@@ -56,6 +56,49 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "mountain",
         "pacific",
     }
+    UNDERGROUND_STORAGE_STATES = {
+        "al",
+        "ar",
+        "ca",
+        "co",
+        "ia",
+        "il",
+        "in",
+        "ks",
+        "ky",
+        "la",
+        "md",
+        "mi",
+        "mn",
+        "ms",
+        "mo",
+        "mt",
+        "ne",
+        "nm",
+        "ny",
+        "oh",
+        "ok",
+        "or",
+        "pa",
+        "tn",
+        "tx",
+        "ut",
+        "va",
+        "wa",
+        "wv",
+        "wy",
+        "united_states_total",
+    }
+    UNDERGROUND_STORAGE_HISTORY_PREFIX = {
+        "base_gas": ("n5010", "2"),
+        "working_gas": ("n5020", "2"),
+        "total_gas": ("n5030", "2"),
+        "working_gas_yoy_volume_change": ("n5040", "2"),
+        "working_gas_yoy_pct_change": ("n5040", "4"),
+        "injections": ("n5050", "2"),
+        "withdrawals": ("n5060", "2"),
+        "net_withdrawals": ("n5070", "2"),
+    }
     TRADE_REGIONS = {
         "united_states_pipeline_total",
         "canada_pipeline",
@@ -482,6 +525,70 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             "note": "Derived as row-to-row weekly difference of working gas storage levels.",
         }
         return EIAResult(df=out, source=src, meta=meta)
+
+    def underground_storage_all_operators(
+        self,
+        *,
+        start: str,
+        end: str,
+        state: str,
+        metric_type: str,
+        frequency: str,
+    ) -> EIAResult:
+        if state not in self.UNDERGROUND_STORAGE_STATES:
+            raise ValueError(
+                f"Invalid storage state '{state}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+            )
+        if metric_type not in self.UNDERGROUND_STORAGE_HISTORY_PREFIX:
+            raise ValueError(
+                f"Invalid underground storage metric type '{metric_type}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_HISTORY_PREFIX)}"
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError(
+                f"Invalid underground storage frequency '{frequency}'. Expected monthly or annual."
+            )
+
+        geography = "us_total" if state == "united_states_total" else state
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        rows = self.client.natural_gas.underground_storage_all_operators(
+            start=request_start,
+            end=request_end,
+            geography=geography,
+            metric_type=metric_type,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "state"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["state"] = state
+            out = out[["date", "value", "state"]].reset_index(drop=True)
+
+        units = "%" if metric_type == "working_gas_yoy_pct_change" else "MMcf"
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=f"EIA Underground Storage ({metric_type.replace('_', ' ').title()}, {state.upper() if state != 'united_states_total' else 'U.S.'}, {frequency.title()})",
+                reference="eia-ng-client:natural_gas.underground_storage_all_operators",
+                parameters={
+                    "state": state,
+                    "geography": geography,
+                    "metric_type": metric_type,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={"units": units, "frequency": frequency, "metric_type": metric_type},
+        )
 
     def get_weather_metric(
         self,
@@ -1617,6 +1724,119 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             parameters=parameters,
             retrieved_at=datetime.utcnow(),
         )
+
+    def _underground_storage_history_url(
+        self,
+        *,
+        state: str,
+        metric_type: str,
+        frequency: str,
+    ) -> str:
+        series_prefix, value_suffix = self.UNDERGROUND_STORAGE_HISTORY_PREFIX[metric_type]
+        area_token = "us" if state == "united_states_total" else state
+        frequency_suffix = "m" if frequency == "monthly" else "a"
+        return (
+            "https://www.eia.gov/dnav/ng/hist/"
+            f"{series_prefix}{area_token}{value_suffix}{frequency_suffix}.htm"
+        )
+
+    def _fetch_underground_storage_history(
+        self,
+        *,
+        state: str,
+        metric_type: str,
+        frequency: str,
+    ) -> pd.DataFrame:
+        url = self._underground_storage_history_url(
+            state=state,
+            metric_type=metric_type,
+            frequency=frequency,
+        )
+        response = requests.get(
+            url,
+            timeout=30,
+            headers={"User-Agent": "energy-atlas-ai/1.0"},
+        )
+        response.raise_for_status()
+        tables = pd.read_html(StringIO(response.text))
+        if not tables:
+            return pd.DataFrame(columns=["date", "value"])
+        return self._parse_eia_history_table(tables[0], frequency=frequency)
+
+    def _parse_eia_history_table(
+        self,
+        table: pd.DataFrame,
+        *,
+        frequency: str,
+    ) -> pd.DataFrame:
+        if table is None or table.empty:
+            return pd.DataFrame(columns=["date", "value"])
+
+        df = table.copy()
+        df.columns = [str(col).strip() for col in df.columns]
+        year_col = str(df.columns[0])
+        df = df.rename(columns={year_col: "year"})
+        df["year"] = pd.to_numeric(df["year"], errors="coerce")
+        df = df.dropna(subset=["year"])
+        if df.empty:
+            return pd.DataFrame(columns=["date", "value"])
+
+        if frequency == "monthly":
+            month_map = {
+                "jan": 1,
+                "feb": 2,
+                "mar": 3,
+                "apr": 4,
+                "may": 5,
+                "jun": 6,
+                "jul": 7,
+                "aug": 8,
+                "sep": 9,
+                "oct": 10,
+                "nov": 11,
+                "dec": 12,
+            }
+            value_cols = [
+                col for col in df.columns[1:] if str(col).strip().lower()[:3] in month_map
+            ]
+            rows: list[dict[str, Any]] = []
+            for _, row in df.iterrows():
+                year = int(row["year"])
+                for col in value_cols:
+                    raw = str(row.get(col, "")).strip().replace(",", "")
+                    if raw in {"", "-", "--", "NA", "W", "*", "* * *"}:
+                        continue
+                    value = pd.to_numeric(raw, errors="coerce")
+                    if pd.isna(value):
+                        continue
+                    month = month_map[str(col).strip().lower()[:3]]
+                    rows.append(
+                        {
+                            "date": pd.Timestamp(year=year, month=month, day=1),
+                            "value": float(value),
+                        }
+                    )
+            return pd.DataFrame(rows, columns=["date", "value"]).sort_values("date").reset_index(drop=True)
+
+        value_cols = [col for col in df.columns[1:] if "year" not in str(col).strip().lower()]
+        value_col = value_cols[0] if value_cols else None
+        if value_col is None:
+            return pd.DataFrame(columns=["date", "value"])
+        rows = []
+        for _, row in df.iterrows():
+            raw = str(row.get(value_col, "")).strip().replace(",", "")
+            if raw in {"", "-", "--", "NA", "W", "*", "* * *"}:
+                continue
+            value = pd.to_numeric(raw, errors="coerce")
+            if pd.isna(value):
+                continue
+            rows.append(
+                {
+                    "date": pd.Timestamp(year=int(row["year"]), month=12, day=31),
+                    "value": float(value),
+                }
+            )
+        return pd.DataFrame(rows, columns=["date", "value"]).sort_values("date").reset_index(drop=True)
 
     # ---- subclass hooks ----
 

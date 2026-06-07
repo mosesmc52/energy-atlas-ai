@@ -2050,6 +2050,14 @@ def _route_regions(route) -> list[str]:
     return list(getattr(route, "regions", []) or [])
 
 
+def _route_states(route) -> list[str]:
+    return list(getattr(route, "states", []) or [])
+
+
+def _route_states_all(route) -> bool:
+    return bool(getattr(route, "states_all", False))
+
+
 def _route_chart_type(route) -> str:
     return str(getattr(route, "chart_type", "") or "")
 
@@ -2062,9 +2070,55 @@ def _route_ranking_basis(route) -> str:
     return str(getattr(route, "ranking_basis", "") or "current_storage")
 
 
+def _route_storage_dataset(route) -> str:
+    return str(getattr(route, "storage_dataset", "") or "weekly_working_gas")
+
+
+def _route_storage_frequency(route) -> str:
+    return str(getattr(route, "storage_frequency", "") or "weekly")
+
+
+def _route_storage_metric_type(route) -> str:
+    return str(getattr(route, "storage_metric_type", "") or "working_gas")
+
+
 def _storage_region_label(region: str | None) -> str:
     label = str(region or "lower48").replace("_", " ").title()
     return "Lower 48" if label == "Lower48" else label
+
+
+def _storage_state_label(state: str | None) -> str:
+    value = str(state or "united_states_total").strip().lower()
+    if value == "united_states_total":
+        return "United States Total"
+    if len(value) == 2:
+        return value.upper()
+    return value.replace("_", " ").title()
+
+
+def _storage_metric_label(metric_type: str) -> str:
+    return {
+        "total_gas": "Natural Gas in Storage",
+        "base_gas": "Base Gas in Storage",
+        "working_gas": "Working Gas in Storage",
+        "net_withdrawals": "Net Withdrawals",
+        "injections": "Injections",
+        "withdrawals": "Withdrawals",
+        "working_gas_yoy_volume_change": "Working Gas Change from Year Ago",
+        "working_gas_yoy_pct_change": "Working Gas % Change from Year Ago",
+    }.get(metric_type, "Working Gas in Storage")
+
+
+def _storage_metric_unit(metric_type: str) -> str:
+    return "%" if metric_type == "working_gas_yoy_pct_change" else "MMcf"
+
+
+def _underground_storage_metric_label(metric_type: str) -> str:
+    return _storage_metric_label(metric_type)
+
+
+def _underground_storage_unit(metric_type: str) -> str:
+    return _storage_metric_unit(metric_type)
 
 
 def _storage_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -2074,11 +2128,25 @@ def _storage_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     d["date"] = pd.to_datetime(d["date"], errors="coerce")
     d["value"] = pd.to_numeric(d["value"], errors="coerce")
     d = d.dropna(subset=["date", "value"])
+    if "state" in d.columns:
+        d["state"] = d["state"].astype(str)
     sort_cols = ["date"]
+    if "state" in d.columns:
+        sort_cols = ["state", "date"]
     if "region" in d.columns:
         d["region"] = d["region"].astype(str)
         sort_cols = ["region", "date"]
     return d.sort_values(sort_cols).reset_index(drop=True)
+
+
+def _underground_storage_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+    d = _storage_prepare_df(df)
+    if d.empty:
+        return pd.DataFrame(columns=["date", "value", "state"])
+    if "state" not in d.columns:
+        d["state"] = "united_states_total"
+    d["state"] = d["state"].astype(str)
+    return d.sort_values(["state", "date"]).reset_index(drop=True)
 
 
 def _storage_latest_by_region_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -2086,10 +2154,29 @@ def _storage_latest_by_region_df(df: pd.DataFrame) -> pd.DataFrame:
     if d.empty:
         return d
     if "region" not in d.columns:
+        if "state" in d.columns:
+            return (
+                d.sort_values(["state", "date"])
+                .groupby("state", as_index=False, sort=False)
+                .tail(1)
+                .reset_index(drop=True)
+            )
         return d.tail(1).reset_index(drop=True)
     return (
         d.sort_values(["region", "date"])
         .groupby("region", as_index=False, sort=False)
+        .tail(1)
+        .reset_index(drop=True)
+    )
+
+
+def _underground_storage_latest_by_state_df(df: pd.DataFrame) -> pd.DataFrame:
+    d = _underground_storage_prepare_df(df)
+    if d.empty:
+        return d
+    return (
+        d.sort_values(["state", "date"])
+        .groupby("state", as_index=False, sort=False)
         .tail(1)
         .reset_index(drop=True)
     )
@@ -2288,8 +2375,45 @@ def _storage_period_change_summary(df: pd.DataFrame) -> dict:
             "latest_by_region": latest_rows,
             "latest_date": latest_rows["date"].max().date().isoformat(),
         }
+    if "state" in d.columns and d["state"].nunique() > 1:
+        latest_rows = _storage_latest_by_region_df(d)
+        return {
+            "latest_by_region": latest_rows,
+            "latest_date": latest_rows["date"].max().date().isoformat(),
+        }
     if "region" in d.columns:
         d = d.drop(columns=["region"])
+    if "state" in d.columns:
+        d = d.drop(columns=["state"])
+    start = d.iloc[0]
+    latest = d.iloc[-1]
+    start_value = _safe_float(start["value"])
+    latest_value = _safe_float(latest["value"])
+    return {
+        "start_date": start["date"].date().isoformat(),
+        "start_value": start_value,
+        "latest_date": latest["date"].date().isoformat(),
+        "latest_value": latest_value,
+        "net_change": (
+            latest_value - start_value
+            if latest_value is not None and start_value is not None
+            else None
+        ),
+    }
+
+
+def _underground_storage_period_change_summary(df: pd.DataFrame) -> dict:
+    d = _underground_storage_prepare_df(df)
+    if d.empty:
+        return {}
+    if "state" in d.columns and d["state"].nunique() > 1:
+        latest_rows = _underground_storage_latest_by_state_df(d)
+        return {
+            "latest_by_state": latest_rows,
+            "latest_date": latest_rows["date"].max().date().isoformat(),
+        }
+    if "state" in d.columns:
+        d = d.drop(columns=["state"])
     start = d.iloc[0]
     latest = d.iloc[-1]
     start_value = _safe_float(start["value"])
@@ -2316,6 +2440,10 @@ def _storage_chart_spec_from_route(
 
     analysis_type = _route_analysis_type(route)
     chart_type = _route_chart_type(route)
+    storage_dataset = _route_storage_dataset(route)
+    metric_type = _route_storage_metric_type(route)
+    metric_label = _storage_metric_label(metric_type)
+    metric_unit = _storage_metric_unit(metric_type)
     if not chart_type:
         chart_type = {
             "time_series": "line",
@@ -2337,19 +2465,22 @@ def _storage_chart_spec_from_route(
 
     if analysis_type in {"regional_compare", "ranking"}:
         y_field = "deviation_bcf" if "deviation_bcf" in df.columns else "value"
+        x_field = "state" if "state" in df.columns and "region" not in df.columns else "region"
         if y_field == "deviation_bcf":
             title = "Storage Deviation from 5-Year Average by Region"
         elif _route_value_type(route) == "weekly_change":
             title = "Weekly Change in Working Gas Storage by Region"
+        elif storage_dataset == "underground_storage_all_operators":
+            title = f"{metric_label} by State"
         else:
             title = "Current Working Gas in Storage by Region"
         return ChartSpec(
             chart_type="bar",
             title=title,
-            x="region",
+            x=x_field,
             y=[y_field],
-            x_label="Region",
-            y_label="Deviation (Bcf)" if y_field == "deviation_bcf" else "Bcf",
+            x_label="State" if x_field == "state" else "Region",
+            y_label="Deviation (Bcf)" if y_field == "deviation_bcf" else metric_unit,
         )
 
     if analysis_type == "weekly_change":
@@ -2375,20 +2506,20 @@ def _storage_chart_spec_from_route(
     if analysis_type == "time_series" and chart_type == "line":
         return ChartSpec(
             chart_type="line",
-            title="Working Gas in Storage",
+            title=metric_label if storage_dataset == "underground_storage_all_operators" else "Working Gas in Storage",
             x="date",
             y=["value"],
             x_label="Date",
-            y_label="Storage (Bcf)",
+            y_label=metric_unit if storage_dataset == "underground_storage_all_operators" else "Storage (Bcf)",
         )
 
     return ChartSpec(
         chart_type="line",
-        title="Working Gas in Storage",
+        title=metric_label if storage_dataset == "underground_storage_all_operators" else "Working Gas in Storage",
         x="date",
         y=["value"],
         x_label="Date",
-        y_label="Storage (Bcf)",
+        y_label=metric_unit if storage_dataset == "underground_storage_all_operators" else "Storage (Bcf)",
     )
 
 
@@ -2429,6 +2560,112 @@ def _storage_single_latest_answer(df: pd.DataFrame, route: Any) -> str:
         flow = "injection" if value > 0 else "withdrawal" if value < 0 else "change"
         return f"As of {date}, {region} posted a weekly {flow} of {_format_number(abs(value))} Bcf."
     return f"As of {date}, {region} working gas in storage was {_format_number(value)} Bcf."
+
+
+def _underground_storage_latest_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _underground_storage_latest_by_state_df(df)
+    if latest.empty:
+        return "No data was returned for the requested period."
+    metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
+    unit = _underground_storage_unit(_route_storage_metric_type(route))
+    if "state" in latest.columns and latest["state"].nunique() > 1:
+        ranked = latest.sort_values("value", ascending=False).reset_index(drop=True)
+        top = ranked.iloc[0]
+        date = top["date"].date().isoformat()
+        answer = (
+            f"As of {date}, {_storage_state_label(top['state'])} had the highest {metric_label.lower()} "
+            f"at {_format_number(float(top['value']))} {unit}."
+        )
+        if len(ranked) > 1:
+            second = ranked.iloc[1]
+            answer += (
+                f" {_storage_state_label(second['state'])} followed at "
+                f"{_format_number(float(second['value']))} {unit}."
+            )
+        return answer
+    row = latest.iloc[0]
+    date = row["date"].date().isoformat()
+    state = _storage_state_label(row.get("state") or (_route_states(route) or ["united_states_total"])[0])
+    return f"As of {date}, {state} {metric_label.lower()} was {_format_number(float(row['value']))} {unit}."
+
+
+def _underground_storage_time_series_answer(df: pd.DataFrame, route: Any) -> str:
+    d = _underground_storage_prepare_df(df)
+    if d.empty:
+        return "No data was returned for the requested period."
+    metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
+    unit = _underground_storage_unit(_route_storage_metric_type(route))
+    if "state" in d.columns and d["state"].nunique() > 1:
+        latest = _underground_storage_latest_by_state_df(d).sort_values("value", ascending=False)
+        date = latest["date"].max().date().isoformat()
+        pairs = [
+            f"{_storage_state_label(row['state'])}: {_format_number(float(row['value']))} {unit}"
+            for _, row in latest.iterrows()
+        ]
+        return f"As of {date}, latest state {metric_label.lower()} was " + "; ".join(pairs) + "."
+
+    summary = _underground_storage_period_change_summary(d)
+    state = _storage_state_label(
+        d.iloc[0]["state"] if "state" in d.columns and not d.empty else (_route_states(route) or ["united_states_total"])[0]
+    )
+    return (
+        f"From {summary.get('start_date')} to {summary.get('latest_date')}, {state} {metric_label.lower()} moved "
+        f"from {_format_number(summary.get('start_value'))} {unit} to {_format_number(summary.get('latest_value'))} {unit}, "
+        f"a net change of {_format_number(summary.get('net_change'))} {unit}."
+    )
+
+
+def _underground_storage_ranking_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _underground_storage_latest_by_state_df(df)
+    if latest.empty or "state" not in latest.columns:
+        return "No data was returned for the requested period."
+    ranked = latest.dropna(subset=["value"]).sort_values("value", ascending=False)
+    if ranked.empty:
+        return "No data was returned for the requested period."
+    top = ranked.iloc[0]
+    date = top["date"].date().isoformat()
+    metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
+    unit = _underground_storage_unit(_route_storage_metric_type(route))
+    return (
+        f"As of {date}, {_storage_state_label(top['state'])} ranked highest for {metric_label.lower()} "
+        f"at {_format_number(float(top['value']))} {unit}."
+    )
+
+
+def _underground_storage_chart_spec_from_route(
+    route: Any,
+    df: pd.DataFrame,
+) -> ChartSpec | None:
+    if _route_output_mode(route) == "answer" or _route_chart_type(route) == "none":
+        return None
+
+    analysis_type = _route_analysis_type(route)
+    metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
+    unit = _underground_storage_unit(_route_storage_metric_type(route))
+
+    if analysis_type == "time_series":
+        return ChartSpec(
+            chart_type="line",
+            title=f"{metric_label} by State",
+            x="date",
+            y=["value"],
+            x_label="Date",
+            y_label=unit,
+        )
+
+    if analysis_type in {"ranking", "regional_compare"} or (
+        analysis_type == "latest" and _route_chart_type(route) == "bar"
+    ):
+        return ChartSpec(
+            chart_type="bar",
+            title=f"{metric_label} by State",
+            x="state",
+            y=["value"],
+            x_label="State",
+            y_label=unit,
+        )
+
+    return None
 
 
 def _storage_time_series_answer(df: pd.DataFrame, route: Any) -> str:
@@ -2603,6 +2840,59 @@ def _storage_deviation_answer(df: pd.DataFrame) -> str:
     )
 
 
+def _build_underground_storage_all_operators_payload(
+    *,
+    query: str,
+    result: EIAResult,
+    route: Any,
+    mode: str,
+    source_date: str | None,
+) -> AnswerPayload:
+    df = _underground_storage_prepare_df(result.df)
+    analysis_type = _route_analysis_type(route)
+
+    if analysis_type == "time_series":
+        chart_df = df.sort_values(["state", "date"]) if not df.empty else df
+        answer_text = _underground_storage_time_series_answer(df, route)
+    elif analysis_type in {"ranking", "regional_compare"}:
+        chart_df = _underground_storage_latest_by_state_df(df).sort_values(
+            "value", ascending=False
+        ).reset_index(drop=True)
+        answer_text = _underground_storage_ranking_answer(chart_df, route)
+    elif analysis_type == "latest":
+        chart_df = _underground_storage_latest_by_state_df(df)
+        answer_text = _underground_storage_latest_answer(df, route)
+    else:
+        chart_df = _underground_storage_latest_by_state_df(df)
+        answer_text = _underground_storage_latest_answer(df, route)
+
+    if not chart_df.empty and "state" in chart_df.columns:
+        logger.info(
+            "underground_storage_answer chart_states=%s rows=%s analysis=%s states_all=%s",
+            sorted(chart_df["state"].dropna().astype(str).unique().tolist()),
+            len(chart_df),
+            analysis_type,
+            _route_states_all(route),
+        )
+
+    chart_spec = _underground_storage_chart_spec_from_route(route, chart_df)
+    return AnswerPayload(
+        query=query,
+        mode=mode,
+        answer_text=answer_text,
+        structured_response=None,
+        report_context_used=False,
+        report_context_reason="underground_storage_all_operators_route",
+        report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+        data_preview=_maybe_data_preview(chart_df),
+        chart_data_preview=_make_chart_preview(chart_df),
+        chart_spec=chart_spec,
+        sources=[result.source],
+        warnings=None,
+        generated_at=datetime.utcnow(),
+    )
+
+
 def _build_storage_answer_payload(
     *,
     query: str,
@@ -2611,10 +2901,30 @@ def _build_storage_answer_payload(
     mode: str,
     source_date: str | None,
 ) -> AnswerPayload:
+    storage_dataset = _route_storage_dataset(route)
+
+    if storage_dataset == "underground_storage_all_operators":
+        return _build_underground_storage_all_operators_payload(
+            query=query,
+            result=result,
+            route=route,
+            mode=mode,
+            source_date=source_date,
+        )
+    if storage_dataset != "weekly_working_gas":
+        return _storage_payload(
+            query=query,
+            result=result,
+            mode=mode,
+            answer_text="No data was returned for the requested storage dataset.",
+            chart_df=pd.DataFrame(),
+            chart_spec=None,
+            source_date=source_date,
+        )
+
     df = _storage_prepare_df(result.df)
     analysis_type = _route_analysis_type(route)
     comparisons = _route_comparisons(route)
-
     chart_df = df
     if analysis_type in {"regional_compare"}:
         chart_df = _storage_latest_by_region_df(df).sort_values("value", ascending=False)
@@ -2653,6 +2963,13 @@ def _build_storage_answer_payload(
         logger.info(
             "storage_answer chart_regions=%s rows=%s analysis=%s",
             sorted(chart_df["region"].dropna().astype(str).unique().tolist()),
+            len(chart_df),
+            analysis_type,
+        )
+    if not chart_df.empty and "state" in chart_df.columns:
+        logger.info(
+            "storage_answer chart_states=%s rows=%s analysis=%s",
+            sorted(chart_df["state"].dropna().astype(str).unique().tolist()),
             len(chart_df),
             analysis_type,
         )

@@ -65,12 +65,19 @@ class EnergyAtlasAgent:
     def _execute_storage_route(self, route: EnergyRouteResult) -> MetricResult:
         filters = dict(route.filters or {})
         filters["regions"] = list(route.regions or filters.get("regions") or [])
+        filters["states"] = list(route.states or filters.get("states") or [])
+        filters["storage_dataset"] = route.storage_dataset
+        filters["storage_frequency"] = route.storage_frequency
+        filters["storage_metric_type"] = route.storage_metric_type
         prepared_route = replace(route, filters=filters)
         if DEBUG_ENABLED:
             logger.info(
-                "agent_run storage route regions=%s filters_regions=%s",
+                "agent_run storage route dataset=%s frequency=%s metric_type=%s regions=%s states=%s",
+                route.storage_dataset,
+                route.storage_frequency,
+                route.storage_metric_type,
                 list(prepared_route.regions or []),
-                list(filters.get("regions") or []),
+                list(prepared_route.states or []),
             )
         return self.executor.execute_storage_route(prepared_route)
 

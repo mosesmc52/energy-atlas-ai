@@ -51,6 +51,43 @@ def _expand_storage_fetch_window_for_baseline(
     return fetch_start.date().isoformat(), resolved_end.date().isoformat()
 
 
+def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset != "underground_storage_all_operators":
+        return False
+    if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
+        return False
+    return not bool(route.start_date)
+
+
+def _expand_storage_fetch_window_for_latest_all_operators(
+    *,
+    end_date: str | None,
+    frequency: str,
+) -> tuple[str, str]:
+    resolved_end = pd.Timestamp(end_date or date.today().isoformat())
+    if frequency == "annual":
+        fetch_start = resolved_end - pd.DateOffset(years=10)
+    else:
+        fetch_start = resolved_end - pd.DateOffset(years=2)
+    return fetch_start.date().isoformat(), resolved_end.date().isoformat()
+
+
+def _storage_should_retry_with_latest_available_all_operators(
+    route: EnergyRouteResult,
+    result: MetricResult,
+) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset != "underground_storage_all_operators":
+        return False
+    if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
+        return False
+    df = getattr(result, "df", None)
+    return df is None or df.empty
+
+
 def _normalize_storage_regions(filters: dict) -> list[str]:
     raw_regions = filters.get("regions")
     if raw_regions is None:
@@ -75,6 +112,44 @@ def _normalize_storage_regions(filters: dict) -> list[str]:
             regions.append(region)
 
     return regions or ["lower48"]
+
+
+def _normalize_storage_states(filters: dict) -> list[str]:
+    raw_states = filters.get("states")
+    states_all = bool(filters.get("states_all"))
+    if raw_states is None:
+        raw_state = filters.get("state")
+        raw_states = [raw_state] if raw_state else ["united_states_total"]
+    elif isinstance(raw_states, str):
+        raw_states = [raw_states]
+    return _resolve_storage_states(raw_states, states_all)
+
+
+def _resolve_storage_states(states: list[str], states_all: bool) -> list[str]:
+    if states_all:
+        return [
+            state
+            for state in EIAAdapter.UNDERGROUND_STORAGE_STATES
+            if state != "united_states_total"
+        ]
+
+    resolved_states: list[str] = []
+    for raw_state in states or []:
+        state = str(raw_state or "").strip().lower()
+        if not state:
+            continue
+        if state == "all":
+            resolved_states.extend(
+                [s for s in EIAAdapter.UNDERGROUND_STORAGE_STATES if s != "united_states_total"]
+            )
+            continue
+        if state not in EIAAdapter.UNDERGROUND_STORAGE_STATES:
+            raise ValueError(
+                f"Invalid storage state '{state}'. Expected one of: {sorted(EIAAdapter.UNDERGROUND_STORAGE_STATES)}"
+            )
+        if state not in resolved_states:
+            resolved_states.append(state)
+    return resolved_states or ["united_states_total"]
 
 
 def _concat_storage_region_results(results: list[EIAResult]) -> EIAResult:
@@ -129,6 +204,58 @@ def _concat_storage_region_results(results: list[EIAResult]) -> EIAResult:
     )
 
 
+def _concat_storage_state_results(results: list[EIAResult]) -> EIAResult:
+    frames: list[pd.DataFrame] = []
+    source_references: list[str] = []
+    state_meta: dict[str, Any] = {}
+
+    for result in results:
+        raw_params = result.source.parameters or {}
+        params = raw_params if isinstance(raw_params, dict) else {}
+        state = str(params.get("state") or "").strip().lower()
+        source_references.append(result.source.reference)
+        if state:
+            state_meta[state] = result.meta or {}
+
+        if result.df is None or result.df.empty:
+            continue
+        frame = result.df.copy()
+        if "state" not in frame.columns:
+            frame["state"] = state
+        frames.append(frame[["date", "value", "state"]].copy())
+
+    df = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["date", "value", "state"])
+    )
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df["state"] = df["state"].astype(str)
+        df = df.dropna(subset=["date", "value", "state"]).sort_values(
+            ["state", "date"]
+        ).reset_index(drop=True)
+    states = [state for state in state_meta if state]
+    source = SourceRef(
+        source_type="eia_api",
+        label="EIA Underground Natural Gas Storage by State",
+        reference="eia-ng-client:natural_gas.underground_storage_all_operators_by_state",
+        parameters={
+            "states": states,
+            "source_references": source_references,
+        },
+    )
+    return EIAResult(
+        df=df,
+        source=source,
+        meta={
+            "states": state_meta,
+            "source_references": source_references,
+        },
+    )
+
+
 class MetricExecutor:
     """
     Deterministic dispatcher: metric -> implementation.
@@ -145,6 +272,22 @@ class MetricExecutor:
             # --- EIA ---
             "working_gas_storage_lower48": self._eia_storage_lower48,
             "working_gas_storage_change_weekly": self._eia_storage_change_weekly,
+            "underground_storage_total_gas_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_base_gas_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_working_gas_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_net_withdrawals_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_injections_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_withdrawals_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_working_gas_yoy_volume_change_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_working_gas_yoy_pct_change_monthly": self._eia_underground_storage_all_operators,
+            "underground_storage_total_gas_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_base_gas_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_working_gas_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_net_withdrawals_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_injections_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_withdrawals_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_working_gas_yoy_volume_change_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_working_gas_yoy_pct_change_annual": self._eia_underground_storage_all_operators,
             "henry_hub_spot": self._eia_henry_hub_spot,
             "lng_exports": self._eia_lng_exports,
             "lng_imports": self._eia_lng_imports,
@@ -199,7 +342,12 @@ class MetricExecutor:
 
         filters = dict(route.filters or {})
         filters["regions"] = list(route.regions or filters.get("regions") or [])
-        if route.analysis_type in {"regional_compare", "ranking"}:
+        filters["states"] = list(route.states or filters.get("states") or [])
+        filters["states_all"] = bool(route.states_all or filters.get("states_all"))
+        filters["storage_dataset"] = route.storage_dataset
+        filters["storage_frequency"] = route.storage_frequency
+        filters["storage_metric_type"] = route.storage_metric_type
+        if route.storage_dataset == "weekly_working_gas" and route.analysis_type in {"regional_compare", "ranking"}:
             filters["regions"] = ["all"]
         requested_start_date = route.start_date
         requested_end_date = route.end_date
@@ -211,11 +359,17 @@ class MetricExecutor:
                 end_date=route.end_date,
                 years=6,
             )
+        elif _storage_should_expand_for_latest_all_operators(route):
+            fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_latest_all_operators(
+                end_date=route.end_date,
+                frequency=route.storage_frequency,
+            )
         logger.info(
-            "storage_execute route_regions=%s filters_regions=%s metric=%s fetch=%s..%s",
-            list(route.regions or []),
-            list(filters.get("regions") or []),
+            "storage_execute dataset=%s metric=%s route_regions=%s route_states=%s fetch=%s..%s",
+            route.storage_dataset,
             route.primary_metric,
+            list(route.regions or []),
+            list(route.states or []),
             fetch_start_date,
             fetch_end_date,
         )
@@ -228,6 +382,38 @@ class MetricExecutor:
                 filters=filters,
             )
         )
+        fallback_fetch_start_date: str | None = None
+        fallback_fetch_end_date: str | None = None
+        latest_available_fallback = False
+        if _storage_should_retry_with_latest_available_all_operators(route, result):
+            fallback_fetch_start_date, fallback_fetch_end_date = (
+                _expand_storage_fetch_window_for_latest_all_operators(
+                    end_date=route.end_date,
+                    frequency=route.storage_frequency,
+                )
+            )
+            if (
+                fallback_fetch_start_date != fetch_start_date
+                or fallback_fetch_end_date != fetch_end_date
+            ):
+                logger.info(
+                    "storage_execute empty_result_retry dataset=%s metric=%s retry_fetch=%s..%s",
+                    route.storage_dataset,
+                    route.primary_metric,
+                    fallback_fetch_start_date,
+                    fallback_fetch_end_date,
+                )
+                result = self.execute(
+                    ExecuteRequest(
+                        metric=route.primary_metric,
+                        start=fallback_fetch_start_date,
+                        end=fallback_fetch_end_date,
+                        filters=filters,
+                    )
+                )
+                latest_available_fallback = True
+                fetch_start_date = fallback_fetch_start_date
+                fetch_end_date = fallback_fetch_end_date
         if result.meta is None:
             result.meta = {}
         result.meta.update(
@@ -236,21 +422,35 @@ class MetricExecutor:
                 "analysis_type": route.analysis_type,
                 "value_type": route.value_type,
                 "comparisons": list(route.comparisons or []),
+                "storage_dataset": route.storage_dataset,
+                "storage_frequency": route.storage_frequency,
+                "storage_metric_type": route.storage_metric_type,
                 "chart_type": route.chart_type,
                 "output_mode": route.output_mode,
                 "regions": list(route.regions or []),
+                "states": list(route.states or []),
+                "states_all": route.states_all,
                 "start_date": route.start_date,
                 "end_date": route.end_date,
                 "requested_start_date": requested_start_date,
                 "requested_end_date": requested_end_date,
                 "fetch_start_date": fetch_start_date,
                 "fetch_end_date": fetch_end_date,
+                "latest_available_fallback": latest_available_fallback,
+                "fallback_fetch_start_date": fallback_fetch_start_date,
+                "fallback_fetch_end_date": fallback_fetch_end_date,
             }
         )
         if result.df is not None and "region" in result.df.columns:
             logger.info(
                 "storage_execute result_regions=%s rows=%s",
                 sorted(result.df["region"].dropna().astype(str).unique().tolist()),
+                len(result.df),
+            )
+        if result.df is not None and "state" in result.df.columns:
+            logger.info(
+                "storage_execute result_states=%s rows=%s",
+                sorted(result.df["state"].dropna().astype(str).unique().tolist()),
                 len(result.df),
             )
         return result
@@ -401,6 +601,45 @@ class MetricExecutor:
             frame["region"] = region
         frame = frame[["date", "value", "region"]]
         return EIAResult(df=frame, source=result.source, meta=result.meta)
+
+    def _eia_underground_storage_all_operators(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        states = _normalize_storage_states(filters)
+        metric_type = str(filters.get("storage_metric_type") or "working_gas")
+        frequency = str(filters.get("storage_frequency") or "monthly")
+
+        if len(states) == 1:
+            state = states[0]
+            result = self.eia.underground_storage_all_operators(
+                start=start,
+                end=end,
+                state=state,
+                metric_type=metric_type,
+                frequency=frequency,
+            )
+            frame = result.df.copy() if result.df is not None else pd.DataFrame(columns=["date", "value"])
+            if "state" not in frame.columns:
+                frame["state"] = state
+            frame = frame[["date", "value", "state"]]
+            return EIAResult(df=frame, source=result.source, meta=result.meta)
+
+        results = []
+        for state in states:
+            state_result = self.eia.underground_storage_all_operators(
+                start=start,
+                end=end,
+                state=state,
+                metric_type=metric_type,
+                frequency=frequency,
+            )
+            frame = state_result.df.copy() if state_result.df is not None else pd.DataFrame(columns=["date", "value"])
+            if not frame.empty:
+                frame["state"] = state
+            results.append(
+                EIAResult(df=frame, source=state_result.source, meta=state_result.meta)
+            )
+        return _concat_storage_state_results(results)
 
     def _eia_henry_hub_spot(
         self, *, start: str, end: str, filters: Dict[str, Any]
