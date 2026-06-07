@@ -557,21 +557,27 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 f"Invalid underground storage frequency '{frequency}'. Expected monthly or annual."
             )
 
-        df = self._fetch_underground_storage_history(
-            state=state,
+        geography = "us_total" if state == "united_states_total" else state
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        rows = self.client.natural_gas.underground_storage_all_operators(
+            start=request_start,
+            end=request_end,
+            geography=geography,
             metric_type=metric_type,
             frequency=frequency,
         )
-        if df.empty:
+        if not rows:
             out = pd.DataFrame(columns=["date", "value", "state"])
         else:
-            out = df.copy()
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
             out["date"] = pd.to_datetime(out["date"], errors="coerce")
             out["value"] = pd.to_numeric(out["value"], errors="coerce")
             out = out.dropna(subset=["date", "value"])
-            out = out.loc[
-                (out["date"] >= pd.Timestamp(start)) & (out["date"] <= pd.Timestamp(end))
-            ].copy()
             out["state"] = state
             out = out[["date", "value", "state"]].reset_index(drop=True)
 
@@ -580,13 +586,14 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             df=out,
             source=self._make_source(
                 label=f"EIA Underground Storage ({metric_type.replace('_', ' ').title()}, {state.upper() if state != 'united_states_total' else 'U.S.'}, {frequency.title()})",
-                reference="eia-dnav:natural_gas.underground_storage_all_operators",
+                reference="eia-ng-client:natural_gas.underground_storage_all_operators",
                 parameters={
                     "state": state,
+                    "geography": geography,
                     "metric_type": metric_type,
                     "frequency": frequency,
-                    "start": start,
-                    "end": end,
+                    "start": request_start,
+                    "end": request_end,
                 },
             ),
             meta={"units": units, "frequency": frequency, "metric_type": metric_type},

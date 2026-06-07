@@ -108,6 +108,20 @@ _STORAGE_DOWNLOAD_URLS = {
     "south_central_nonsalt": "https://www.eia.gov/dnav/ng/hist_xls/NW2_EPG0_SNO_R33_BCFw.xls",
 }
 
+_UNDERGROUND_STORAGE_DOWNLOAD_URLS = {
+    ("total_gas", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAT_MMCF_M.xls",
+    ("base_gas", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAB_MMCF_M.xls",
+    ("working_gas", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAO_MMCF_M.xls",
+    ("net_withdrawals", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAN_MMCF_M.xls",
+    ("injections", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAI_MMCF_M.xls",
+    ("withdrawals", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAW_MMCF_M.xls",
+    ("working_gas_yoy_volume_change", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAH_MMCF_M.xls",
+    ("working_gas_yoy_pct_change", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAH_PCT_M.xls",
+    ("net_withdrawals", "annual"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAN_MMCF_A.xls",
+    ("injections", "annual"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAI_MMCF_A.xls",
+    ("withdrawals", "annual"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAW_MMCF_A.xls",
+}
+
 
 async def _track_chainlit_event(event: str, **params: object) -> None:
     payload = {
@@ -160,6 +174,15 @@ def _storage_download_links_for_source(source) -> list[tuple[str, str]]:
             label = str(region).replace("_", " ").title()
             links.append((label, url))
         return links
+
+    if reference == "eia-ng-client:natural_gas.underground_storage_all_operators":
+        metric_type = str(
+            params.get("metric_type") or params.get("storage_metric_type") or ""
+        ).strip().lower()
+        frequency = str(params.get("frequency") or "").strip().lower()
+        url = _UNDERGROUND_STORAGE_DOWNLOAD_URLS.get((metric_type, frequency))
+        if url:
+            return [("Source", url)]
 
     return []
 

@@ -51,6 +51,43 @@ def _expand_storage_fetch_window_for_baseline(
     return fetch_start.date().isoformat(), resolved_end.date().isoformat()
 
 
+def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset != "underground_storage_all_operators":
+        return False
+    if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
+        return False
+    return not bool(route.start_date)
+
+
+def _expand_storage_fetch_window_for_latest_all_operators(
+    *,
+    end_date: str | None,
+    frequency: str,
+) -> tuple[str, str]:
+    resolved_end = pd.Timestamp(end_date or date.today().isoformat())
+    if frequency == "annual":
+        fetch_start = resolved_end - pd.DateOffset(years=10)
+    else:
+        fetch_start = resolved_end - pd.DateOffset(years=2)
+    return fetch_start.date().isoformat(), resolved_end.date().isoformat()
+
+
+def _storage_should_retry_with_latest_available_all_operators(
+    route: EnergyRouteResult,
+    result: MetricResult,
+) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset != "underground_storage_all_operators":
+        return False
+    if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
+        return False
+    df = getattr(result, "df", None)
+    return df is None or df.empty
+
+
 def _normalize_storage_regions(filters: dict) -> list[str]:
     raw_regions = filters.get("regions")
     if raw_regions is None:
@@ -322,6 +359,11 @@ class MetricExecutor:
                 end_date=route.end_date,
                 years=6,
             )
+        elif _storage_should_expand_for_latest_all_operators(route):
+            fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_latest_all_operators(
+                end_date=route.end_date,
+                frequency=route.storage_frequency,
+            )
         logger.info(
             "storage_execute dataset=%s metric=%s route_regions=%s route_states=%s fetch=%s..%s",
             route.storage_dataset,
@@ -340,6 +382,38 @@ class MetricExecutor:
                 filters=filters,
             )
         )
+        fallback_fetch_start_date: str | None = None
+        fallback_fetch_end_date: str | None = None
+        latest_available_fallback = False
+        if _storage_should_retry_with_latest_available_all_operators(route, result):
+            fallback_fetch_start_date, fallback_fetch_end_date = (
+                _expand_storage_fetch_window_for_latest_all_operators(
+                    end_date=route.end_date,
+                    frequency=route.storage_frequency,
+                )
+            )
+            if (
+                fallback_fetch_start_date != fetch_start_date
+                or fallback_fetch_end_date != fetch_end_date
+            ):
+                logger.info(
+                    "storage_execute empty_result_retry dataset=%s metric=%s retry_fetch=%s..%s",
+                    route.storage_dataset,
+                    route.primary_metric,
+                    fallback_fetch_start_date,
+                    fallback_fetch_end_date,
+                )
+                result = self.execute(
+                    ExecuteRequest(
+                        metric=route.primary_metric,
+                        start=fallback_fetch_start_date,
+                        end=fallback_fetch_end_date,
+                        filters=filters,
+                    )
+                )
+                latest_available_fallback = True
+                fetch_start_date = fallback_fetch_start_date
+                fetch_end_date = fallback_fetch_end_date
         if result.meta is None:
             result.meta = {}
         result.meta.update(
@@ -362,6 +436,9 @@ class MetricExecutor:
                 "requested_end_date": requested_end_date,
                 "fetch_start_date": fetch_start_date,
                 "fetch_end_date": fetch_end_date,
+                "latest_available_fallback": latest_available_fallback,
+                "fallback_fetch_start_date": fallback_fetch_start_date,
+                "fallback_fetch_end_date": fallback_fetch_end_date,
             }
         )
         if result.df is not None and "region" in result.df.columns:
