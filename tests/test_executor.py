@@ -564,8 +564,9 @@ class TestMetricExecutor(unittest.TestCase):
             )
         )
 
-        self.assertEqual(eia.underground_storage_all_operators.call_count, 39)
+        self.assertEqual(eia.underground_storage_all_operators.call_count, 30)
         self.assertNotIn("united_states_total", set(result.df["state"]))
+        self.assertNotIn("nj", set(result.df["state"]))
 
     def test_execute_storage_route_for_state_storage_attaches_state_metadata(self) -> None:
         eia = Mock()

@@ -182,7 +182,7 @@ def _storage_download_links_for_source(source) -> list[tuple[str, str]]:
         frequency = str(params.get("frequency") or "").strip().lower()
         url = _UNDERGROUND_STORAGE_DOWNLOAD_URLS.get((metric_type, frequency))
         if url:
-            return [("Source", url)]
+            return [("EIA Underground Natural Gas Storage by State", url)]
 
     return []
 
