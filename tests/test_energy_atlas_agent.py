@@ -19,6 +19,8 @@ def _route(**overrides) -> EnergyRouteResult:
         "storage_dataset": "weekly_working_gas",
         "storage_frequency": "weekly",
         "storage_metric_type": "working_gas",
+        "storage_type": None,
+        "storage_types_all": False,
         "regions": ["lower48"],
         "states": [],
         "states_all": False,
@@ -150,6 +152,40 @@ class TestEnergyAtlasAgent(unittest.TestCase):
         routed = executor.execute_storage_route.call_args.args[0]
         self.assertEqual(routed.regions, ["east", "midwest"])
         self.assertEqual(routed.filters["regions"], ["east", "midwest"])
+
+    def test_storage_route_passes_storage_type_filters_into_executor(self) -> None:
+        executor = Mock()
+        metric_result = Mock(df=Mock(), source=Mock(reference="ref:test"), meta={})
+        executor.execute_storage_route.return_value = metric_result
+        route_fn = Mock(
+            return_value=_route(
+                primary_metric="underground_storage_by_type_working_gas_monthly",
+                storage_dataset="underground_storage_by_type",
+                storage_frequency="monthly",
+                storage_metric_type="working_gas",
+                storage_type="salt_cavern",
+                storage_types_all=False,
+                regions=[],
+                filters={
+                    "storage_dataset": "underground_storage_by_type",
+                    "storage_frequency": "monthly",
+                    "storage_metric_type": "working_gas",
+                    "storage_type": "salt_cavern",
+                    "storage_types_all": False,
+                },
+            )
+        )
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=Mock(return_value=Mock()),
+        )
+
+        agent.run(user_query="What is working gas storage in salt caverns?")
+
+        routed = executor.execute_storage_route.call_args.args[0]
+        self.assertEqual(routed.filters["storage_type"], "salt_cavern")
+        self.assertFalse(routed.filters["storage_types_all"])
 
 
 if __name__ == "__main__":

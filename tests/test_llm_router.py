@@ -66,7 +66,7 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.value_type, "level")
         self.assertEqual(route.chart_type, "line")
         self.assertEqual(route.output_mode, "chart_and_answer")
-        self.assertEqual(route.start_date, "2021-06-03")
+        self.assertEqual(route.start_date, "2021-06-09")
         self.assertEqual(route.end_date, date.today().isoformat())
 
     def test_how_has_midwest_storage_changed_since_2021_is_time_series(self) -> None:
@@ -358,6 +358,93 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.states, ["pa"])
         self.assertEqual(route.primary_metric, "underground_storage_working_gas_yoy_pct_change_monthly")
         self.assertEqual(route.comparisons, ["none"])
+
+    def test_compare_working_gas_storage_by_type(self) -> None:
+        route = route_query("Compare working gas storage by type.")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_frequency, "monthly")
+        self.assertEqual(route.storage_metric_type, "working_gas")
+        self.assertIsNone(route.storage_type)
+        self.assertTrue(route.storage_types_all)
+        self.assertEqual(route.analysis_type, "regional_compare")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.output_mode, "chart_and_answer")
+        self.assertEqual(route.primary_metric, "underground_storage_by_type_working_gas_monthly")
+        self.assertEqual(
+            route.filters,
+            {
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": None,
+                "storage_types_all": True,
+            },
+        )
+
+    def test_rank_storage_types_by_base_gas_storage(self) -> None:
+        route = route_query("Rank storage types by base gas storage.")
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_metric_type, "base_gas")
+        self.assertTrue(route.storage_types_all)
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.primary_metric, "underground_storage_by_type_base_gas_monthly")
+
+    def test_working_gas_storage_in_salt_caverns(self) -> None:
+        route = route_query("What is working gas storage in salt caverns?")
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_metric_type, "working_gas")
+        self.assertEqual(route.storage_type, "salt_cavern")
+        self.assertFalse(route.storage_types_all)
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.chart_type, "none")
+        self.assertEqual(route.output_mode, "answer")
+
+    def test_salt_cavern_working_gas_storage_since_2015(self) -> None:
+        route = route_query("Show salt cavern working gas storage since 2015.")
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_metric_type, "working_gas")
+        self.assertEqual(route.storage_type, "salt_cavern")
+        self.assertFalse(route.storage_types_all)
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.start_date, "2015-01-01")
+
+    def test_working_gas_storage_by_type_since_2015(self) -> None:
+        route = route_query("Show working gas storage by type since 2015.")
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_metric_type, "working_gas")
+        self.assertIsNone(route.storage_type)
+        self.assertTrue(route.storage_types_all)
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.start_date, "2015-01-01")
+
+    def test_aquifer_base_gas_storage(self) -> None:
+        route = route_query("What is aquifer base gas storage?")
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_metric_type, "base_gas")
+        self.assertEqual(route.storage_type, "aquifer")
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.primary_metric, "underground_storage_by_type_base_gas_monthly")
+
+    def test_compare_annual_injections_by_storage_type(self) -> None:
+        route = route_query("Compare annual injections by storage type.")
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_frequency, "annual")
+        self.assertEqual(route.storage_metric_type, "injections")
+        self.assertTrue(route.storage_types_all)
+        self.assertEqual(route.analysis_type, "regional_compare")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.primary_metric, "underground_storage_by_type_injections_annual")
 
 
 if __name__ == "__main__":

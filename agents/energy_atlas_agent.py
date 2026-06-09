@@ -69,6 +69,8 @@ class EnergyAtlasAgent:
         filters["storage_dataset"] = route.storage_dataset
         filters["storage_frequency"] = route.storage_frequency
         filters["storage_metric_type"] = route.storage_metric_type
+        filters["storage_type"] = route.storage_type
+        filters["storage_types_all"] = route.storage_types_all
         prepared_route = replace(route, filters=filters)
         if DEBUG_ENABLED:
             logger.info(

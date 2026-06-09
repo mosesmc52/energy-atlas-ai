@@ -39,6 +39,7 @@ STORAGE_REGIONS: Final[tuple[str, ...]] = (
 STORAGE_DATASETS: Final[tuple[str, ...]] = (
     "weekly_working_gas",
     "underground_storage_all_operators",
+    "underground_storage_by_type",
 )
 
 STORAGE_FREQUENCIES: Final[tuple[str, ...]] = (
@@ -56,6 +57,12 @@ STORAGE_METRIC_TYPES: Final[tuple[str, ...]] = (
     "withdrawals",
     "working_gas_yoy_volume_change",
     "working_gas_yoy_pct_change",
+)
+
+STORAGE_TYPES: Final[tuple[str, ...]] = (
+    "salt_cavern",
+    "depleted_field",
+    "aquifer",
 )
 
 UNDERGROUND_STORAGE_STATES: Final[tuple[str, ...]] = (
@@ -150,7 +157,23 @@ UNDERGROUND_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], st
     ("working_gas_yoy_pct_change", "annual"): "underground_storage_working_gas_yoy_pct_change_annual",
 }
 
+UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
+    ("working_gas", "monthly"): "underground_storage_by_type_working_gas_monthly",
+    ("base_gas", "monthly"): "underground_storage_by_type_base_gas_monthly",
+    ("total_gas", "monthly"): "underground_storage_by_type_total_gas_monthly",
+    ("injections", "monthly"): "underground_storage_by_type_injections_monthly",
+    ("withdrawals", "monthly"): "underground_storage_by_type_withdrawals_monthly",
+    ("net_withdrawals", "monthly"): "underground_storage_by_type_net_withdrawals_monthly",
+    ("working_gas", "annual"): "underground_storage_by_type_working_gas_annual",
+    ("base_gas", "annual"): "underground_storage_by_type_base_gas_annual",
+    ("total_gas", "annual"): "underground_storage_by_type_total_gas_annual",
+    ("injections", "annual"): "underground_storage_by_type_injections_annual",
+    ("withdrawals", "annual"): "underground_storage_by_type_withdrawals_annual",
+    ("net_withdrawals", "annual"): "underground_storage_by_type_net_withdrawals_annual",
+}
+
 SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(
     list(STORAGE_METRIC_BY_VALUE_TYPE.values())
     + list(UNDERGROUND_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
+    + list(UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY.values())
 )

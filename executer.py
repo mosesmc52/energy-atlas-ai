@@ -54,7 +54,7 @@ def _expand_storage_fetch_window_for_baseline(
 def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset != "underground_storage_all_operators":
+    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type"}:
         return False
     if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
         return False
@@ -80,7 +80,7 @@ def _storage_should_retry_with_latest_available_all_operators(
 ) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset != "underground_storage_all_operators":
+    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type"}:
         return False
     if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
         return False
@@ -150,6 +150,34 @@ def _resolve_storage_states(states: list[str], states_all: bool) -> list[str]:
         if state not in resolved_states:
             resolved_states.append(state)
     return resolved_states or ["united_states_total"]
+
+
+def _normalize_storage_types(filters: dict) -> list[str]:
+    raw_storage_types = filters.get("storage_types")
+    storage_types_all = bool(filters.get("storage_types_all"))
+    storage_type = filters.get("storage_type")
+    if raw_storage_types is None:
+        raw_storage_types = [storage_type] if storage_type else []
+    elif isinstance(raw_storage_types, str):
+        raw_storage_types = [raw_storage_types]
+
+    if storage_types_all:
+        return list(EIAAdapter.STORAGE_TYPES)
+
+    resolved_storage_types: list[str] = []
+    for raw_storage_type in raw_storage_types or []:
+        value = str(raw_storage_type or "").strip().lower()
+        if not value:
+            continue
+        if value == "all":
+            return list(EIAAdapter.STORAGE_TYPES)
+        if value not in EIAAdapter.STORAGE_TYPES:
+            raise ValueError(
+                f"Invalid storage type '{value}'. Expected one of: {sorted(EIAAdapter.STORAGE_TYPES)}"
+            )
+        if value not in resolved_storage_types:
+            resolved_storage_types.append(value)
+    return resolved_storage_types
 
 
 def _concat_storage_region_results(results: list[EIAResult]) -> EIAResult:
@@ -256,6 +284,58 @@ def _concat_storage_state_results(results: list[EIAResult]) -> EIAResult:
     )
 
 
+def _concat_storage_type_results(results: list[EIAResult]) -> EIAResult:
+    frames: list[pd.DataFrame] = []
+    source_references: list[str] = []
+    storage_type_meta: dict[str, Any] = {}
+
+    for result in results:
+        raw_params = result.source.parameters or {}
+        params = raw_params if isinstance(raw_params, dict) else {}
+        storage_type = str(params.get("storage_type") or "").strip().lower()
+        source_references.append(result.source.reference)
+        if storage_type:
+            storage_type_meta[storage_type] = result.meta or {}
+
+        if result.df is None or result.df.empty:
+            continue
+        frame = result.df.copy()
+        if "storage_type" not in frame.columns:
+            frame["storage_type"] = storage_type
+        frames.append(frame[["date", "value", "storage_type"]].copy())
+
+    df = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["date", "value", "storage_type"])
+    )
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df["storage_type"] = df["storage_type"].astype(str)
+        df = df.dropna(subset=["date", "value", "storage_type"]).sort_values(
+            ["storage_type", "date"]
+        ).reset_index(drop=True)
+    storage_types = [value for value in storage_type_meta if value]
+    source = SourceRef(
+        source_type="eia_api",
+        label="EIA Underground Natural Gas Storage by Type",
+        reference="eia-ng-client:natural_gas.underground_storage_type",
+        parameters={
+            "storage_types": storage_types,
+            "source_references": source_references,
+        },
+    )
+    return EIAResult(
+        df=df,
+        source=source,
+        meta={
+            "storage_types": storage_type_meta,
+            "source_references": source_references,
+        },
+    )
+
+
 class MetricExecutor:
     """
     Deterministic dispatcher: metric -> implementation.
@@ -288,6 +368,18 @@ class MetricExecutor:
             "underground_storage_withdrawals_annual": self._eia_underground_storage_all_operators,
             "underground_storage_working_gas_yoy_volume_change_annual": self._eia_underground_storage_all_operators,
             "underground_storage_working_gas_yoy_pct_change_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_by_type_working_gas_monthly": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_base_gas_monthly": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_total_gas_monthly": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_injections_monthly": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_withdrawals_monthly": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_net_withdrawals_monthly": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_working_gas_annual": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_base_gas_annual": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_total_gas_annual": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_injections_annual": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_withdrawals_annual": self._eia_underground_storage_by_type,
+            "underground_storage_by_type_net_withdrawals_annual": self._eia_underground_storage_by_type,
             "henry_hub_spot": self._eia_henry_hub_spot,
             "lng_exports": self._eia_lng_exports,
             "lng_imports": self._eia_lng_imports,
@@ -347,6 +439,8 @@ class MetricExecutor:
         filters["storage_dataset"] = route.storage_dataset
         filters["storage_frequency"] = route.storage_frequency
         filters["storage_metric_type"] = route.storage_metric_type
+        filters["storage_type"] = route.storage_type
+        filters["storage_types_all"] = bool(route.storage_types_all or filters.get("storage_types_all"))
         if route.storage_dataset == "weekly_working_gas" and route.analysis_type in {"regional_compare", "ranking"}:
             filters["regions"] = ["all"]
         requested_start_date = route.start_date
@@ -425,6 +519,8 @@ class MetricExecutor:
                 "storage_dataset": route.storage_dataset,
                 "storage_frequency": route.storage_frequency,
                 "storage_metric_type": route.storage_metric_type,
+                "storage_type": route.storage_type,
+                "storage_types_all": route.storage_types_all,
                 "chart_type": route.chart_type,
                 "output_mode": route.output_mode,
                 "regions": list(route.regions or []),
@@ -451,6 +547,12 @@ class MetricExecutor:
             logger.info(
                 "storage_execute result_states=%s rows=%s",
                 sorted(result.df["state"].dropna().astype(str).unique().tolist()),
+                len(result.df),
+            )
+        if result.df is not None and "storage_type" in result.df.columns:
+            logger.info(
+                "storage_execute result_storage_types=%s rows=%s",
+                sorted(result.df["storage_type"].dropna().astype(str).unique().tolist()),
                 len(result.df),
             )
         return result
@@ -640,6 +742,45 @@ class MetricExecutor:
                 EIAResult(df=frame, source=state_result.source, meta=state_result.meta)
             )
         return _concat_storage_state_results(results)
+
+    def _eia_underground_storage_by_type(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        storage_types = _normalize_storage_types(filters)
+        metric_type = str(filters.get("storage_metric_type") or "working_gas")
+        frequency = str(filters.get("storage_frequency") or "monthly")
+
+        if len(storage_types) == 1:
+            storage_type = storage_types[0]
+            result = self.eia.underground_storage_by_type(
+                start=start,
+                end=end,
+                storage_type=storage_type,
+                metric_type=metric_type,
+                frequency=frequency,
+            )
+            frame = result.df.copy() if result.df is not None else pd.DataFrame(columns=["date", "value"])
+            if "storage_type" not in frame.columns:
+                frame["storage_type"] = storage_type
+            frame = frame[["date", "value", "storage_type"]]
+            return EIAResult(df=frame, source=result.source, meta=result.meta)
+
+        results = []
+        for storage_type in storage_types:
+            type_result = self.eia.underground_storage_by_type(
+                start=start,
+                end=end,
+                storage_type=storage_type,
+                metric_type=metric_type,
+                frequency=frequency,
+            )
+            frame = type_result.df.copy() if type_result.df is not None else pd.DataFrame(columns=["date", "value"])
+            if not frame.empty:
+                frame["storage_type"] = storage_type
+            results.append(
+                EIAResult(df=frame, source=type_result.source, meta=type_result.meta)
+            )
+        return _concat_storage_type_results(results)
 
     def _eia_henry_hub_spot(
         self, *, start: str, end: str, filters: Dict[str, Any]

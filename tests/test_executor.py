@@ -18,6 +18,8 @@ def _storage_route(**overrides) -> EnergyRouteResult:
         "storage_dataset": "weekly_working_gas",
         "storage_frequency": "weekly",
         "storage_metric_type": "working_gas",
+        "storage_type": None,
+        "storage_types_all": False,
         "regions": ["lower48"],
         "states": [],
         "states_all": False,
@@ -60,6 +62,19 @@ def _state_storage_result(state: str, value: float = 10.0) -> EIAResult:
             label=f"Storage {state}",
             reference=f"ref:{state}",
             parameters={"state": state},
+        ),
+        meta={"units": "MMcf"},
+    )
+
+
+def _storage_type_result(storage_type: str, value: float = 10.0) -> EIAResult:
+    return EIAResult(
+        df=pd.DataFrame([{"date": "2024-01-31", "value": value}]),
+        source=SourceRef(
+            source_type="eia_api",
+            label=f"Storage {storage_type}",
+            reference=f"ref:{storage_type}",
+            parameters={"storage_type": storage_type, "eia_storage_type": storage_type},
         ),
         meta={"units": "MMcf"},
     )
@@ -598,6 +613,73 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(result.meta["storage_metric_type"], "working_gas")
         self.assertEqual(result.meta["states"], ["tx", "la"])
         self.assertFalse(result.meta["states_all"])
+
+    def test_execute_storage_route_for_storage_by_type_uses_storage_type_filters(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.return_value = _storage_type_result("salt_cavern")
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="latest",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type="salt_cavern",
+            storage_types_all=False,
+            start_date=None,
+            regions=[],
+            states=[],
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": "salt_cavern",
+                "storage_types_all": False,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        eia.underground_storage_by_type.assert_called_once_with(
+            start="2024-06-01",
+            end="2026-06-01",
+            storage_type="salt_cavern",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["storage_type"].tolist(), ["salt_cavern"])
+        self.assertEqual(result.meta["storage_type"], "salt_cavern")
+        self.assertFalse(result.meta["storage_types_all"])
+
+    def test_storage_by_type_all_expands_in_executor(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.side_effect = lambda storage_type, **kwargs: _storage_type_result(storage_type)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type=None,
+            storage_types_all=True,
+            regions=[],
+            states=[],
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": None,
+                "storage_types_all": True,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_by_type.call_count, 3)
+        self.assertEqual(set(result.df["storage_type"]), {"salt_cavern", "depleted_field", "aquifer"})
 
     def test_weather_forecast_metric_passes_region_filter(self) -> None:
         eia = Mock()
