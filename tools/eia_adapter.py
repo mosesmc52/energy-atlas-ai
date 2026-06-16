@@ -662,6 +662,20 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             storage_type=eia_storage_type,
             frequency=frequency,
         )
+        derived_from_monthly = False
+        if not rows and frequency == "annual":
+            monthly_start = pd.Timestamp(start).strftime("%Y-01")
+            monthly_end = pd.Timestamp(end).strftime("%Y-12")
+            monthly_rows = self.client.natural_gas.underground_storage_type(
+                start=monthly_start,
+                end=monthly_end,
+                storage_type=eia_storage_type,
+                frequency="monthly",
+            )
+            rows = monthly_rows
+            request_start = monthly_start
+            request_end = monthly_end
+            derived_from_monthly = True
         if not rows:
             out = pd.DataFrame(columns=["date", "value", "storage_type"])
         else:
@@ -673,6 +687,21 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             out["date"] = pd.to_datetime(out["date"], errors="coerce")
             out["value"] = pd.to_numeric(out["value"], errors="coerce")
             out = out.dropna(subset=["date", "value"])
+            if derived_from_monthly:
+                out["year"] = out["date"].dt.year
+                if metric_type in {"injections", "withdrawals", "net_withdrawals"}:
+                    out = (
+                        out.groupby("year", as_index=False)["value"]
+                        .sum()
+                        .assign(date=lambda frame: pd.to_datetime(frame["year"].astype(str) + "-01-01"))
+                    )
+                else:
+                    out = (
+                        out.sort_values("date")
+                        .groupby("year", as_index=False)
+                        .tail(1)[["year", "date", "value"]]
+                        .reset_index(drop=True)
+                    )
             out["storage_type"] = storage_type
             out = out[["date", "value", "storage_type"]].reset_index(drop=True)
 
@@ -691,9 +720,15 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                     "frequency": frequency,
                     "start": request_start,
                     "end": request_end,
+                    "derived_from_monthly": derived_from_monthly,
                 },
             ),
-            meta={"units": "MMcf", "frequency": frequency, "metric_type": metric_type},
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": metric_type,
+                "derived_from_monthly": derived_from_monthly,
+            },
         )
 
     def get_weather_metric(

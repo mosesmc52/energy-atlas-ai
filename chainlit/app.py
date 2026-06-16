@@ -347,6 +347,55 @@ def format_summary_cards(metrics: list[dict]) -> str:
     return "\n".join([label_row, divider, value_row, subtitle_row])
 
 
+def format_grouped_timeseries_summary_table(
+    df: pd.DataFrame,
+    *,
+    group_field: str,
+    group_label: str,
+    unit: str | None = None,
+) -> str:
+    if (
+        df is None
+        or df.empty
+        or group_field not in df.columns
+        or "date" not in df.columns
+        or "value" not in df.columns
+    ):
+        return ""
+
+    scoped = df.copy()
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
+    scoped[group_field] = scoped[group_field].astype(str)
+    scoped = scoped.dropna(subset=["date", "value", group_field]).sort_values([group_field, "date"])
+    if scoped.empty:
+        return ""
+
+    headers = [group_label, "Latest", "Previous", "Low", "High", "5Y Avg"]
+    divider = "| " + " | ".join(["---"] * len(headers)) + " |"
+    rows = ["| " + " | ".join(headers) + " |", divider]
+
+    for group_value, group_df in scoped.groupby(group_field, sort=False):
+        metrics = compute_timeseries_summary_metrics(group_df, unit=unit)
+        metric_map = {
+            str(metric.get("label") or ""): metric
+            for metric in metrics
+            if isinstance(metric, dict)
+        }
+        display_label = str(group_value).replace("_", " ").title()
+        row = [
+            display_label,
+            _format_card_value(metric_map.get("Latest", {}).get("value"), str(metric_map.get("Latest", {}).get("unit") or "")) or "",
+            _format_card_value(metric_map.get("Previous", {}).get("value"), str(metric_map.get("Previous", {}).get("unit") or "")) or "",
+            _format_card_value(metric_map.get("Low", {}).get("value"), str(metric_map.get("Low", {}).get("unit") or "")) or "",
+            _format_card_value(metric_map.get("High", {}).get("value"), str(metric_map.get("High", {}).get("unit") or "")) or "",
+            _format_card_value(metric_map.get("5Y Avg", {}).get("value"), str(metric_map.get("5Y Avg", {}).get("unit") or "")) or "",
+        ]
+        rows.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(rows)
+
+
 def format_response(data: StructuredAnswer | dict) -> str:
     if isinstance(data, str):
         raw = data.strip()
@@ -1018,15 +1067,26 @@ async def on_message(message: cl.Message):
             )
 
             summary_metrics = []
+            summary_table = ""
             if should_render_storage_change_summary_cards(payload.chart_spec):
                 summary_metrics = compute_storage_change_summary_metrics(chart_df)
             elif should_render_timeseries_summary_cards(payload.chart_spec):
-                summary_metrics = compute_timeseries_summary_metrics(
-                    chart_df,
-                    unit=getattr(payload.chart_spec.y, "units", None),
-                )
+                if "storage_type" in chart_df.columns:
+                    summary_table = format_grouped_timeseries_summary_table(
+                        chart_df,
+                        group_field="storage_type",
+                        group_label="Storage Type",
+                        unit=getattr(payload.chart_spec.y, "units", None),
+                    )
+                else:
+                    summary_metrics = compute_timeseries_summary_metrics(
+                        chart_df,
+                        unit=getattr(payload.chart_spec.y, "units", None),
+                    )
 
-            if summary_metrics:
+            if summary_table:
+                await cl.Message(content=summary_table).send()
+            elif summary_metrics:
                 summary_cards = format_summary_cards(summary_metrics)
                 if summary_cards:
                     await cl.Message(content=summary_cards).send()

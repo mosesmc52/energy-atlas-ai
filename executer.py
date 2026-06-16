@@ -9,6 +9,7 @@ import pandas as pd
 from schemas.answer import SourceRef
 from agents.router import EnergyRouteResult
 from tools.eia_adapter import EIAAdapter, EIAResult
+from utils.dates import has_explicit_date_reference
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,17 @@ def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) ->
         return False
     if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
         return False
-    return not bool(route.start_date)
+    return not has_explicit_date_reference(str(route.normalized_query or ""))
+
+
+def _storage_should_expand_for_default_time_series_history(route: EnergyRouteResult) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset != "underground_storage_by_type":
+        return False
+    if route.analysis_type != "time_series":
+        return False
+    return not has_explicit_date_reference(str(route.normalized_query or ""))
 
 
 def _expand_storage_fetch_window_for_latest_all_operators(
@@ -86,6 +97,32 @@ def _storage_should_retry_with_latest_available_all_operators(
         return False
     df = getattr(result, "df", None)
     return df is None or df.empty
+
+
+def _storage_should_retry_with_latest_available_time_series(
+    route: EnergyRouteResult,
+    result: MetricResult,
+) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type"}:
+        return False
+    if route.analysis_type != "time_series":
+        return False
+    if has_explicit_date_reference(str(route.normalized_query or "")):
+        return False
+    df = getattr(result, "df", None)
+    return df is None or df.empty
+
+
+def _latest_completed_storage_end_date(*, end_date: str | None, frequency: str) -> str:
+    resolved_end = pd.Timestamp(end_date or date.today().isoformat())
+    if frequency == "annual":
+        fallback_end = pd.Timestamp(year=resolved_end.year - 1, month=12, day=31)
+    else:
+        current_month_start = pd.Timestamp(year=resolved_end.year, month=resolved_end.month, day=1)
+        fallback_end = current_month_start - pd.Timedelta(days=1)
+    return fallback_end.date().isoformat()
 
 
 def _normalize_storage_regions(filters: dict) -> list[str]:
@@ -453,6 +490,12 @@ class MetricExecutor:
                 end_date=route.end_date,
                 years=6,
             )
+        elif _storage_should_expand_for_default_time_series_history(route):
+            fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_baseline(
+                start_date=route.start_date,
+                end_date=route.end_date,
+                years=6,
+            )
         elif _storage_should_expand_for_latest_all_operators(route):
             fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_latest_all_operators(
                 end_date=route.end_date,
@@ -492,6 +535,40 @@ class MetricExecutor:
             ):
                 logger.info(
                     "storage_execute empty_result_retry dataset=%s metric=%s retry_fetch=%s..%s",
+                    route.storage_dataset,
+                    route.primary_metric,
+                    fallback_fetch_start_date,
+                    fallback_fetch_end_date,
+                )
+                result = self.execute(
+                    ExecuteRequest(
+                        metric=route.primary_metric,
+                        start=fallback_fetch_start_date,
+                        end=fallback_fetch_end_date,
+                        filters=filters,
+                    )
+                )
+                latest_available_fallback = True
+                fetch_start_date = fallback_fetch_start_date
+                fetch_end_date = fallback_fetch_end_date
+        elif _storage_should_retry_with_latest_available_time_series(route, result):
+            latest_completed_end_date = _latest_completed_storage_end_date(
+                end_date=route.end_date,
+                frequency=route.storage_frequency,
+            )
+            fallback_fetch_start_date, fallback_fetch_end_date = (
+                _expand_storage_fetch_window_for_baseline(
+                    start_date=None,
+                    end_date=latest_completed_end_date,
+                    years=6,
+                )
+            )
+            if (
+                fallback_fetch_start_date != fetch_start_date
+                or fallback_fetch_end_date != fetch_end_date
+            ):
+                logger.info(
+                    "storage_execute empty_time_series_retry dataset=%s metric=%s retry_fetch=%s..%s",
                     route.storage_dataset,
                     route.primary_metric,
                     fallback_fetch_start_date,

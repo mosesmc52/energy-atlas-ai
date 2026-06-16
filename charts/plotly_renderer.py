@@ -535,6 +535,9 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
     elif "state" in scoped.columns:
         required.append("state")
         color_field = "state"
+    elif "storage_type" in scoped.columns:
+        required.append("storage_type")
+        color_field = "storage_type"
     scoped = scoped.dropna(subset=required)
     sort_cols = ["date"]
     if color_field:

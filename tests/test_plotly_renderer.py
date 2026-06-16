@@ -90,6 +90,7 @@ class TestPlotlyRenderer(unittest.TestCase):
         fig = render_plotly(spec, df)
 
         self.assertEqual({trace.name for trace in fig.data}, {"salt cavern", "depleted field"})
+        self.assertEqual(len(fig.data), 2)
 
     def test_line_chart_can_overlay_forecast_trace(self) -> None:
         df = pd.DataFrame(

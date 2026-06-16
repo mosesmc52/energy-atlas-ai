@@ -156,6 +156,7 @@ NORMAL_RANKING_TERMS = (
 RANKING_INTENT_TERMS = (
     "which region",
     "which state",
+    "which storage type",
     "rank",
     "ranking",
     "by region",
@@ -377,7 +378,7 @@ def _parse_storage_metric_type_from_text(
         return "working_gas_yoy_volume_change"
     if any(term in normalized_query for term in ("net withdrawals", "net withdrawal", "net withdrawls")):
         return "net_withdrawals"
-    if any(term in normalized_query for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal")):
+    if any(term in normalized_query for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal", "withdrew")):
         return "withdrawals"
     if any(term in normalized_query for term in ("injections", "injected", "injection")):
         return "injections"

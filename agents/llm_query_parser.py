@@ -49,6 +49,18 @@ STORAGE_TERMS = (
     "working gas",
     "inventor",
     "inventories",
+    "stored in",
+    "storage type",
+    "storage types",
+    "aquifer",
+    "aquifers",
+    "salt cavern",
+    "salt caverns",
+    "salt storage",
+    "depleted field",
+    "depleted fields",
+    "depleted reservoir",
+    "depleted reservoirs",
 )
 
 NON_STORAGE_NATGAS_TERMS = (
@@ -356,7 +368,7 @@ def _parse_storage_metric_type(q: str) -> str:
         return "working_gas_yoy_volume_change"
     if any(term in q for term in ("net withdrawals", "net withdrawal", "net withdrawls")):
         return "net_withdrawals"
-    if any(term in q for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal")):
+    if any(term in q for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal", "withdrew")):
         return "withdrawals"
     if any(term in q for term in ("injections", "injected", "injection")):
         return "injections"
@@ -441,12 +453,18 @@ def _parse_analysis_type(
     storage_types_all: bool,
 ) -> str:
     if storage_dataset == "underground_storage_by_type":
-        if any(term in q for term in ("rank", "ranking", "rank storage types")):
+        if any(term in q for term in ("rank", "ranking", "rank storage types", "which storage type")):
             return "ranking"
-        if storage_types_all and any(term in q for term in ("compare", "by type", "storage type", "storage types")):
-            return "regional_compare"
         if _has_explicit_time_series_request(q):
             return "time_series"
+        if (
+            storage_types_all
+            and not any(term in q for term in ("compare", "which storage type"))
+            and _contains_any(q, MONTHLY_FREQUENCY_TERMS + ANNUAL_FREQUENCY_TERMS)
+        ):
+            return "time_series"
+        if storage_types_all and any(term in q for term in ("compare", "by type", "storage type", "storage types")):
+            return "regional_compare"
         if storage_types_all:
             return "regional_compare"
         if storage_type:
