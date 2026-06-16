@@ -83,6 +83,131 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
         self.assertEqual(result.source.parameters["start"], "2024")
         self.assertEqual(result.source.parameters["end"], "2024")
 
+    @patch("tools.eia_adapter.EIAClient")
+    def test_underground_storage_by_type_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.underground_storage_type.return_value = [
+            {"period": "2024-01", "value": "123.4"},
+            {"period": "2024-02", "value": "124.5"},
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.underground_storage_by_type(
+            start="2024-01-15",
+            end="2024-12-20",
+            storage_type="salt_cavern",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+
+        client.natural_gas.underground_storage_type.assert_called_once_with(
+            start="2024-01",
+            end="2024-12",
+            storage_type="salt_working_gas",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["storage_type"].tolist(), ["salt_cavern", "salt_cavern"])
+        self.assertEqual(result.df["value"].tolist(), [123.4, 124.5])
+        self.assertEqual(
+            result.df["date"].dt.strftime("%Y-%m-%d").tolist(),
+            ["2024-01-01", "2024-02-01"],
+        )
+        self.assertEqual(
+            result.source.reference,
+            "eia-ng-client:natural_gas.underground_storage_type",
+        )
+        self.assertEqual(result.source.parameters["storage_type"], "salt_cavern")
+        self.assertEqual(result.source.parameters["eia_storage_type"], "salt_working_gas")
+        self.assertEqual(result.source.parameters["start"], "2024-01")
+        self.assertEqual(result.source.parameters["end"], "2024-12")
+        self.assertEqual(result.meta["units"], "MMcf")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_underground_storage_by_type_annual_falls_back_to_monthly_last_value_for_stock_metrics(
+        self, mock_client_cls: Mock
+    ) -> None:
+        client = Mock()
+        client.natural_gas.underground_storage_type.side_effect = [
+            [],
+            [
+                {"period": "2024-01", "value": "100.0"},
+                {"period": "2024-12", "value": "200.0"},
+                {"period": "2025-01", "value": "300.0"},
+                {"period": "2025-12", "value": "400.0"},
+            ],
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.underground_storage_by_type(
+            start="2024-01-15",
+            end="2025-12-20",
+            storage_type="salt_cavern",
+            metric_type="working_gas",
+            frequency="annual",
+        )
+
+        self.assertEqual(client.natural_gas.underground_storage_type.call_count, 2)
+        first_call = client.natural_gas.underground_storage_type.call_args_list[0]
+        second_call = client.natural_gas.underground_storage_type.call_args_list[1]
+        self.assertEqual(
+            first_call.kwargs,
+            {
+                "start": "2024",
+                "end": "2025",
+                "storage_type": "salt_working_gas",
+                "frequency": "annual",
+            },
+        )
+        self.assertEqual(
+            second_call.kwargs,
+            {
+                "start": "2024-01",
+                "end": "2025-12",
+                "storage_type": "salt_working_gas",
+                "frequency": "monthly",
+            },
+        )
+        self.assertEqual(result.df["value"].tolist(), [200.0, 400.0])
+        self.assertEqual(
+            result.df["date"].dt.strftime("%Y-%m-%d").tolist(),
+            ["2024-12-01", "2025-12-01"],
+        )
+        self.assertTrue(result.meta["derived_from_monthly"])
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_underground_storage_by_type_annual_falls_back_to_monthly_sum_for_flow_metrics(
+        self, mock_client_cls: Mock
+    ) -> None:
+        client = Mock()
+        client.natural_gas.underground_storage_type.side_effect = [
+            [],
+            [
+                {"period": "2024-01", "value": "10.0"},
+                {"period": "2024-12", "value": "20.0"},
+                {"period": "2025-01", "value": "30.0"},
+                {"period": "2025-12", "value": "40.0"},
+            ],
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.underground_storage_by_type(
+            start="2024-01-15",
+            end="2025-12-20",
+            storage_type="salt_cavern",
+            metric_type="withdrawals",
+            frequency="annual",
+        )
+
+        self.assertEqual(result.df["value"].tolist(), [30.0, 70.0])
+        self.assertEqual(
+            result.df["date"].dt.strftime("%Y-%m-%d").tolist(),
+            ["2024-01-01", "2025-01-01"],
+        )
+        self.assertTrue(result.meta["derived_from_monthly"])
+
 
 if __name__ == "__main__":
     unittest.main()

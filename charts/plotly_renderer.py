@@ -50,6 +50,10 @@ def _bucket_label(series: pd.Series) -> pd.Series:
     return text.str.replace("_", " ", regex=False)
 
 
+def _category_label(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.replace("_", " ", regex=False)
+
+
 def compute_storage_change_summary_metrics(
     df: pd.DataFrame,
     *,
@@ -531,6 +535,9 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
     elif "state" in scoped.columns:
         required.append("state")
         color_field = "state"
+    elif "storage_type" in scoped.columns:
+        required.append("storage_type")
+        color_field = "storage_type"
     scoped = scoped.dropna(subset=required)
     sort_cols = ["date"]
     if color_field:
@@ -909,7 +916,7 @@ def render_plotly(
     elif chart_type in ("line", "area"):
         color_field = None
         if y_fields == ["value"]:
-            for candidate in ("region", "series"):
+            for candidate in ("region", "series", "storage_type"):
                 if candidate in d.columns:
                     color_field = candidate
                     break
@@ -936,6 +943,9 @@ def render_plotly(
         elif x_field == "bucket":
             bar_x_field = "__bar_x_label"
             d[bar_x_field] = _bucket_label(d[x_field])
+        elif x_field in d.columns and pd.api.types.is_object_dtype(d[x_field]):
+            bar_x_field = "__bar_x_label"
+            d[bar_x_field] = _category_label(d[x_field])
 
         fig = px.bar(d, x=bar_x_field, y=y_fields, title=spec.title, template=template)
         if x_is_datetime:
@@ -1048,6 +1058,10 @@ def render_plotly(
         for i, tr in enumerate(fig.data):
             if i < len(spec.series):
                 tr.name = spec.series[i].name
+
+    for tr in fig.data:
+        if getattr(tr, "name", None):
+            tr.name = str(tr.name).replace("_", " ")
 
     for tr in fig.data:
         if chart_type in {"histogram", "heatmap"}:

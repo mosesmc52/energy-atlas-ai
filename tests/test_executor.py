@@ -18,6 +18,8 @@ def _storage_route(**overrides) -> EnergyRouteResult:
         "storage_dataset": "weekly_working_gas",
         "storage_frequency": "weekly",
         "storage_metric_type": "working_gas",
+        "storage_type": None,
+        "storage_types_all": False,
         "regions": ["lower48"],
         "states": [],
         "states_all": False,
@@ -60,6 +62,19 @@ def _state_storage_result(state: str, value: float = 10.0) -> EIAResult:
             label=f"Storage {state}",
             reference=f"ref:{state}",
             parameters={"state": state},
+        ),
+        meta={"units": "MMcf"},
+    )
+
+
+def _storage_type_result(storage_type: str, value: float = 10.0) -> EIAResult:
+    return EIAResult(
+        df=pd.DataFrame([{"date": "2024-01-31", "value": value}]),
+        source=SourceRef(
+            source_type="eia_api",
+            label=f"Storage {storage_type}",
+            reference=f"ref:{storage_type}",
+            parameters={"storage_type": storage_type, "eia_storage_type": storage_type},
         ),
         meta={"units": "MMcf"},
     )
@@ -414,6 +429,7 @@ class TestMetricExecutor(unittest.TestCase):
             states_all=False,
             start_date="2026-05-01",
             end_date="2026-05-31",
+            normalized_query="what were withdrawals in 2026-05?",
             chart_type="none",
             output_mode="answer",
             filters={
@@ -598,6 +614,263 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(result.meta["storage_metric_type"], "working_gas")
         self.assertEqual(result.meta["states"], ["tx", "la"])
         self.assertFalse(result.meta["states_all"])
+
+    def test_execute_storage_route_for_storage_by_type_uses_storage_type_filters(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.return_value = _storage_type_result("salt_cavern")
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="latest",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type="salt_cavern",
+            storage_types_all=False,
+            start_date=None,
+            regions=[],
+            states=[],
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": "salt_cavern",
+                "storage_types_all": False,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        eia.underground_storage_by_type.assert_called_once_with(
+            start="2024-06-01",
+            end="2026-06-01",
+            storage_type="salt_cavern",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["storage_type"].tolist(), ["salt_cavern"])
+        self.assertEqual(result.meta["storage_type"], "salt_cavern")
+        self.assertFalse(result.meta["storage_types_all"])
+
+    def test_storage_by_type_all_expands_in_executor(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.side_effect = lambda storage_type, **kwargs: _storage_type_result(storage_type)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type=None,
+            storage_types_all=True,
+            regions=[],
+            states=[],
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": None,
+                "storage_types_all": True,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_by_type.call_count, 3)
+        self.assertEqual(set(result.df["storage_type"]), {"salt_cavern", "depleted_field", "aquifer"})
+
+    def test_storage_by_type_time_series_without_explicit_start_gets_history_window(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.return_value = _storage_type_result("salt_cavern")
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="time_series",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type="salt_cavern",
+            storage_types_all=False,
+            start_date="2025-12-16",
+            end_date="2026-06-16",
+            regions=[],
+            states=[],
+            chart_type="line",
+            output_mode="chart_and_answer",
+            normalized_query="plot storage type history.",
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": "salt_cavern",
+                "storage_types_all": False,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        eia.underground_storage_by_type.assert_called_once_with(
+            start="2020-06-16",
+            end="2026-06-16",
+            storage_type="salt_cavern",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+        self.assertEqual(result.meta["fetch_start_date"], "2020-06-16")
+        self.assertEqual(result.meta["fetch_end_date"], "2026-06-16")
+
+    def test_storage_by_type_time_series_with_explicit_start_keeps_requested_window(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.return_value = _storage_type_result("salt_cavern")
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="time_series",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type="salt_cavern",
+            storage_types_all=False,
+            start_date="2015-01-01",
+            end_date="2026-06-16",
+            regions=[],
+            states=[],
+            chart_type="line",
+            output_mode="chart_and_answer",
+            normalized_query="show salt cavern working gas storage since 2015.",
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": "salt_cavern",
+                "storage_types_all": False,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        eia.underground_storage_by_type.assert_called_once_with(
+            start="2015-01-01",
+            end="2026-06-16",
+            storage_type="salt_cavern",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+        self.assertEqual(result.meta["fetch_start_date"], "2015-01-01")
+        self.assertEqual(result.meta["fetch_end_date"], "2026-06-16")
+
+    def test_annual_storage_by_type_compare_without_explicit_date_expands_window(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.return_value = _storage_type_result("salt_cavern")
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            primary_metric="underground_storage_by_type_injections_annual",
+            metrics=["underground_storage_by_type_injections_annual"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="annual",
+            storage_metric_type="injections",
+            storage_type=None,
+            storage_types_all=True,
+            start_date="2025-12-16",
+            end_date="2026-06-16",
+            regions=[],
+            states=[],
+            chart_type="bar",
+            output_mode="chart_and_answer",
+            normalized_query="compare annual injections by storage type.",
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "annual",
+                "storage_metric_type": "injections",
+                "storage_type": None,
+                "storage_types_all": True,
+            },
+        )
+
+        executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_by_type.call_count, 3)
+        for call in eia.underground_storage_by_type.call_args_list:
+            self.assertEqual(call.kwargs["start"], "2016-06-16")
+            self.assertEqual(call.kwargs["end"], "2026-06-16")
+            self.assertEqual(call.kwargs["metric_type"], "injections")
+            self.assertEqual(call.kwargs["frequency"], "annual")
+
+    def test_annual_storage_by_type_time_series_retries_with_latest_completed_year_when_empty(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.side_effect = [
+            EIAResult(
+                df=pd.DataFrame(columns=["date", "value", "storage_type"]),
+                source=SourceRef(
+                    source_type="eia_api",
+                    label="Storage salt",
+                    reference="ref:salt-empty",
+                    parameters={"storage_type": "salt_cavern"},
+                ),
+                meta={"units": "MMcf"},
+            ),
+            _storage_type_result("salt_cavern", value=83.44),
+        ]
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="time_series",
+            primary_metric="underground_storage_by_type_working_gas_annual",
+            metrics=["underground_storage_by_type_working_gas_annual"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="annual",
+            storage_metric_type="working_gas",
+            storage_type="salt_cavern",
+            storage_types_all=False,
+            start_date="2025-12-16",
+            end_date="2026-06-16",
+            regions=[],
+            states=[],
+            chart_type="line",
+            output_mode="chart_and_answer",
+            normalized_query="show annual working gas storage by type.",
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "annual",
+                "storage_metric_type": "working_gas",
+                "storage_type": "salt_cavern",
+                "storage_types_all": False,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_by_type.call_count, 2)
+        first_call = eia.underground_storage_by_type.call_args_list[0]
+        second_call = eia.underground_storage_by_type.call_args_list[1]
+        self.assertEqual(
+            first_call.kwargs,
+            {
+                "start": "2020-06-16",
+                "end": "2026-06-16",
+                "storage_type": "salt_cavern",
+                "metric_type": "working_gas",
+                "frequency": "annual",
+            },
+        )
+        self.assertEqual(
+            second_call.kwargs,
+            {
+                "start": "2019-12-31",
+                "end": "2025-12-31",
+                "storage_type": "salt_cavern",
+                "metric_type": "working_gas",
+                "frequency": "annual",
+            },
+        )
+        self.assertTrue(result.meta["latest_available_fallback"])
+        self.assertEqual(result.meta["fallback_fetch_start_date"], "2019-12-31")
+        self.assertEqual(result.meta["fallback_fetch_end_date"], "2025-12-31")
 
     def test_weather_forecast_metric_passes_region_filter(self) -> None:
         eia = Mock()

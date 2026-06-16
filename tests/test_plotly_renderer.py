@@ -53,6 +53,45 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertEqual(list(fig.data[0].x), ["2025-09", "2025-10", "2025-11", "2025-12"])
         self.assertFalse(bool(fig.layout.xaxis.rangeslider.visible))
 
+    def test_storage_type_labels_remove_underscores_in_bar_and_legend(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2025-09-01", "2025-09-01"]),
+                "value": [1.0, 2.0],
+                "storage_type": ["salt_cavern", "depleted_field"],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Base Gas by Storage Type",
+            x="storage_type",
+            y=["value"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual(list(fig.data[0].x), ["salt cavern", "depleted field"])
+
+    def test_storage_type_line_legend_removes_underscores(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2025-09-01", "2025-10-01", "2025-09-01", "2025-10-01"]),
+                "value": [1.0, 1.5, 2.0, 2.5],
+                "storage_type": ["salt_cavern", "salt_cavern", "depleted_field", "depleted_field"],
+            }
+        )
+        spec = ChartSpec(
+            chart_type="line",
+            title="Working Gas by Storage Type",
+            x="date",
+            y=["value"],
+        )
+
+        fig = render_plotly(spec, df)
+
+        self.assertEqual({trace.name for trace in fig.data}, {"salt cavern", "depleted field"})
+        self.assertEqual(len(fig.data), 2)
+
     def test_line_chart_can_overlay_forecast_trace(self) -> None:
         df = pd.DataFrame(
             {

@@ -99,6 +99,39 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "withdrawals": ("n5060", "2"),
         "net_withdrawals": ("n5070", "2"),
     }
+    STORAGE_TYPES = {
+        "salt_cavern",
+        "depleted_field",
+        "aquifer",
+    }
+    UNDERGROUND_STORAGE_TYPE_SERIES = {
+        ("all", "base_gas"): "base_gas",
+        ("all", "working_gas"): "working_gas",
+        ("all", "total_gas"): "total_gas",
+        ("all", "injections"): "injections",
+        ("all", "withdrawals"): "withdrawals",
+        ("all", "net_withdrawals"): "net_withdrawals",
+        ("salt_cavern", "base_gas"): "salt_base_gas",
+        ("salt_cavern", "working_gas"): "salt_working_gas",
+        ("salt_cavern", "total_gas"): "salt_total_gas",
+        ("salt_cavern", "injections"): "salt_injections",
+        ("salt_cavern", "withdrawals"): "salt_withdrawals",
+        ("salt_cavern", "net_withdrawals"): "salt_net_withdrawals",
+        # eia_ng exposes a non-salt aggregate rather than distinct depleted-field
+        # and aquifer series, so both route-level types map to the same upstream key.
+        ("depleted_field", "base_gas"): "nonsalt_base_gas",
+        ("depleted_field", "working_gas"): "nonsalt_working_gas",
+        ("depleted_field", "total_gas"): "nonsalt_total_gas",
+        ("depleted_field", "injections"): "nonsalt_injections",
+        ("depleted_field", "withdrawals"): "nonsalt_withdrawals",
+        ("depleted_field", "net_withdrawals"): "nonsalt_net_withdrawals",
+        ("aquifer", "base_gas"): "nonsalt_base_gas",
+        ("aquifer", "working_gas"): "nonsalt_working_gas",
+        ("aquifer", "total_gas"): "nonsalt_total_gas",
+        ("aquifer", "injections"): "nonsalt_injections",
+        ("aquifer", "withdrawals"): "nonsalt_withdrawals",
+        ("aquifer", "net_withdrawals"): "nonsalt_net_withdrawals",
+    }
     TRADE_REGIONS = {
         "united_states_pipeline_total",
         "canada_pipeline",
@@ -588,6 +621,114 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 },
             ),
             meta={"units": units, "frequency": frequency, "metric_type": metric_type},
+        )
+
+    def underground_storage_by_type(
+        self,
+        *,
+        start: str,
+        end: str,
+        storage_type: str,
+        metric_type: str,
+        frequency: str,
+    ) -> EIAResult:
+        if storage_type not in self.STORAGE_TYPES:
+            raise ValueError(
+                f"Invalid storage type '{storage_type}'. Expected one of: {sorted(self.STORAGE_TYPES)}"
+            )
+        if metric_type not in {
+            "base_gas",
+            "working_gas",
+            "total_gas",
+            "injections",
+            "withdrawals",
+            "net_withdrawals",
+        }:
+            raise ValueError(
+                "Invalid underground storage by type metric type "
+                f"'{metric_type}'."
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError(
+                f"Invalid underground storage by type frequency '{frequency}'. Expected monthly or annual."
+            )
+
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        eia_storage_type = self.UNDERGROUND_STORAGE_TYPE_SERIES[(storage_type, metric_type)]
+        rows = self.client.natural_gas.underground_storage_type(
+            start=request_start,
+            end=request_end,
+            storage_type=eia_storage_type,
+            frequency=frequency,
+        )
+        derived_from_monthly = False
+        if not rows and frequency == "annual":
+            monthly_start = pd.Timestamp(start).strftime("%Y-01")
+            monthly_end = pd.Timestamp(end).strftime("%Y-12")
+            monthly_rows = self.client.natural_gas.underground_storage_type(
+                start=monthly_start,
+                end=monthly_end,
+                storage_type=eia_storage_type,
+                frequency="monthly",
+            )
+            rows = monthly_rows
+            request_start = monthly_start
+            request_end = monthly_end
+            derived_from_monthly = True
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "storage_type"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            if derived_from_monthly:
+                out["year"] = out["date"].dt.year
+                if metric_type in {"injections", "withdrawals", "net_withdrawals"}:
+                    out = (
+                        out.groupby("year", as_index=False)["value"]
+                        .sum()
+                        .assign(date=lambda frame: pd.to_datetime(frame["year"].astype(str) + "-01-01"))
+                    )
+                else:
+                    out = (
+                        out.sort_values("date")
+                        .groupby("year", as_index=False)
+                        .tail(1)[["year", "date", "value"]]
+                        .reset_index(drop=True)
+                    )
+            out["storage_type"] = storage_type
+            out = out[["date", "value", "storage_type"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=(
+                    "EIA Underground Storage by Type "
+                    f"({metric_type.replace('_', ' ').title()}, {storage_type.replace('_', ' ').title()}, {frequency.title()})"
+                ),
+                reference="eia-ng-client:natural_gas.underground_storage_type",
+                parameters={
+                    "storage_type": storage_type,
+                    "eia_storage_type": eia_storage_type,
+                    "metric_type": metric_type,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                    "derived_from_monthly": derived_from_monthly,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": metric_type,
+                "derived_from_monthly": derived_from_monthly,
+            },
         )
 
     def get_weather_metric(

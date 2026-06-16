@@ -13,6 +13,7 @@ from agents.llm_router import (
     STORAGE_FREQUENCIES,
     STORAGE_METRIC_TYPES,
     STORAGE_REGIONS,
+    STORAGE_TYPES,
     UNDERGROUND_STORAGE_STATES,
     VALUE_TYPES,
 )
@@ -25,6 +26,8 @@ class EnergyQueryParse:
     storage_dataset: str = "weekly_working_gas"
     storage_frequency: str = "weekly"
     storage_metric_type: str = "working_gas"
+    storage_type: str | None = None
+    storage_types_all: bool = False
     regions: list[str] = field(default_factory=list)
     states: list[str] = field(default_factory=list)
     states_all: bool = False
@@ -46,6 +49,18 @@ STORAGE_TERMS = (
     "working gas",
     "inventor",
     "inventories",
+    "stored in",
+    "storage type",
+    "storage types",
+    "aquifer",
+    "aquifers",
+    "salt cavern",
+    "salt caverns",
+    "salt storage",
+    "depleted field",
+    "depleted fields",
+    "depleted reservoir",
+    "depleted reservoirs",
 )
 
 NON_STORAGE_NATGAS_TERMS = (
@@ -134,6 +149,15 @@ STATE_ALIASES = {
 
 MONTHLY_FREQUENCY_TERMS = ("monthly", "month", "by month")
 ANNUAL_FREQUENCY_TERMS = ("annual", "yearly", "by year")
+
+STORAGE_TYPE_ALL_TERMS = (
+    "by type",
+    "storage type",
+    "storage types",
+    "compare storage types",
+    "rank storage types",
+    "underground storage by type",
+)
 
 WEEKLY_STORAGE_TERMS = (
     "weekly storage",
@@ -295,6 +319,18 @@ def _parse_storage_frequency(q: str) -> str:
     return "weekly"
 
 
+def _parse_storage_type(q: str) -> tuple[str | None, bool]:
+    if any(term in q for term in STORAGE_TYPE_ALL_TERMS):
+        return None, True
+    if any(term in q for term in ("salt cavern", "salt-cavern", "salt storage", "salt")):
+        return "salt_cavern", False
+    if any(term in q for term in ("depleted field", "depleted reservoir", "depleted")):
+        return "depleted_field", False
+    if "aquifer" in q:
+        return "aquifer", False
+    return None, False
+
+
 def _has_explicit_time_series_request(q: str) -> bool:
     if any(term in q for term in ("plot", "chart", "trend", "over time", "history", "historical", "over the last", "since")):
         return True
@@ -332,7 +368,7 @@ def _parse_storage_metric_type(q: str) -> str:
         return "working_gas_yoy_volume_change"
     if any(term in q for term in ("net withdrawals", "net withdrawal", "net withdrawls")):
         return "net_withdrawals"
-    if any(term in q for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal")):
+    if any(term in q for term in ("withdrawals", "withdrawls", "withdrawn", "withdrawal", "withdrew")):
         return "withdrawals"
     if any(term in q for term in ("injections", "injected", "injection")):
         return "injections"
@@ -344,6 +380,20 @@ def _parse_storage_metric_type(q: str) -> str:
 
 
 def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions: list[str], metric_type: str) -> str:
+    has_by_type_terms = any(
+        term in q
+        for term in (
+            "by type",
+            "storage type",
+            "storage types",
+            "salt cavern",
+            "salt-cavern",
+            "salt storage",
+            "depleted field",
+            "depleted reservoir",
+            "aquifer",
+        )
+    )
     has_weekly_terms = _contains_any(q, WEEKLY_STORAGE_TERMS)
     has_all_operator_terms = _contains_any(q, ALL_OPERATORS_TERMS)
     has_state_terms = bool(states) or _asks_all_states(q)
@@ -351,6 +401,8 @@ def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions
 
     if has_state_terms:
         return "underground_storage_all_operators"
+    if has_by_type_terms:
+        return "underground_storage_by_type"
     if frequency in {"monthly", "annual"}:
         return "underground_storage_all_operators"
     if metric_type != "working_gas":
@@ -397,7 +449,26 @@ def _parse_analysis_type(
     regions: list[str],
     states: list[str],
     storage_dataset: str,
+    storage_type: str | None,
+    storage_types_all: bool,
 ) -> str:
+    if storage_dataset == "underground_storage_by_type":
+        if any(term in q for term in ("rank", "ranking", "rank storage types", "which storage type")):
+            return "ranking"
+        if _has_explicit_time_series_request(q):
+            return "time_series"
+        if (
+            storage_types_all
+            and not any(term in q for term in ("compare", "which storage type"))
+            and _contains_any(q, MONTHLY_FREQUENCY_TERMS + ANNUAL_FREQUENCY_TERMS)
+        ):
+            return "time_series"
+        if storage_types_all and any(term in q for term in ("compare", "by type", "storage type", "storage types")):
+            return "regional_compare"
+        if storage_types_all:
+            return "regional_compare"
+        if storage_type:
+            return "latest"
     if any(term in q for term in ("which region", "which state", "rank", "ranking", "most above", "most below")):
         return "ranking"
     if _asks_all_regions(q) or _asks_all_states(q):
@@ -481,6 +552,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     states_all = False
     storage_frequency = _parse_storage_frequency(q)
     storage_metric_type = _parse_storage_metric_type(q)
+    storage_type, storage_types_all = _parse_storage_type(q)
     storage_dataset = _parse_storage_dataset(
         q,
         frequency=storage_frequency,
@@ -494,14 +566,24 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
             storage_frequency = "monthly"
         if not states and _asks_all_states(q):
             states_all = True
+        storage_type = None
+        storage_types_all = False
+    elif storage_dataset == "underground_storage_by_type":
+        regions = []
+        states = []
+        states_all = False
+        if storage_frequency not in {"monthly", "annual"}:
+            storage_frequency = "monthly"
     else:
         states = []
         states_all = False
         storage_frequency = "weekly"
         storage_metric_type = "working_gas"
+        storage_type = None
+        storage_types_all = False
     value_type = _parse_value_type(q)
     comparisons = _parse_comparisons(q)
-    if storage_dataset == "underground_storage_all_operators" and _is_yoy_storage_metric(storage_metric_type):
+    if storage_dataset in {"underground_storage_all_operators", "underground_storage_by_type"} and _is_yoy_storage_metric(storage_metric_type):
         comparisons = ["none"]
     analysis_type = _parse_analysis_type(
         q,
@@ -510,6 +592,8 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         regions,
         states,
         storage_dataset,
+        storage_type,
+        storage_types_all,
     )
     chart_type = _parse_chart_type(q, analysis_type)
     output_mode = _parse_output_mode(q, chart_type)
@@ -519,6 +603,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     storage_dataset = _sanitize(storage_dataset, STORAGE_DATASETS, "weekly_working_gas")
     storage_frequency = _sanitize(storage_frequency, STORAGE_FREQUENCIES, "weekly")
     storage_metric_type = _sanitize(storage_metric_type, STORAGE_METRIC_TYPES, "working_gas")
+    storage_type = storage_type if storage_type in STORAGE_TYPES else None
     value_type = _sanitize(value_type, VALUE_TYPES, "level")
     chart_type = _sanitize(chart_type, CHART_TYPES, "none")
     output_mode = _sanitize(output_mode, OUTPUT_MODES, "answer")
@@ -530,6 +615,8 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         storage_dataset=storage_dataset,
         storage_frequency=storage_frequency,
         storage_metric_type=storage_metric_type,
+        storage_type=storage_type,
+        storage_types_all=storage_types_all,
         regions=regions,
         states=states,
         states_all=states_all,
@@ -539,12 +626,14 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         output_mode=output_mode,
         date_expression=date_expression,
         filters={
-            "regions": regions,
-            "states": states,
-            "states_all": states_all,
             "storage_dataset": storage_dataset,
             "storage_frequency": storage_frequency,
             "storage_metric_type": storage_metric_type,
+            "storage_type": storage_type,
+            "storage_types_all": storage_types_all,
+            "regions": regions,
+            "states": states,
+            "states_all": states_all,
         },
         confidence=confidence,
         ambiguous=False,
