@@ -3559,7 +3559,7 @@ def build_answer_with_openai(
         os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
-    use_llm_narration = narration_enabled and response_mode in {"analysis", "detailed"}
+    use_llm_narration = narration_enabled or response_mode in {"analysis", "detailed"}
     prefer_report_narration = (
         use_llm_narration
         and _is_report_narrative_query(query)

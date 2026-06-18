@@ -503,6 +503,44 @@ def _apply_storage_change_dashboard_style(
     )
 
 
+def _add_latest_annotation_only(
+    fig: go.Figure,
+    d: pd.DataFrame,
+    *,
+    x_field: str,
+    y_field: str,
+    y_units: str | None,
+) -> None:
+    series = d[[x_field, y_field]].copy()
+    series[x_field] = pd.to_datetime(series[x_field], errors="coerce")
+    series[y_field] = pd.to_numeric(series[y_field], errors="coerce")
+    series = series.dropna(subset=[x_field, y_field]).sort_values(x_field)
+    if series.empty:
+        return
+    latest = series.iloc[-1]
+    y_suffix = f" {y_units}" if y_units else ""
+    latest_value = f"{float(latest[y_field]):,.2f}{y_suffix}".strip()
+    fig.add_annotation(
+        x=latest[x_field],
+        y=latest[y_field],
+        xanchor="right",
+        xshift=-18,
+        yshift=-6,
+        align="left",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#111827",
+        bgcolor="rgba(255,255,255,0.96)",
+        bordercolor="rgba(15,23,42,0.25)",
+        borderwidth=1,
+        borderpad=6,
+        font=dict(size=13, color="#1f2937"),
+        text=f"Latest: {latest_value}<br>{latest[x_field].date().isoformat()}",
+    )
+
+
 def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame:
     scoped = d.copy()
     if "date" in scoped.columns:
@@ -1198,12 +1236,11 @@ def render_plotly(
         and "by region" not in spec.title.lower()
         and len(fig.layout.annotations or ()) == 0
     ):
-        _apply_timeseries_dashboard_style(
+        _add_latest_annotation_only(
             fig,
             d,
             x_field=x_field,
-            y_fields=y_fields,
-            y_label=spec.y_label or (y_fields[0] if y_fields else "Value"),
+            y_field=y_fields[0] if y_fields else "value",
             y_units=y_units,
         )
 
