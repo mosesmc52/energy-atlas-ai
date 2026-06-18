@@ -187,6 +187,43 @@ class TestEnergyAtlasAgent(unittest.TestCase):
         self.assertEqual(routed.filters["storage_type"], "salt_cavern")
         self.assertFalse(routed.filters["storage_types_all"])
 
+    def test_storage_route_preserves_capacity_regions_into_executor(self) -> None:
+        executor = Mock()
+        metric_result = Mock(df=Mock(), source=Mock(reference="ref:test"), meta={})
+        executor.execute_storage_route.return_value = metric_result
+        route_fn = Mock(
+            return_value=_route(
+                primary_metric="underground_storage_total_capacity_monthly",
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="total_capacity",
+                analysis_type="regional_compare",
+                chart_type="bar",
+                output_mode="chart_and_answer",
+                regions=["east", "midwest"],
+                states=[],
+                filters={
+                    "regions": ["east", "midwest"],
+                    "states": [],
+                    "states_all": False,
+                    "storage_dataset": "underground_storage_all_operators",
+                    "storage_frequency": "monthly",
+                    "storage_metric_type": "total_capacity",
+                },
+            )
+        )
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=Mock(return_value=Mock()),
+        )
+
+        agent.run(user_query="Compare storage capacity by region.")
+
+        routed = executor.execute_storage_route.call_args.args[0]
+        self.assertEqual(routed.filters["regions"], ["east", "midwest"])
+        self.assertEqual(routed.filters["storage_metric_type"], "total_capacity")
+
 
 if __name__ == "__main__":
     unittest.main()

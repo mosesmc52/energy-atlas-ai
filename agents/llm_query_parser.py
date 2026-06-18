@@ -61,6 +61,10 @@ STORAGE_TERMS = (
     "depleted fields",
     "depleted reservoir",
     "depleted reservoirs",
+    "capacity",
+    "storage capacity",
+    "field count",
+    "storage field count",
 )
 
 NON_STORAGE_NATGAS_TERMS = (
@@ -197,6 +201,14 @@ ALL_OPERATORS_TERMS = (
     "yoy",
     "percent change",
     "% change",
+    "capacity",
+    "storage capacity",
+    "field count",
+    "storage field count",
+    "number of storage fields",
+    "how many storage fields",
+    "count of storage fields",
+    "underground storage count",
 )
 
 YOY_CUES = (
@@ -346,6 +358,39 @@ def _parse_storage_metric_type(q: str) -> str:
     # - "working gas percent change from year ago" -> working_gas_yoy_pct_change
     # - "year-over-year increase/decrease in working gas" -> volume change unless percent/pct/% is explicit
     # - For underground_storage_all_operators, do not treat "year ago" as seasonal_compare intent
+    if any(
+        term in q
+        for term in (
+            "storage field count",
+            "field count",
+            "storage fields",
+            "number of storage fields",
+            "how many storage fields",
+            "count of storage fields",
+            "underground storage count",
+        )
+    ):
+        return "storage_field_count"
+    if any(
+        term in q
+        for term in (
+            "working gas capacity",
+            "working capacity",
+            "working gas storage capacity",
+        )
+    ):
+        return "working_gas_capacity"
+    if any(
+        term in q
+        for term in (
+            "total capacity",
+            "storage capacity",
+            "underground storage capacity",
+            "natural gas storage capacity",
+            "capacity",
+        )
+    ):
+        return "total_capacity"
     has_yoy_cue = any(term in q for term in YOY_CUES)
     has_percent_cue = any(term in q for term in YOY_PERCENT_CUES)
     has_volume_change_cue = any(term in q for term in YOY_VOLUME_CHANGE_CUES)
@@ -379,6 +424,14 @@ def _parse_storage_metric_type(q: str) -> str:
     return "working_gas"
 
 
+def _is_capacity_count_storage_metric(metric_type: str) -> bool:
+    return metric_type in {
+        "total_capacity",
+        "working_gas_capacity",
+        "storage_field_count",
+    }
+
+
 def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions: list[str], metric_type: str) -> str:
     has_by_type_terms = any(
         term in q
@@ -399,6 +452,8 @@ def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions
     has_state_terms = bool(states) or _asks_all_states(q)
     has_weekly_regions = bool(regions) and any(region != "lower48" for region in regions)
 
+    if _is_capacity_count_storage_metric(metric_type):
+        return "underground_storage_all_operators"
     if has_state_terms:
         return "underground_storage_all_operators"
     if has_by_type_terms:
@@ -552,6 +607,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     states_all = False
     storage_frequency = _parse_storage_frequency(q)
     storage_metric_type = _parse_storage_metric_type(q)
+    metric_is_capacity_count = _is_capacity_count_storage_metric(storage_metric_type)
     storage_type, storage_types_all = _parse_storage_type(q)
     storage_dataset = _parse_storage_dataset(
         q,
@@ -561,9 +617,12 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         metric_type=storage_metric_type,
     )
     if storage_dataset == "underground_storage_all_operators":
-        regions = []
         if storage_frequency == "weekly":
             storage_frequency = "monthly"
+        if metric_is_capacity_count and not states and not _asks_all_regions(q) and "lower 48" not in q and "lower48" not in q:
+            regions = []
+        elif not metric_is_capacity_count:
+            regions = []
         if not states and _asks_all_states(q):
             states_all = True
         storage_type = None
@@ -581,6 +640,8 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         storage_metric_type = "working_gas"
         storage_type = None
         storage_types_all = False
+    if metric_is_capacity_count and not states and not _asks_all_regions(q):
+        regions = [region for region in regions if region != "lower48"]
     value_type = _parse_value_type(q)
     comparisons = _parse_comparisons(q)
     if storage_dataset in {"underground_storage_all_operators", "underground_storage_by_type"} and _is_yoy_storage_metric(storage_metric_type):

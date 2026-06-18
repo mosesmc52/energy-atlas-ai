@@ -623,6 +623,149 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             meta={"units": units, "frequency": frequency, "metric_type": metric_type},
         )
 
+    def _canonical_underground_storage_geography_for_api(self, geography: str) -> str:
+        if geography == "united_states_total":
+            return "us_total"
+        return geography
+
+    def underground_storage_capacity(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        capacity_type: str,
+        frequency: str,
+    ) -> EIAResult:
+        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.STORAGE_REGIONS
+        if geography not in valid_geographies:
+            raise ValueError(
+                f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
+            )
+        if capacity_type not in {"total", "working_gas"}:
+            raise ValueError(
+                f"Invalid underground storage capacity type '{capacity_type}'. Expected total or working_gas."
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError(
+                f"Invalid underground storage capacity frequency '{frequency}'. Expected monthly or annual."
+            )
+
+        geography_for_api = self._canonical_underground_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        rows = self.client.natural_gas.underground_storage_capacity(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            type=capacity_type,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=(
+                    "EIA Underground Storage Capacity "
+                    f"({capacity_type.replace('_', ' ').title()}, {geography.replace('_', ' ').title()}, {frequency.title()})"
+                ),
+                reference="eia-ng-client:natural_gas.underground_storage_capacity",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "capacity_type": capacity_type,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": f"{capacity_type}_capacity",
+                "capacity_type": capacity_type,
+                "geography": geography,
+            },
+        )
+
+    def underground_storage_count(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        frequency: str,
+    ) -> EIAResult:
+        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.STORAGE_REGIONS
+        if geography not in valid_geographies:
+            raise ValueError(
+                f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError(
+                f"Invalid underground storage count frequency '{frequency}'. Expected monthly or annual."
+            )
+
+        geography_for_api = self._canonical_underground_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        rows = self.client.natural_gas.underground_storage_count(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=(
+                    "EIA Underground Storage Field Count "
+                    f"({geography.replace('_', ' ').title()}, {frequency.title()})"
+                ),
+                reference="eia-ng-client:natural_gas.underground_storage_count",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "count",
+                "frequency": frequency,
+                "metric_type": "storage_field_count",
+                "geography": geography,
+            },
+        )
+
     def underground_storage_by_type(
         self,
         *,

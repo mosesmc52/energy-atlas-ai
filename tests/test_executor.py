@@ -80,6 +80,19 @@ def _storage_type_result(storage_type: str, value: float = 10.0) -> EIAResult:
     )
 
 
+def _geography_storage_result(geography: str, value: float = 10.0, units: str = "MMcf") -> EIAResult:
+    return EIAResult(
+        df=pd.DataFrame([{"date": "2024-01-31", "value": value, "geography": geography}]),
+        source=SourceRef(
+            source_type="eia_api",
+            label=f"Storage {geography}",
+            reference=f"ref:{geography}",
+            parameters={"geography": geography},
+        ),
+        meta={"units": units},
+    )
+
+
 class TestMetricExecutor(unittest.TestCase):
     def test_consumption_passes_state_filter_to_eia_adapter(self) -> None:
         eia = Mock()
@@ -871,6 +884,96 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertTrue(result.meta["latest_available_fallback"])
         self.assertEqual(result.meta["fallback_fetch_start_date"], "2019-12-31")
         self.assertEqual(result.meta["fallback_fetch_end_date"], "2025-12-31")
+
+    def test_underground_storage_capacity_routes_to_capacity_adapter(self) -> None:
+        eia = Mock()
+        eia.underground_storage_capacity.return_value = _geography_storage_result("tx", value=250.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="underground_storage_working_gas_capacity_annual",
+                start="2015-01-01",
+                end="2015-12-31",
+                filters={
+                    "states": ["tx"],
+                    "storage_frequency": "annual",
+                    "storage_metric_type": "working_gas_capacity",
+                },
+            )
+        )
+
+        eia.underground_storage_capacity.assert_called_once_with(
+            start="2015-01-01",
+            end="2015-12-31",
+            geography="tx",
+            capacity_type="working_gas",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["state"].tolist(), ["tx"])
+        self.assertEqual(result.df["geography"].tolist(), ["tx"])
+
+    def test_underground_storage_count_routes_to_count_adapter(self) -> None:
+        eia = Mock()
+        eia.underground_storage_count.return_value = _geography_storage_result("lower48", value=398.0, units="count")
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="underground_storage_field_count_monthly",
+                start="2020-01-01",
+                end="2020-12-31",
+                filters={
+                    "regions": ["lower48"],
+                    "storage_frequency": "monthly",
+                    "storage_metric_type": "storage_field_count",
+                },
+            )
+        )
+
+        eia.underground_storage_count.assert_called_once_with(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="lower48",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["region"].tolist(), ["lower48"])
+        self.assertEqual(result.df["geography"].tolist(), ["lower48"])
+
+    def test_execute_storage_route_for_capacity_by_region_preserves_regions(self) -> None:
+        eia = Mock()
+        eia.underground_storage_capacity.side_effect = lambda geography, **kwargs: _geography_storage_result(
+            geography,
+            value=100.0 if geography == "east" else 200.0,
+        )
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            primary_metric="underground_storage_total_capacity_monthly",
+            metrics=["underground_storage_total_capacity_monthly"],
+            storage_dataset="underground_storage_all_operators",
+            storage_frequency="monthly",
+            storage_metric_type="total_capacity",
+            regions=["east", "midwest"],
+            states=[],
+            states_all=False,
+            chart_type="bar",
+            output_mode="chart_and_answer",
+            filters={
+                "regions": ["east", "midwest"],
+                "states": [],
+                "states_all": False,
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "total_capacity",
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_capacity.call_count, 2)
+        self.assertEqual(set(result.df["region"]), {"east", "midwest"})
+        self.assertEqual(set(result.df["geography"]), {"east", "midwest"})
 
     def test_weather_forecast_metric_passes_region_filter(self) -> None:
         eia = Mock()

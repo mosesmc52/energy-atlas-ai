@@ -208,6 +208,62 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
         )
         self.assertTrue(result.meta["derived_from_monthly"])
 
+    @patch("tools.eia_adapter.EIAClient")
+    def test_underground_storage_capacity_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.underground_storage_capacity.return_value = [
+            {"period": "2015", "value": "456.7"}
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.underground_storage_capacity(
+            start="2015-01-15",
+            end="2015-12-20",
+            geography="tx",
+            capacity_type="working_gas",
+            frequency="annual",
+        )
+
+        client.natural_gas.underground_storage_capacity.assert_called_once_with(
+            start="2015",
+            end="2015",
+            geography="tx",
+            type="working_gas",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["tx"])
+        self.assertEqual(result.meta["units"], "MMcf")
+        self.assertEqual(result.meta["capacity_type"], "working_gas")
+        self.assertEqual(result.source.reference, "eia-ng-client:natural_gas.underground_storage_capacity")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_underground_storage_count_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.underground_storage_count.return_value = [
+            {"period": "2020-01", "value": "398"}
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.underground_storage_count(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="lower48",
+            frequency="monthly",
+        )
+
+        client.natural_gas.underground_storage_count.assert_called_once_with(
+            start="2020-01",
+            end="2020-12",
+            geography="lower48",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["lower48"])
+        self.assertEqual(result.meta["units"], "count")
+        self.assertEqual(result.meta["metric_type"], "storage_field_count")
+        self.assertEqual(result.source.reference, "eia-ng-client:natural_gas.underground_storage_count")
+
 
 if __name__ == "__main__":
     unittest.main()

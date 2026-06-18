@@ -66,7 +66,7 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.value_type, "level")
         self.assertEqual(route.chart_type, "line")
         self.assertEqual(route.output_mode, "chart_and_answer")
-        self.assertEqual(route.start_date, "2021-06-16")
+        self.assertEqual(route.start_date, "2021-06-18")
         self.assertEqual(route.end_date, date.today().isoformat())
 
     def test_how_has_midwest_storage_changed_since_2021_is_time_series(self) -> None:
@@ -512,6 +512,84 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.chart_type, "line")
         self.assertEqual(route.output_mode, "chart_and_answer")
         self.assertEqual(route.start_date, "2015-01-01")
+
+    def test_total_underground_storage_capacity_in_texas(self) -> None:
+        route = route_query("What is total underground storage capacity in Texas?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.storage_metric_type, "total_capacity")
+        self.assertEqual(route.storage_frequency, "monthly")
+        self.assertEqual(route.states, ["tx"])
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.chart_type, "none")
+        self.assertEqual(route.primary_metric, "underground_storage_total_capacity_monthly")
+
+    def test_texas_working_gas_storage_capacity_since_2015(self) -> None:
+        route = route_query("Show Texas working gas storage capacity since 2015.")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_capacity")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.states, ["tx"])
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_capacity_monthly")
+
+    def test_annual_working_gas_storage_capacity_in_texas(self) -> None:
+        route = route_query("What is annual working gas storage capacity in Texas?")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_capacity")
+        self.assertEqual(route.storage_frequency, "annual")
+        self.assertEqual(route.states, ["tx"])
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_capacity_annual")
+
+    def test_which_state_has_most_working_gas_storage_capacity(self) -> None:
+        route = route_query("Which state has the most working gas storage capacity?")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_capacity")
+        self.assertTrue(route.states_all)
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_capacity_monthly")
+
+    def test_compare_storage_capacity_by_region(self) -> None:
+        route = route_query("Compare storage capacity by region.")
+
+        self.assertEqual(route.storage_metric_type, "total_capacity")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.regions, list(STORAGE_REGIONS))
+        self.assertEqual(route.analysis_type, "regional_compare")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.primary_metric, "underground_storage_total_capacity_monthly")
+
+    def test_lower_48_storage_field_count(self) -> None:
+        route = route_query("How many underground storage fields are in the Lower 48?")
+
+        self.assertEqual(route.storage_metric_type, "storage_field_count")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.regions, ["lower48"])
+        self.assertEqual(route.analysis_type, "latest")
+        self.assertEqual(route.chart_type, "none")
+        self.assertEqual(route.primary_metric, "underground_storage_field_count_monthly")
+
+    def test_lower_48_storage_field_count_since_2020(self) -> None:
+        route = route_query("Show Lower 48 storage field count since 2020.")
+
+        self.assertEqual(route.storage_metric_type, "storage_field_count")
+        self.assertEqual(route.regions, ["lower48"])
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+        self.assertEqual(route.primary_metric, "underground_storage_field_count_monthly")
+
+    def test_rank_states_by_number_of_storage_fields(self) -> None:
+        route = route_query("Rank states by number of storage fields.")
+
+        self.assertEqual(route.storage_metric_type, "storage_field_count")
+        self.assertTrue(route.states_all)
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.primary_metric, "underground_storage_field_count_monthly")
 
 
 if __name__ == "__main__":
