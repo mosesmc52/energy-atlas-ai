@@ -204,9 +204,9 @@ def _resolve_capacity_count_geographies(filters: dict) -> list[str]:
         region = str(raw_region or "").strip().lower()
         if not region:
             continue
-        if region not in EIAAdapter.STORAGE_REGIONS:
+        if region not in EIAAdapter.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS:
             raise ValueError(
-                f"Invalid storage geography '{region}'. Expected one of: {sorted(EIAAdapter.STORAGE_REGIONS)}"
+                f"Invalid storage geography '{region}'. Expected one of: {sorted(EIAAdapter.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS)}"
             )
         if region not in regions:
             regions.append(region)
@@ -566,6 +566,12 @@ class MetricExecutor:
         filters["storage_metric_type"] = route.storage_metric_type
         filters["storage_type"] = route.storage_type
         filters["storage_types_all"] = bool(route.storage_types_all or filters.get("storage_types_all"))
+        if route.storage_metric_type in {"total_capacity", "working_gas_capacity", "storage_field_count"}:
+            filters["regions"] = [
+                region
+                for region in filters.get("regions", [])
+                if region in EIAAdapter.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+            ]
         if route.storage_dataset == "weekly_working_gas" and route.analysis_type in {"regional_compare", "ranking"}:
             filters["regions"] = ["all"]
         requested_start_date = route.start_date

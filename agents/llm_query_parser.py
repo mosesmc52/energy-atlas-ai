@@ -14,6 +14,7 @@ from agents.llm_router import (
     STORAGE_METRIC_TYPES,
     STORAGE_REGIONS,
     STORAGE_TYPES,
+    UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS,
     UNDERGROUND_STORAGE_STATES,
     VALUE_TYPES,
 )
@@ -432,6 +433,10 @@ def _is_capacity_count_storage_metric(metric_type: str) -> bool:
     }
 
 
+def _capacity_count_regions() -> list[str]:
+    return list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS)
+
+
 def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions: list[str], metric_type: str) -> str:
     has_by_type_terms = any(
         term in q
@@ -619,6 +624,8 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     if storage_dataset == "underground_storage_all_operators":
         if storage_frequency == "weekly":
             storage_frequency = "monthly"
+        if metric_is_capacity_count and _asks_all_regions(q):
+            regions = _capacity_count_regions()
         if metric_is_capacity_count and not states and not _asks_all_regions(q) and "lower 48" not in q and "lower48" not in q:
             regions = []
         elif not metric_is_capacity_count:

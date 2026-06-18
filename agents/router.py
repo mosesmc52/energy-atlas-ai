@@ -12,6 +12,7 @@ from agents.llm_router import (
     STORAGE_METRIC_TYPES,
     STORAGE_REGIONS,
     STORAGE_TYPES,
+    UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS,
     UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY,
     UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY,
     UNDERGROUND_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY,
@@ -439,6 +440,10 @@ def _is_capacity_count_storage_metric(storage_metric_type: str) -> bool:
     }
 
 
+def _capacity_count_regions() -> list[str]:
+    return list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS)
+
+
 def _has_explicit_time_series_request(normalized_query: str) -> bool:
     if _has_term(normalized_query, TIME_SERIES_INFERENCE_TERMS):
         return True
@@ -762,7 +767,7 @@ def route_query(user_query: str) -> EnergyRouteResult:
                 term in normalized
                 for term in ("by region", "compare regions", "compare storage capacity by region", "which region", "rank regions")
             ):
-                regions = list(STORAGE_REGIONS)
+                regions = _capacity_count_regions()
                 states = []
                 states_all = False
             elif not states and any(
@@ -897,6 +902,8 @@ def route_query(user_query: str) -> EnergyRouteResult:
             states = [state for state in states if not _is_national_storage_series(state)]
             if not states and not (_is_capacity_count_storage_metric(storage_metric_type) and regions):
                 states_all = True
+        if _is_capacity_count_storage_metric(storage_metric_type) and regions:
+            regions = [region for region in regions if region in UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS]
         if storage_dataset == "underground_storage_by_type":
             comparisons = ["none"]
             if analysis_type == "latest":

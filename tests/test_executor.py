@@ -975,6 +975,40 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(set(result.df["region"]), {"east", "midwest"})
         self.assertEqual(set(result.df["geography"]), {"east", "midwest"})
 
+    def test_execute_storage_route_for_capacity_by_region_excludes_weekly_only_subregions(self) -> None:
+        eia = Mock()
+        eia.underground_storage_capacity.side_effect = lambda geography, **kwargs: _geography_storage_result(geography, value=100.0)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            primary_metric="underground_storage_total_capacity_monthly",
+            metrics=["underground_storage_total_capacity_monthly"],
+            storage_dataset="underground_storage_all_operators",
+            storage_frequency="monthly",
+            storage_metric_type="total_capacity",
+            regions=["east", "midwest", "south_central", "south_central_salt", "south_central_nonsalt", "mountain", "pacific"],
+            states=[],
+            states_all=False,
+            chart_type="bar",
+            output_mode="chart_and_answer",
+            filters={
+                "regions": ["east", "midwest", "south_central", "south_central_salt", "south_central_nonsalt", "mountain", "pacific"],
+                "states": [],
+                "states_all": False,
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "total_capacity",
+            },
+        )
+
+        executor.execute_storage_route(route)
+
+        called_geographies = [call.kwargs["geography"] for call in eia.underground_storage_capacity.call_args_list]
+        self.assertEqual(
+            called_geographies,
+            ["east", "midwest", "south_central", "mountain", "pacific"],
+        )
+
     def test_weather_forecast_metric_passes_region_filter(self) -> None:
         eia = Mock()
         eia.weather_degree_days_forecast_vs_5y.return_value = Mock(

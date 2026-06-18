@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from agents.llm_router import STORAGE_REGIONS
+from agents.llm_router import STORAGE_REGIONS, UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
 from agents.router import route_query
 
 
@@ -558,10 +558,35 @@ class TestStorageRouting(unittest.TestCase):
 
         self.assertEqual(route.storage_metric_type, "total_capacity")
         self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
-        self.assertEqual(route.regions, list(STORAGE_REGIONS))
+        self.assertEqual(route.regions, list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS))
         self.assertEqual(route.analysis_type, "regional_compare")
         self.assertEqual(route.chart_type, "bar")
         self.assertEqual(route.primary_metric, "underground_storage_total_capacity_monthly")
+
+    def test_compare_monthly_storage_field_count_by_region_uses_supported_regions(self) -> None:
+        route = route_query("Compare monthly storage field count by region.")
+
+        self.assertEqual(route.storage_metric_type, "storage_field_count")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.regions, list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS))
+        self.assertEqual(route.analysis_type, "regional_compare")
+        self.assertEqual(route.primary_metric, "underground_storage_field_count_monthly")
+
+    def test_which_region_has_most_storage_capacity_uses_supported_regions(self) -> None:
+        route = route_query("Which region has the most storage capacity?")
+
+        self.assertEqual(route.storage_metric_type, "total_capacity")
+        self.assertEqual(route.regions, list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS))
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.primary_metric, "underground_storage_total_capacity_monthly")
+
+    def test_rank_regions_by_working_gas_storage_capacity_uses_supported_regions(self) -> None:
+        route = route_query("Rank regions by working gas storage capacity.")
+
+        self.assertEqual(route.storage_metric_type, "working_gas_capacity")
+        self.assertEqual(route.regions, list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS))
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.primary_metric, "underground_storage_working_gas_capacity_monthly")
 
     def test_lower_48_storage_field_count(self) -> None:
         route = route_query("How many underground storage fields are in the Lower 48?")

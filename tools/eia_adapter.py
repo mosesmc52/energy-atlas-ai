@@ -56,6 +56,14 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "mountain",
         "pacific",
     }
+    UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS = {
+        "lower48",
+        "east",
+        "midwest",
+        "south_central",
+        "mountain",
+        "pacific",
+    }
     UNDERGROUND_STORAGE_STATES = {
         "al",
         "ar",
@@ -637,7 +645,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         capacity_type: str,
         frequency: str,
     ) -> EIAResult:
-        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.STORAGE_REGIONS
+        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
         if geography not in valid_geographies:
             raise ValueError(
                 f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
@@ -709,7 +717,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         geography: str,
         frequency: str,
     ) -> EIAResult:
-        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.STORAGE_REGIONS
+        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
         if geography not in valid_geographies:
             raise ValueError(
                 f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"

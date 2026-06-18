@@ -36,6 +36,15 @@ STORAGE_REGIONS: Final[tuple[str, ...]] = (
     "south_central_nonsalt",
 )
 
+UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS: Final[tuple[str, ...]] = (
+    "lower48",
+    "east",
+    "midwest",
+    "mountain",
+    "pacific",
+    "south_central",
+)
+
 STORAGE_DATASETS: Final[tuple[str, ...]] = (
     "weekly_working_gas",
     "underground_storage_all_operators",
