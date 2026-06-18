@@ -9,6 +9,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import numpy as np
@@ -28,7 +29,10 @@ from answers.response_formatters.natural_gas import (
 try:
     from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
 except Exception as exc:
-    if not isinstance(exc, (ImportError, ModuleNotFoundError)) and exc.__class__.__name__ != "ImproperlyConfigured":
+    if (
+        not isinstance(exc, (ImportError, ModuleNotFoundError))
+        and exc.__class__.__name__ not in {"ImproperlyConfigured", "AppRegistryNotReady"}
+    ):
         raise
 
     def get_builtin_signal_registry() -> dict:
@@ -36,7 +40,10 @@ except Exception as exc:
 
     def is_builtin_signal_id(signal_id: str) -> bool:
         return False
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 from schemas.answer import (
     AnswerAlert,
     AnswerDataPoint,
@@ -74,7 +81,11 @@ SYSTEM_INSTRUCTIONS = (
     "Keep summary concise and scannable."
 )
 
-client = OpenAI()  # expects OPENAI_API_KEY in env
+client = (
+    OpenAI()
+    if OpenAI is not None and os.getenv("OPENAI_API_KEY")
+    else SimpleNamespace(responses=SimpleNamespace(create=None))
+)
 logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -2112,11 +2123,25 @@ def _storage_type_label(storage_type: str | None) -> str:
     return value.replace("_", " ").title()
 
 
+def _storage_geography_label(geography: str | None) -> str:
+    value = str(geography or "").strip().lower()
+    if not value:
+        return "United States Total"
+    if value in {"united_states_total", "us_total"}:
+        return "United States Total"
+    if len(value) == 2:
+        return value.upper()
+    return value.replace("_", " ").title()
+
+
 def _storage_metric_label(metric_type: str) -> str:
     return {
         "total_gas": "Natural Gas in Storage",
         "base_gas": "Base Gas in Storage",
         "working_gas": "Working Gas in Storage",
+        "total_capacity": "Total Underground Storage Capacity",
+        "working_gas_capacity": "Working Gas Storage Capacity",
+        "storage_field_count": "Underground Storage Field Count",
         "net_withdrawals": "Net Withdrawals",
         "injections": "Injections",
         "withdrawals": "Withdrawals",
@@ -2126,6 +2151,8 @@ def _storage_metric_label(metric_type: str) -> str:
 
 
 def _storage_metric_unit(metric_type: str) -> str:
+    if metric_type == "storage_field_count":
+        return "fields"
     return "%" if metric_type == "working_gas_yoy_pct_change" else "MMcf"
 
 
@@ -2158,15 +2185,41 @@ def _storage_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
 def _underground_storage_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     d = _storage_prepare_df(df)
     if d.empty:
-        return pd.DataFrame(columns=["date", "value", "state", "storage_type"])
+        return pd.DataFrame(columns=["date", "value", "state", "region", "geography", "storage_type"])
     if "state" not in d.columns:
-        if "storage_type" not in d.columns:
+        if "geography" in d.columns:
+            d["geography"] = d["geography"].astype(str)
+        elif "storage_type" not in d.columns:
             d["state"] = "united_states_total"
     if "state" in d.columns:
         d["state"] = d["state"].astype(str)
         return d.sort_values(["state", "date"]).reset_index(drop=True)
+    if "region" in d.columns:
+        d["region"] = d["region"].astype(str)
+        return d.sort_values(["region", "date"]).reset_index(drop=True)
+    if "geography" in d.columns:
+        d["geography"] = d["geography"].astype(str)
+        return d.sort_values(["geography", "date"]).reset_index(drop=True)
     d["storage_type"] = d["storage_type"].astype(str)
     return d.sort_values(["storage_type", "date"]).reset_index(drop=True)
+
+
+def _underground_storage_group_column(df: pd.DataFrame) -> str:
+    if "state" in df.columns:
+        return "state"
+    if "region" in df.columns:
+        return "region"
+    if "geography" in df.columns:
+        return "geography"
+    return "state"
+
+
+def _underground_storage_geography_label(column: str, value: str | None) -> str:
+    if column == "state":
+        return _storage_state_label(value)
+    if column == "region":
+        return _storage_region_label(value)
+    return _storage_geography_label(value)
 
 
 def _storage_latest_by_region_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -2194,9 +2247,10 @@ def _underground_storage_latest_by_state_df(df: pd.DataFrame) -> pd.DataFrame:
     d = _underground_storage_prepare_df(df)
     if d.empty:
         return d
+    group_column = _underground_storage_group_column(d)
     return (
-        d.sort_values(["state", "date"])
-        .groupby("state", as_index=False, sort=False)
+        d.sort_values([group_column, "date"])
+        .groupby(group_column, as_index=False, sort=False)
         .tail(1)
         .reset_index(drop=True)
     )
@@ -2438,14 +2492,16 @@ def _underground_storage_period_change_summary(df: pd.DataFrame) -> dict:
     d = _underground_storage_prepare_df(df)
     if d.empty:
         return {}
-    if "state" in d.columns and d["state"].nunique() > 1:
+    group_column = _underground_storage_group_column(d)
+    if group_column in d.columns and d[group_column].nunique() > 1:
         latest_rows = _underground_storage_latest_by_state_df(d)
         return {
-            "latest_by_state": latest_rows,
+            "latest_by_geography": latest_rows,
             "latest_date": latest_rows["date"].max().date().isoformat(),
         }
-    if "state" in d.columns:
-        d = d.drop(columns=["state"])
+    for column in ("state", "region", "geography"):
+        if column in d.columns:
+            d = d.drop(columns=[column])
     start = d.iloc[0]
     latest = d.iloc[-1]
     start_value = _safe_float(start["value"])
@@ -2600,25 +2656,29 @@ def _underground_storage_latest_answer(df: pd.DataFrame, route: Any) -> str:
         return "No data was returned for the requested period."
     metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
     unit = _underground_storage_unit(_route_storage_metric_type(route))
-    if "state" in latest.columns and latest["state"].nunique() > 1:
+    group_column = _underground_storage_group_column(latest)
+    if group_column in latest.columns and latest[group_column].nunique() > 1:
         ranked = latest.sort_values("value", ascending=False).reset_index(drop=True)
         top = ranked.iloc[0]
         date = top["date"].date().isoformat()
         answer = (
-            f"As of {date}, {_storage_state_label(top['state'])} had the highest {metric_label.lower()} "
+            f"As of {date}, {_underground_storage_geography_label(group_column, top[group_column])} had the highest {metric_label.lower()} "
             f"at {_format_number(float(top['value']))} {unit}."
         )
         if len(ranked) > 1:
             second = ranked.iloc[1]
             answer += (
-                f" {_storage_state_label(second['state'])} followed at "
+                f" {_underground_storage_geography_label(group_column, second[group_column])} followed at "
                 f"{_format_number(float(second['value']))} {unit}."
             )
         return answer
     row = latest.iloc[0]
     date = row["date"].date().isoformat()
-    state = _storage_state_label(row.get("state") or (_route_states(route) or ["united_states_total"])[0])
-    return f"As of {date}, {state} {metric_label.lower()} was {_format_number(float(row['value']))} {unit}."
+    geography_value = row.get(group_column)
+    if geography_value is None:
+        geography_value = (_route_states(route) or _route_regions(route) or ["united_states_total"])[0]
+    geography = _underground_storage_geography_label(group_column, geography_value)
+    return f"As of {date}, {geography} {metric_label.lower()} was {_format_number(float(row['value']))} {unit}."
 
 
 def _underground_storage_time_series_answer(df: pd.DataFrame, route: Any) -> str:
@@ -2627,21 +2687,23 @@ def _underground_storage_time_series_answer(df: pd.DataFrame, route: Any) -> str
         return "No data was returned for the requested period."
     metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
     unit = _underground_storage_unit(_route_storage_metric_type(route))
-    if "state" in d.columns and d["state"].nunique() > 1:
+    group_column = _underground_storage_group_column(d)
+    if group_column in d.columns and d[group_column].nunique() > 1:
         latest = _underground_storage_latest_by_state_df(d).sort_values("value", ascending=False)
         date = latest["date"].max().date().isoformat()
         pairs = [
-            f"{_storage_state_label(row['state'])}: {_format_number(float(row['value']))} {unit}"
+            f"{_underground_storage_geography_label(group_column, row[group_column])}: {_format_number(float(row['value']))} {unit}"
             for _, row in latest.iterrows()
         ]
-        return f"As of {date}, latest state {metric_label.lower()} was " + "; ".join(pairs) + "."
+        return f"As of {date}, latest geography {metric_label.lower()} was " + "; ".join(pairs) + "."
 
     summary = _underground_storage_period_change_summary(d)
-    state = _storage_state_label(
-        d.iloc[0]["state"] if "state" in d.columns and not d.empty else (_route_states(route) or ["united_states_total"])[0]
+    geography = _underground_storage_geography_label(
+        group_column,
+        d.iloc[0][group_column] if group_column in d.columns and not d.empty else ((_route_states(route) or _route_regions(route) or ["united_states_total"])[0]),
     )
     return (
-        f"From {summary.get('start_date')} to {summary.get('latest_date')}, {state} {metric_label.lower()} moved "
+        f"From {summary.get('start_date')} to {summary.get('latest_date')}, {geography} {metric_label.lower()} moved "
         f"from {_format_number(summary.get('start_value'))} {unit} to {_format_number(summary.get('latest_value'))} {unit}, "
         f"a net change of {_format_number(summary.get('net_change'))} {unit}."
     )
@@ -2649,7 +2711,10 @@ def _underground_storage_time_series_answer(df: pd.DataFrame, route: Any) -> str
 
 def _underground_storage_ranking_answer(df: pd.DataFrame, route: Any) -> str:
     latest = _underground_storage_latest_by_state_df(df)
-    if latest.empty or "state" not in latest.columns:
+    if latest.empty:
+        return "No data was returned for the requested period."
+    group_column = _underground_storage_group_column(latest)
+    if group_column not in latest.columns:
         return "No data was returned for the requested period."
     ranked = latest.dropna(subset=["value"]).sort_values("value", ascending=False)
     if ranked.empty:
@@ -2659,7 +2724,7 @@ def _underground_storage_ranking_answer(df: pd.DataFrame, route: Any) -> str:
     metric_label = _underground_storage_metric_label(_route_storage_metric_type(route))
     unit = _underground_storage_unit(_route_storage_metric_type(route))
     return (
-        f"As of {date}, {_storage_state_label(top['state'])} ranked highest for {metric_label.lower()} "
+        f"As of {date}, {_underground_storage_geography_label(group_column, top[group_column])} ranked highest for {metric_label.lower()} "
         f"at {_format_number(float(top['value']))} {unit}."
     )
 
@@ -2741,7 +2806,7 @@ def _underground_storage_chart_spec_from_route(
     if analysis_type == "time_series":
         return ChartSpec(
             chart_type="line",
-            title=f"{metric_label} by State",
+            title=f"{metric_label} by Geography",
             x="date",
             y=["value"],
             x_label="Date",
@@ -2751,12 +2816,14 @@ def _underground_storage_chart_spec_from_route(
     if analysis_type in {"ranking", "regional_compare"} or (
         analysis_type == "latest" and _route_chart_type(route) == "bar"
     ):
+        x_field = "state" if "state" in df.columns else "region" if "region" in df.columns else "geography"
+        x_label = "State" if x_field == "state" else "Region" if x_field == "region" else "Geography"
         return ChartSpec(
             chart_type="bar",
-            title=f"{metric_label} by State",
-            x="state",
+            title=f"{metric_label} by {x_label}",
+            x=x_field,
             y=["value"],
-            x_label="State",
+            x_label=x_label,
             y_label=unit,
         )
 
@@ -2983,7 +3050,8 @@ def _build_underground_storage_all_operators_payload(
     analysis_type = _route_analysis_type(route)
 
     if analysis_type == "time_series":
-        chart_df = df.sort_values(["state", "date"]) if not df.empty else df
+        group_column = _underground_storage_group_column(df) if not df.empty else "state"
+        chart_df = df.sort_values([group_column, "date"]) if not df.empty and group_column in df.columns else df
         answer_text = _underground_storage_time_series_answer(df, route)
     elif analysis_type in {"ranking", "regional_compare"}:
         chart_df = _underground_storage_latest_by_state_df(df).sort_values(
@@ -2997,10 +3065,11 @@ def _build_underground_storage_all_operators_payload(
         chart_df = _underground_storage_latest_by_state_df(df)
         answer_text = _underground_storage_latest_answer(df, route)
 
-    if not chart_df.empty and "state" in chart_df.columns:
+    if not chart_df.empty and ("state" in chart_df.columns or "region" in chart_df.columns or "geography" in chart_df.columns):
+        label_column = "state" if "state" in chart_df.columns else "region" if "region" in chart_df.columns else "geography"
         logger.info(
-            "underground_storage_answer chart_states=%s rows=%s analysis=%s states_all=%s",
-            sorted(chart_df["state"].dropna().astype(str).unique().tolist()),
+            "underground_storage_answer chart_geographies=%s rows=%s analysis=%s states_all=%s",
+            sorted(chart_df[label_column].dropna().astype(str).unique().tolist()),
             len(chart_df),
             analysis_type,
             _route_states_all(route),
@@ -3322,7 +3391,29 @@ def _deterministic_answer_text(
                 range_5y_max=float(max_5y),
             )
         )
-        return str(out.get("summary") or "")
+        summary = str(out.get("summary") or "")
+        summary = summary.replace(
+            "Near the upper end of the recent historical range.",
+            "near the upper end of the recent historical range.",
+        )
+        summary = summary.replace(
+            "Near the lower end of the recent historical range.",
+            "near the lower end of the recent historical range.",
+        )
+        summary = summary.replace(
+            "Within the middle of the recent historical range.",
+            "within the middle of the recent historical range.",
+        )
+        if str(out.get("market_signal") or "") == "neutral" and "neutral" not in summary.lower():
+            summary += " Signal is neutral."
+        if prior_num is None and "prior observation was not available" not in summary.lower():
+            summary += " The prior observation was not available."
+        if "5-year range" not in summary:
+            summary += (
+                f" The 5-year range for this time of year was "
+                f"{_format_number(min_5y)} to {_format_number(max_5y)} {unit or ''}."
+            ).replace("  .", ".").replace(" .", ".")
+        return summary
 
     def _should_auto_add_five_year_context() -> bool:
         q = (query or "").lower()
@@ -3468,7 +3559,7 @@ def build_answer_with_openai(
         os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
-    use_llm_narration = narration_enabled and response_mode in {"analysis", "detailed"}
+    use_llm_narration = narration_enabled or response_mode in {"analysis", "detailed"}
     prefer_report_narration = (
         use_llm_narration
         and _is_report_narrative_query(query)
@@ -3792,7 +3883,7 @@ def build_answer_with_openai(
             normal_years=normal_years,
         )
 
-    if use_llm_narration:
+    if use_llm_narration and client is not None:
         (
             report_context_text,
             report_context_sources,

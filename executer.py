@@ -189,6 +189,30 @@ def _resolve_storage_states(states: list[str], states_all: bool) -> list[str]:
     return resolved_states or ["united_states_total"]
 
 
+def _resolve_capacity_count_geographies(filters: dict) -> list[str]:
+    if filters.get("states") or filters.get("state") or filters.get("states_all"):
+        return _normalize_storage_states(filters)
+
+    raw_regions = filters.get("regions")
+    if raw_regions is None:
+        raw_regions = []
+    elif isinstance(raw_regions, str):
+        raw_regions = [raw_regions]
+
+    regions: list[str] = []
+    for raw_region in raw_regions or []:
+        region = str(raw_region or "").strip().lower()
+        if not region:
+            continue
+        if region not in EIAAdapter.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS:
+            raise ValueError(
+                f"Invalid storage geography '{region}'. Expected one of: {sorted(EIAAdapter.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS)}"
+            )
+        if region not in regions:
+            regions.append(region)
+    return regions or ["united_states_total"]
+
+
 def _normalize_storage_types(filters: dict) -> list[str]:
     raw_storage_types = filters.get("storage_types")
     storage_types_all = bool(filters.get("storage_types_all"))
@@ -373,6 +397,64 @@ def _concat_storage_type_results(results: list[EIAResult]) -> EIAResult:
     )
 
 
+def _concat_storage_geography_results(results: list[EIAResult]) -> EIAResult:
+    frames: list[pd.DataFrame] = []
+    source_references: list[str] = []
+    geography_meta: dict[str, Any] = {}
+
+    for result in results:
+        raw_params = result.source.parameters or {}
+        params = raw_params if isinstance(raw_params, dict) else {}
+        geography = str(params.get("geography") or "").strip().lower()
+        source_references.append(result.source.reference)
+        if geography:
+            geography_meta[geography] = result.meta or {}
+
+        if result.df is None or result.df.empty:
+            continue
+        frame = result.df.copy()
+        if "geography" not in frame.columns:
+            frame["geography"] = geography
+        columns = [column for column in ("date", "value", "geography", "state", "region") if column in frame.columns]
+        frames.append(frame[columns].copy())
+
+    df = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["date", "value", "geography"])
+    )
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df["geography"] = df["geography"].astype(str)
+        sort_columns = ["geography", "date"]
+        if "state" in df.columns:
+            df["state"] = df["state"].astype(str)
+        if "region" in df.columns:
+            df["region"] = df["region"].astype(str)
+        df = df.dropna(subset=["date", "value", "geography"]).sort_values(
+            sort_columns
+        ).reset_index(drop=True)
+    geographies = [value for value in geography_meta if value]
+    source = SourceRef(
+        source_type="eia_api",
+        label="EIA Underground Natural Gas Storage Capacity and Field Count",
+        reference="eia-ng-client:natural_gas.underground_storage_capacity_or_count",
+        parameters={
+            "geographies": geographies,
+            "source_references": source_references,
+        },
+    )
+    return EIAResult(
+        df=df,
+        source=source,
+        meta={
+            "geographies": geography_meta,
+            "source_references": source_references,
+        },
+    )
+
+
 class MetricExecutor:
     """
     Deterministic dispatcher: metric -> implementation.
@@ -405,6 +487,12 @@ class MetricExecutor:
             "underground_storage_withdrawals_annual": self._eia_underground_storage_all_operators,
             "underground_storage_working_gas_yoy_volume_change_annual": self._eia_underground_storage_all_operators,
             "underground_storage_working_gas_yoy_pct_change_annual": self._eia_underground_storage_all_operators,
+            "underground_storage_total_capacity_monthly": self._eia_underground_storage_capacity_or_count,
+            "underground_storage_total_capacity_annual": self._eia_underground_storage_capacity_or_count,
+            "underground_storage_working_gas_capacity_monthly": self._eia_underground_storage_capacity_or_count,
+            "underground_storage_working_gas_capacity_annual": self._eia_underground_storage_capacity_or_count,
+            "underground_storage_field_count_monthly": self._eia_underground_storage_capacity_or_count,
+            "underground_storage_field_count_annual": self._eia_underground_storage_capacity_or_count,
             "underground_storage_by_type_working_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_base_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_total_gas_monthly": self._eia_underground_storage_by_type,
@@ -478,6 +566,12 @@ class MetricExecutor:
         filters["storage_metric_type"] = route.storage_metric_type
         filters["storage_type"] = route.storage_type
         filters["storage_types_all"] = bool(route.storage_types_all or filters.get("storage_types_all"))
+        if route.storage_metric_type in {"total_capacity", "working_gas_capacity", "storage_field_count"}:
+            filters["regions"] = [
+                region
+                for region in filters.get("regions", [])
+                if region in EIAAdapter.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+            ]
         if route.storage_dataset == "weekly_working_gas" and route.analysis_type in {"regional_compare", "ranking"}:
             filters["regions"] = ["all"]
         requested_start_date = route.start_date
@@ -819,6 +913,65 @@ class MetricExecutor:
                 EIAResult(df=frame, source=state_result.source, meta=state_result.meta)
             )
         return _concat_storage_state_results(results)
+
+    def _eia_underground_storage_capacity_or_count(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        geographies = _resolve_capacity_count_geographies(filters)
+        metric_type = str(filters.get("storage_metric_type") or "total_capacity")
+        frequency = str(filters.get("storage_frequency") or "monthly")
+
+        def attach_geography_columns(frame: pd.DataFrame, geography: str) -> pd.DataFrame:
+            out = frame.copy() if frame is not None else pd.DataFrame(columns=["date", "value"])
+            if "geography" not in out.columns:
+                out["geography"] = geography
+            else:
+                out["geography"] = out["geography"].fillna(geography)
+            if geography in EIAAdapter.UNDERGROUND_STORAGE_STATES:
+                out["state"] = geography
+            elif geography in EIAAdapter.STORAGE_REGIONS:
+                out["region"] = geography
+            return out
+
+        def fetch_for_geography(geography: str) -> EIAResult:
+            if metric_type == "storage_field_count":
+                return self.eia.underground_storage_count(
+                    start=start,
+                    end=end,
+                    geography=geography,
+                    frequency=frequency,
+                )
+            capacity_type = "working_gas" if metric_type == "working_gas_capacity" else "total"
+            return self.eia.underground_storage_capacity(
+                start=start,
+                end=end,
+                geography=geography,
+                capacity_type=capacity_type,
+                frequency=frequency,
+            )
+
+        if len(geographies) == 1:
+            geography = geographies[0]
+            result = fetch_for_geography(geography)
+            frame = attach_geography_columns(
+                result.df if result.df is not None else pd.DataFrame(columns=["date", "value"]),
+                geography,
+            )
+            columns = [column for column in ("date", "value", "geography", "state", "region") if column in frame.columns]
+            return EIAResult(df=frame[columns], source=result.source, meta=result.meta)
+
+        results = []
+        for geography in geographies:
+            geography_result = fetch_for_geography(geography)
+            frame = attach_geography_columns(
+                geography_result.df if geography_result.df is not None else pd.DataFrame(columns=["date", "value"]),
+                geography,
+            )
+            columns = [column for column in ("date", "value", "geography", "state", "region") if column in frame.columns]
+            results.append(
+                EIAResult(df=frame[columns], source=geography_result.source, meta=geography_result.meta)
+            )
+        return _concat_storage_geography_results(results)
 
     def _eia_underground_storage_by_type(
         self, *, start: str, end: str, filters: Dict[str, Any]

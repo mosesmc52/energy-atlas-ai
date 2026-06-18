@@ -178,7 +178,7 @@ def compute_timeseries_summary_metrics(
 
     metrics = [
         {
-            "label": "Latest",
+            "label": "Latest reading",
             "value": latest,
             "unit": unit or "",
             "subtitle": latest_date,
@@ -503,6 +503,47 @@ def _apply_storage_change_dashboard_style(
     )
 
 
+def _add_latest_annotation_only(
+    fig: go.Figure,
+    d: pd.DataFrame,
+    *,
+    x_field: str,
+    y_field: str,
+    y_units: str | None,
+) -> None:
+    series = d[[x_field, y_field]].copy()
+    series[x_field] = pd.to_datetime(series[x_field], errors="coerce")
+    series[y_field] = pd.to_numeric(series[y_field], errors="coerce")
+    series = series.dropna(subset=[x_field, y_field]).sort_values(x_field)
+    if series.empty:
+        return
+    latest = series.iloc[-1]
+    y_suffix = f" {y_units}" if y_units else ""
+    latest_value = f"{float(latest[y_field]):,.2f}{y_suffix}".strip()
+    annotation = dict(
+        x=latest[x_field],
+        y=latest[y_field],
+        xanchor="right",
+        xshift=-18,
+        yshift=-6,
+        align="left",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#111827",
+        bgcolor="rgba(255,255,255,0.96)",
+        bordercolor="rgba(15,23,42,0.25)",
+        borderwidth=1,
+        borderpad=6,
+        font=dict(size=13, color="#1f2937"),
+        text=f"Latest: {latest_value}<br>{latest[x_field].date().isoformat()}",
+    )
+    existing = list(fig.layout.annotations or ())
+    existing.append(annotation)
+    fig.update_layout(annotations=existing)
+
+
 def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame:
     scoped = d.copy()
     if "date" in scoped.columns:
@@ -522,6 +563,8 @@ def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame
 
 def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
     if spec.chart_type != "line" or not {"date", "value"}.issubset(d.columns):
+        return None
+    if len(_y_fields(spec.y)) != 1 or _y_fields(spec.y) != ["value"]:
         return None
 
     scoped = d.copy()
@@ -563,6 +606,8 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
         for trace in fig.data:
             if color_field == "state":
                 trace.name = "U.S." if str(trace.name) == "united_states_total" else str(trace.name).upper()
+            elif color_field == "storage_type":
+                trace.name = str(trace.name).replace("_", " ")
             else:
                 trace.name = str(trace.name).replace("_", " ").title()
     fig.update_layout(
@@ -576,6 +621,8 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02),
         title=dict(x=0.02, xanchor="left", font=dict(size=20), pad=dict(b=18)),
     )
+    if _is_storage_change_chart(spec, ["value"]):
+        _apply_storage_change_dashboard_style(fig, scoped, x_field="date", y_field="value")
     return fig
 
 
@@ -590,7 +637,7 @@ def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
     display_field = group_field
     scoped[display_field] = scoped[display_field].astype(str)
     if group_field == "region":
-        scoped[display_field] = scoped[display_field].str.replace("_", " ").str.title()
+        scoped[display_field] = scoped[display_field].str.replace("_", " ", regex=False)
     else:
         scoped[display_field] = scoped[display_field].replace({"united_states_total": "U.S."}).str.upper()
         scoped.loc[scoped[display_field] == "U.S.", display_field] = "U.S."
@@ -770,6 +817,49 @@ def render_plotly(
     d = df.copy()
     storage_fig = _render_storage_chart(spec, d)
     if storage_fig is not None:
+        overlay_dict = (
+            forecast_overlay.to_dict()
+            if isinstance(forecast_overlay, ForecastResult)
+            else forecast_overlay
+        )
+        overlay = (overlay_dict or {}).get("overlay") or {}
+        historical_points = overlay.get("historical") or []
+        forecast_points = overlay.get("forecast") or []
+        if historical_points and spec.chart_type in {"line", "area", "stacked_area"}:
+            historical_df = pd.DataFrame(historical_points)
+            if not historical_df.empty and {"date", "value"}.issubset(historical_df.columns):
+                historical_df["date"] = pd.to_datetime(historical_df["date"], errors="coerce")
+                historical_df["value"] = pd.to_numeric(historical_df["value"], errors="coerce")
+                historical_df = historical_df.dropna(subset=["date", "value"]).sort_values("date")
+                if not historical_df.empty:
+                    storage_fig.add_trace(
+                        go.Scatter(
+                            x=historical_df["date"],
+                            y=historical_df["value"],
+                            mode="lines",
+                            name="Historical trend",
+                            line=dict(width=2, dash="dot", color="#94a3b8"),
+                            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Historical trend<extra></extra>",
+                        )
+                    )
+        if forecast_points and spec.chart_type in {"line", "area", "stacked_area"}:
+            overlay_df = pd.DataFrame(forecast_points)
+            if not overlay_df.empty and {"date", "value"}.issubset(overlay_df.columns):
+                overlay_df["date"] = pd.to_datetime(overlay_df["date"], errors="coerce")
+                overlay_df["value"] = pd.to_numeric(overlay_df["value"], errors="coerce")
+                overlay_df = overlay_df.dropna(subset=["date", "value"]).sort_values("date")
+                if not overlay_df.empty:
+                    storage_fig.add_trace(
+                        go.Scatter(
+                            x=overlay_df["date"],
+                            y=overlay_df["value"],
+                            mode="lines",
+                            name="Forecast",
+                            line=dict(width=3, dash="dash", color="#f97316"),
+                            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Forecast<extra></extra>",
+                        )
+                    )
+                    storage_fig.update_layout(showlegend=True)
         return storage_fig
 
     if (
@@ -1060,10 +1150,6 @@ def render_plotly(
                 tr.name = spec.series[i].name
 
     for tr in fig.data:
-        if getattr(tr, "name", None):
-            tr.name = str(tr.name).replace("_", " ")
-
-    for tr in fig.data:
         if chart_type in {"histogram", "heatmap"}:
             continue
         name_line = "<br>%{fullData.name}" if len(fig.data) > 1 else ""
@@ -1127,5 +1213,19 @@ def render_plotly(
                     )
                 )
                 fig.update_layout(showlegend=True)
+
+    if (
+        x_is_datetime
+        and chart_type in {"line", "area"}
+        and "by region" not in spec.title.lower()
+        and len(fig.layout.annotations or ()) == 0
+    ):
+        _add_latest_annotation_only(
+            fig,
+            d,
+            x_field=x_field,
+            y_field=y_fields[0] if y_fields else "value",
+            y_units=y_units,
+        )
 
     return fig

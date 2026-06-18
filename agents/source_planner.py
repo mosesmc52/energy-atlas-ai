@@ -51,6 +51,9 @@ def _metrics_from_parsed(parsed: Any) -> list[str]:
 def build_source_plan(parsed: Any) -> SourcePlan:
     metrics = _metrics_from_parsed(parsed)
     analysis_type = getattr(parsed, "analysis_type", "unsupported")
+    if getattr(parsed, "domain", None) == "storage" and getattr(parsed, "value_type", "level") == "weekly_change":
+        analysis_type = "weekly_change"
+        metrics = ["working_gas_storage_change_weekly"]
     comparisons = list(getattr(parsed, "comparisons", []) or [])
     comparison = None if comparisons in ([], ["none"]) else ",".join(comparisons)
     filters = dict(getattr(parsed, "filters", {}) or {})

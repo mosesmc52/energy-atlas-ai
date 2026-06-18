@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from io import StringIO
+from html.parser import HTMLParser
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +25,46 @@ DEBUG_ENABLED = os.getenv("ATLAS_DEBUG", "").strip().lower() in {
     "yes",
     "on",
 }
+
+
+class _SimpleHTMLTableParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tables: list[list[list[str]]] = []
+        self._in_table = False
+        self._in_row = False
+        self._in_cell = False
+        self._current_table: list[list[str]] = []
+        self._current_row: list[str] = []
+        self._current_cell: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag == "table":
+            self._in_table = True
+            self._current_table = []
+        elif self._in_table and tag == "tr":
+            self._in_row = True
+            self._current_row = []
+        elif self._in_row and tag in {"td", "th"}:
+            self._in_cell = True
+            self._current_cell = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self._in_cell:
+            self._current_row.append("".join(self._current_cell).strip())
+            self._in_cell = False
+        elif tag == "tr" and self._in_row:
+            if self._current_row:
+                self._current_table.append(self._current_row)
+            self._in_row = False
+        elif tag == "table" and self._in_table:
+            if self._current_table:
+                self.tables.append(self._current_table)
+            self._in_table = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_cell:
+            self._current_cell.append(data)
 
 
 @dataclass(frozen=True)
@@ -53,6 +94,14 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "south_central",
         "south_central_salt",
         "south_central_nonsalt",
+        "mountain",
+        "pacific",
+    }
+    UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS = {
+        "lower48",
+        "east",
+        "midwest",
+        "south_central",
         "mountain",
         "pacific",
     }
@@ -433,7 +482,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             date_col="date",
             enable_debug_timing=DEBUG_ENABLED,
         )
-        self.client = EIAClient(api_key=api_key or os.getenv("EIA_API_KEY"))
+        resolved_api_key = api_key or os.getenv("EIA_API_KEY")
+        try:
+            self.client = EIAClient(api_key=resolved_api_key)
+        except ValueError:
+            self.client = None
         repo_root = Path(__file__).resolve().parents[1]
         resolved_weather_path: Path | None = None
         if weather_csv_path is not None:
@@ -621,6 +674,149 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 },
             ),
             meta={"units": units, "frequency": frequency, "metric_type": metric_type},
+        )
+
+    def _canonical_underground_storage_geography_for_api(self, geography: str) -> str:
+        if geography == "united_states_total":
+            return "us_total"
+        return geography
+
+    def underground_storage_capacity(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        capacity_type: str,
+        frequency: str,
+    ) -> EIAResult:
+        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+        if geography not in valid_geographies:
+            raise ValueError(
+                f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
+            )
+        if capacity_type not in {"total", "working_gas"}:
+            raise ValueError(
+                f"Invalid underground storage capacity type '{capacity_type}'. Expected total or working_gas."
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError(
+                f"Invalid underground storage capacity frequency '{frequency}'. Expected monthly or annual."
+            )
+
+        geography_for_api = self._canonical_underground_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        rows = self.client.natural_gas.underground_storage_capacity(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            type=capacity_type,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=(
+                    "EIA Underground Storage Capacity "
+                    f"({capacity_type.replace('_', ' ').title()}, {geography.replace('_', ' ').title()}, {frequency.title()})"
+                ),
+                reference="eia-ng-client:natural_gas.underground_storage_capacity",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "capacity_type": capacity_type,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": f"{capacity_type}_capacity",
+                "capacity_type": capacity_type,
+                "geography": geography,
+            },
+        )
+
+    def underground_storage_count(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        frequency: str,
+    ) -> EIAResult:
+        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+        if geography not in valid_geographies:
+            raise ValueError(
+                f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError(
+                f"Invalid underground storage count frequency '{frequency}'. Expected monthly or annual."
+            )
+
+        geography_for_api = self._canonical_underground_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
+        rows = self.client.natural_gas.underground_storage_count(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=(
+                    "EIA Underground Storage Field Count "
+                    f"({geography.replace('_', ' ').title()}, {frequency.title()})"
+                ),
+                reference="eia-ng-client:natural_gas.underground_storage_count",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "count",
+                "frequency": frequency,
+                "metric_type": "storage_field_count",
+                "geography": geography,
+            },
         )
 
     def underground_storage_by_type(
@@ -1600,7 +1796,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         response = requests.get(url, timeout=30)
         response.raise_for_status()
 
-        tables = pd.read_html(StringIO(response.text))
+        tables = self._read_html_tables(response.text)
         if not tables:
             return pd.DataFrame(columns=["date", "value", "series"])
 
@@ -1899,10 +2095,27 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             headers={"User-Agent": "energy-atlas-ai/1.0"},
         )
         response.raise_for_status()
-        tables = pd.read_html(StringIO(response.text))
+        tables = self._read_html_tables(response.text)
         if not tables:
             return pd.DataFrame(columns=["date", "value"])
         return self._parse_eia_history_table(tables[0], frequency=frequency)
+
+    def _read_html_tables(self, html_text: str) -> list[pd.DataFrame]:
+        try:
+            return pd.read_html(StringIO(html_text))
+        except ImportError:
+            parser = _SimpleHTMLTableParser()
+            parser.feed(html_text)
+            tables: list[pd.DataFrame] = []
+            for table_rows in parser.tables:
+                if not table_rows:
+                    continue
+                header = table_rows[0]
+                body = table_rows[1:] if len(table_rows) > 1 else []
+                if not header:
+                    continue
+                tables.append(pd.DataFrame(body, columns=header))
+            return tables
 
     def _parse_eia_history_table(
         self,

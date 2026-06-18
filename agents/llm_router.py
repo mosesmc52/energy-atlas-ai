@@ -36,6 +36,15 @@ STORAGE_REGIONS: Final[tuple[str, ...]] = (
     "south_central_nonsalt",
 )
 
+UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS: Final[tuple[str, ...]] = (
+    "lower48",
+    "east",
+    "midwest",
+    "mountain",
+    "pacific",
+    "south_central",
+)
+
 STORAGE_DATASETS: Final[tuple[str, ...]] = (
     "weekly_working_gas",
     "underground_storage_all_operators",
@@ -52,6 +61,9 @@ STORAGE_METRIC_TYPES: Final[tuple[str, ...]] = (
     "working_gas",
     "base_gas",
     "total_gas",
+    "total_capacity",
+    "working_gas_capacity",
+    "storage_field_count",
     "net_withdrawals",
     "injections",
     "withdrawals",
@@ -172,8 +184,18 @@ UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, 
     ("net_withdrawals", "annual"): "underground_storage_by_type_net_withdrawals_annual",
 }
 
+UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
+    ("total_capacity", "monthly"): "underground_storage_total_capacity_monthly",
+    ("total_capacity", "annual"): "underground_storage_total_capacity_annual",
+    ("working_gas_capacity", "monthly"): "underground_storage_working_gas_capacity_monthly",
+    ("working_gas_capacity", "annual"): "underground_storage_working_gas_capacity_annual",
+    ("storage_field_count", "monthly"): "underground_storage_field_count_monthly",
+    ("storage_field_count", "annual"): "underground_storage_field_count_annual",
+}
+
 SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(
     list(STORAGE_METRIC_BY_VALUE_TYPE.values())
     + list(UNDERGROUND_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY.values())
+    + list(UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY.values())
 )
