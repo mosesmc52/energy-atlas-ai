@@ -1109,10 +1109,6 @@ def render_plotly(
                 tr.name = spec.series[i].name
 
     for tr in fig.data:
-        if getattr(tr, "name", None):
-            tr.name = str(tr.name).replace("_", " ")
-
-    for tr in fig.data:
         if chart_type in {"histogram", "heatmap"}:
             continue
         name_line = "<br>%{fullData.name}" if len(fig.data) > 1 else ""
@@ -1195,5 +1191,20 @@ def render_plotly(
                     )
                 )
                 fig.update_layout(showlegend=True)
+
+    if (
+        x_is_datetime
+        and chart_type in {"line", "area"}
+        and "by region" not in spec.title.lower()
+        and len(fig.layout.annotations or ()) == 0
+    ):
+        _apply_timeseries_dashboard_style(
+            fig,
+            d,
+            x_field=x_field,
+            y_fields=y_fields,
+            y_label=spec.y_label or (y_fields[0] if y_fields else "Value"),
+            y_units=y_units,
+        )
 
     return fig

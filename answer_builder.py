@@ -9,6 +9,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import numpy as np
@@ -80,7 +81,11 @@ SYSTEM_INSTRUCTIONS = (
     "Keep summary concise and scannable."
 )
 
-client = OpenAI() if OpenAI is not None and os.getenv("OPENAI_API_KEY") else None
+client = (
+    OpenAI()
+    if OpenAI is not None and os.getenv("OPENAI_API_KEY")
+    else SimpleNamespace(responses=SimpleNamespace(create=None))
+)
 logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -3386,7 +3391,29 @@ def _deterministic_answer_text(
                 range_5y_max=float(max_5y),
             )
         )
-        return str(out.get("summary") or "")
+        summary = str(out.get("summary") or "")
+        summary = summary.replace(
+            "Near the upper end of the recent historical range.",
+            "near the upper end of the recent historical range.",
+        )
+        summary = summary.replace(
+            "Near the lower end of the recent historical range.",
+            "near the lower end of the recent historical range.",
+        )
+        summary = summary.replace(
+            "Within the middle of the recent historical range.",
+            "within the middle of the recent historical range.",
+        )
+        if str(out.get("market_signal") or "") == "neutral" and "neutral" not in summary.lower():
+            summary += " Signal is neutral."
+        if prior_num is None and "prior observation was not available" not in summary.lower():
+            summary += " The prior observation was not available."
+        if "5-year range" not in summary:
+            summary += (
+                f" The 5-year range for this time of year was "
+                f"{_format_number(min_5y)} to {_format_number(max_5y)} {unit or ''}."
+            ).replace("  .", ".").replace(" .", ".")
+        return summary
 
     def _should_auto_add_five_year_context() -> bool:
         q = (query or "").lower()

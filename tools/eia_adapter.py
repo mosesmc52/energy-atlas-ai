@@ -483,7 +483,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             enable_debug_timing=DEBUG_ENABLED,
         )
         resolved_api_key = api_key or os.getenv("EIA_API_KEY")
-        self.client = EIAClient(api_key=resolved_api_key) if resolved_api_key else None
+        try:
+            self.client = EIAClient(api_key=resolved_api_key)
+        except ValueError:
+            self.client = None
         repo_root = Path(__file__).resolve().parents[1]
         resolved_weather_path: Path | None = None
         if weather_csv_path is not None:
