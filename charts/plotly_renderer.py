@@ -520,7 +520,7 @@ def _add_latest_annotation_only(
     latest = series.iloc[-1]
     y_suffix = f" {y_units}" if y_units else ""
     latest_value = f"{float(latest[y_field]):,.2f}{y_suffix}".strip()
-    fig.add_annotation(
+    annotation = dict(
         x=latest[x_field],
         y=latest[y_field],
         xanchor="right",
@@ -539,6 +539,9 @@ def _add_latest_annotation_only(
         font=dict(size=13, color="#1f2937"),
         text=f"Latest: {latest_value}<br>{latest[x_field].date().isoformat()}",
     )
+    existing = list(fig.layout.annotations or ())
+    existing.append(annotation)
+    fig.update_layout(annotations=existing)
 
 
 def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame:
