@@ -1192,25 +1192,6 @@ def render_plotly(
         else forecast_overlay
     )
     overlay_points = (((overlay_dict or {}).get("overlay") or {}).get("forecast") or [])
-    historical_points = (((overlay_dict or {}).get("overlay") or {}).get("historical") or [])
-    if historical_points and chart_type in {"line", "area", "stacked_area"}:
-        historical_df = pd.DataFrame(historical_points)
-        if not historical_df.empty and {"date", "value"}.issubset(historical_df.columns):
-            historical_df["date"] = pd.to_datetime(historical_df["date"], errors="coerce")
-            historical_df["value"] = pd.to_numeric(historical_df["value"], errors="coerce")
-            historical_df = historical_df.dropna(subset=["date", "value"]).sort_values("date")
-            if not historical_df.empty:
-                fig.add_trace(
-                    go.Scatter(
-                        x=historical_df["date"],
-                        y=historical_df["value"],
-                        mode="lines",
-                        name="Historical trend",
-                        line=dict(width=2, dash="dot", color="#94a3b8"),
-                        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Historical trend<extra></extra>",
-                    )
-                )
-                fig.update_layout(showlegend=True)
     if overlay_points and chart_type in {"line", "area", "stacked_area"}:
         overlay_df = pd.DataFrame(overlay_points)
         if not overlay_df.empty and {"date", "value"}.issubset(overlay_df.columns):
