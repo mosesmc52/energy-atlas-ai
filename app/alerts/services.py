@@ -20,7 +20,30 @@ from agents.router import route_query
 from executer import ExecuteRequest, MetricExecutor
 from tools.forecasting import TrendForecaster
 from tools.eia_adapter import EIAAdapter
-from alerts.models import AlertOperator, AlertTriggerType, AlertValueMode
+try:
+    from alerts.models import AlertOperator, AlertTriggerType, AlertValueMode
+except Exception as exc:
+    if exc.__class__.__name__ not in {"AppRegistryNotReady", "ModuleNotFoundError"}:
+        raise
+
+    class AlertTriggerType:
+        CONDITION_TRUE = "condition_true"
+        CONDITION_ALWAYS = "condition_always"
+        CONDITION_FALSE = "condition_false"
+        RETURN_ANSWER = "return_answer"
+
+    class AlertValueMode:
+        RAW = "raw"
+        ZSCORE = "zscore"
+
+    class AlertOperator:
+        LT = "<"
+        LTE = "<="
+        GT = ">"
+        GTE = ">="
+        EQ = "=="
+        CROSSES_ABOVE = "crosses_above"
+        CROSSES_BELOW = "crosses_below"
 
 
 class SignalErrorCode:

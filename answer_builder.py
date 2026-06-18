@@ -28,7 +28,10 @@ from answers.response_formatters.natural_gas import (
 try:
     from alerts.services import get_builtin_signal_registry, is_builtin_signal_id
 except Exception as exc:
-    if not isinstance(exc, (ImportError, ModuleNotFoundError)) and exc.__class__.__name__ != "ImproperlyConfigured":
+    if (
+        not isinstance(exc, (ImportError, ModuleNotFoundError))
+        and exc.__class__.__name__ not in {"ImproperlyConfigured", "AppRegistryNotReady"}
+    ):
         raise
 
     def get_builtin_signal_registry() -> dict:
@@ -36,7 +39,10 @@ except Exception as exc:
 
     def is_builtin_signal_id(signal_id: str) -> bool:
         return False
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 from schemas.answer import (
     AnswerAlert,
     AnswerDataPoint,
@@ -74,7 +80,7 @@ SYSTEM_INSTRUCTIONS = (
     "Keep summary concise and scannable."
 )
 
-client = OpenAI()  # expects OPENAI_API_KEY in env
+client = OpenAI() if OpenAI is not None and os.getenv("OPENAI_API_KEY") else None
 logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -3850,7 +3856,7 @@ def build_answer_with_openai(
             normal_years=normal_years,
         )
 
-    if use_llm_narration:
+    if use_llm_narration and client is not None:
         (
             report_context_text,
             report_context_sources,

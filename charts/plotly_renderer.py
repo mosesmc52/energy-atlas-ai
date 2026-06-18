@@ -178,7 +178,7 @@ def compute_timeseries_summary_metrics(
 
     metrics = [
         {
-            "label": "Latest",
+            "label": "Latest reading",
             "value": latest,
             "unit": unit or "",
             "subtitle": latest_date,
@@ -523,6 +523,8 @@ def _storage_latest_by_region(d: pd.DataFrame, value_field: str) -> pd.DataFrame
 def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
     if spec.chart_type != "line" or not {"date", "value"}.issubset(d.columns):
         return None
+    if len(_y_fields(spec.y)) != 1 or _y_fields(spec.y) != ["value"]:
+        return None
 
     scoped = d.copy()
     scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
@@ -563,6 +565,8 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
         for trace in fig.data:
             if color_field == "state":
                 trace.name = "U.S." if str(trace.name) == "united_states_total" else str(trace.name).upper()
+            elif color_field == "storage_type":
+                trace.name = str(trace.name).replace("_", " ")
             else:
                 trace.name = str(trace.name).replace("_", " ").title()
     fig.update_layout(
@@ -576,6 +580,8 @@ def _render_storage_timeseries(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02),
         title=dict(x=0.02, xanchor="left", font=dict(size=20), pad=dict(b=18)),
     )
+    if _is_storage_change_chart(spec, ["value"]):
+        _apply_storage_change_dashboard_style(fig, scoped, x_field="date", y_field="value")
     return fig
 
 
@@ -590,7 +596,7 @@ def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
     display_field = group_field
     scoped[display_field] = scoped[display_field].astype(str)
     if group_field == "region":
-        scoped[display_field] = scoped[display_field].str.replace("_", " ").str.title()
+        scoped[display_field] = scoped[display_field].str.replace("_", " ", regex=False)
     else:
         scoped[display_field] = scoped[display_field].replace({"united_states_total": "U.S."}).str.upper()
         scoped.loc[scoped[display_field] == "U.S.", display_field] = "U.S."
@@ -770,6 +776,49 @@ def render_plotly(
     d = df.copy()
     storage_fig = _render_storage_chart(spec, d)
     if storage_fig is not None:
+        overlay_dict = (
+            forecast_overlay.to_dict()
+            if isinstance(forecast_overlay, ForecastResult)
+            else forecast_overlay
+        )
+        overlay = (overlay_dict or {}).get("overlay") or {}
+        historical_points = overlay.get("historical") or []
+        forecast_points = overlay.get("forecast") or []
+        if historical_points and spec.chart_type in {"line", "area", "stacked_area"}:
+            historical_df = pd.DataFrame(historical_points)
+            if not historical_df.empty and {"date", "value"}.issubset(historical_df.columns):
+                historical_df["date"] = pd.to_datetime(historical_df["date"], errors="coerce")
+                historical_df["value"] = pd.to_numeric(historical_df["value"], errors="coerce")
+                historical_df = historical_df.dropna(subset=["date", "value"]).sort_values("date")
+                if not historical_df.empty:
+                    storage_fig.add_trace(
+                        go.Scatter(
+                            x=historical_df["date"],
+                            y=historical_df["value"],
+                            mode="lines",
+                            name="Historical trend",
+                            line=dict(width=2, dash="dot", color="#94a3b8"),
+                            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Historical trend<extra></extra>",
+                        )
+                    )
+        if forecast_points and spec.chart_type in {"line", "area", "stacked_area"}:
+            overlay_df = pd.DataFrame(forecast_points)
+            if not overlay_df.empty and {"date", "value"}.issubset(overlay_df.columns):
+                overlay_df["date"] = pd.to_datetime(overlay_df["date"], errors="coerce")
+                overlay_df["value"] = pd.to_numeric(overlay_df["value"], errors="coerce")
+                overlay_df = overlay_df.dropna(subset=["date", "value"]).sort_values("date")
+                if not overlay_df.empty:
+                    storage_fig.add_trace(
+                        go.Scatter(
+                            x=overlay_df["date"],
+                            y=overlay_df["value"],
+                            mode="lines",
+                            name="Forecast",
+                            line=dict(width=3, dash="dash", color="#f97316"),
+                            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Forecast<extra></extra>",
+                        )
+                    )
+                    storage_fig.update_layout(showlegend=True)
         return storage_fig
 
     if (
@@ -1109,6 +1158,25 @@ def render_plotly(
         else forecast_overlay
     )
     overlay_points = (((overlay_dict or {}).get("overlay") or {}).get("forecast") or [])
+    historical_points = (((overlay_dict or {}).get("overlay") or {}).get("historical") or [])
+    if historical_points and chart_type in {"line", "area", "stacked_area"}:
+        historical_df = pd.DataFrame(historical_points)
+        if not historical_df.empty and {"date", "value"}.issubset(historical_df.columns):
+            historical_df["date"] = pd.to_datetime(historical_df["date"], errors="coerce")
+            historical_df["value"] = pd.to_numeric(historical_df["value"], errors="coerce")
+            historical_df = historical_df.dropna(subset=["date", "value"]).sort_values("date")
+            if not historical_df.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=historical_df["date"],
+                        y=historical_df["value"],
+                        mode="lines",
+                        name="Historical trend",
+                        line=dict(width=2, dash="dot", color="#94a3b8"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<br>Historical trend<extra></extra>",
+                    )
+                )
+                fig.update_layout(showlegend=True)
     if overlay_points and chart_type in {"line", "area", "stacked_area"}:
         overlay_df = pd.DataFrame(overlay_points)
         if not overlay_df.empty and {"date", "value"}.issubset(overlay_df.columns):
