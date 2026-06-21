@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from agents.llm_query_parser import llm_parse_query
 from agents.llm_router import (
+    LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY,
     STORAGE_DATASETS,
     STORAGE_FREQUENCIES,
     STORAGE_METRIC_BY_VALUE_TYPE,
@@ -219,6 +220,16 @@ ALL_OPERATORS_STORAGE_TERMS = (
     "underground storage count",
 )
 
+LNG_STORAGE_TERMS = (
+    "lng storage",
+    "liquefied natural gas storage",
+    "lng storage additions",
+    "lng storage withdrawals",
+    "lng storage withdrawls",
+    "lng storage net withdrawals",
+    "lng storage net withdrawls",
+)
+
 BY_TYPE_STORAGE_TERMS = (
     "by type",
     "storage type",
@@ -367,6 +378,41 @@ def _parse_storage_metric_type_from_text(
     if any(
         term in normalized_query
         for term in (
+            "lng storage net withdrawals",
+            "lng storage net withdrawls",
+            "lng net withdrawals",
+            "lng net withdrawls",
+            "net withdrawals from lng storage",
+            "net withdrawls from lng storage",
+        )
+    ):
+        return "lng_storage_net_withdrawals"
+    if any(
+        term in normalized_query
+        for term in (
+            "lng storage withdrawals",
+            "lng storage withdrawls",
+            "lng withdrawals",
+            "lng withdrawls",
+            "withdrawals from lng storage",
+            "withdrawls from lng storage",
+        )
+    ):
+        return "lng_storage_withdrawals"
+    if any(
+        term in normalized_query
+        for term in (
+            "lng storage additions",
+            "lng additions",
+            "additions to lng storage",
+            "lng storage injected",
+            "lng storage injection",
+        )
+    ):
+        return "lng_storage_additions"
+    if any(
+        term in normalized_query
+        for term in (
             "storage field count",
             "field count",
             "storage fields",
@@ -437,6 +483,14 @@ def _is_capacity_count_storage_metric(storage_metric_type: str) -> bool:
         "total_capacity",
         "working_gas_capacity",
         "storage_field_count",
+    }
+
+
+def _is_lng_storage_metric(storage_metric_type: str) -> bool:
+    return storage_metric_type in {
+        "lng_storage_additions",
+        "lng_storage_withdrawals",
+        "lng_storage_net_withdrawals",
     }
 
 
@@ -515,6 +569,8 @@ def _resolve_storage_dataset(
     )
     has_weekly_change_language = _has_term(normalized_query, WEEKLY_CHANGE_TERMS)
     has_change_direction = _has_term(normalized_query, CHANGE_DIRECTION_TERMS)
+    if _is_lng_storage_metric(storage_metric_type) or _has_term(normalized_query, LNG_STORAGE_TERMS):
+        return "lng_storage"
     if _is_capacity_count_storage_metric(storage_metric_type):
         return "underground_storage_all_operators"
     if states or states_all:
@@ -650,6 +706,11 @@ def _storage_metrics_for_route(
     storage_metric_type: str,
     value_type: str,
 ) -> tuple[Optional[str], list[str]]:
+    if storage_dataset == "lng_storage":
+        metric = LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.get(
+            (storage_metric_type, storage_frequency)
+        )
+        return metric, [metric] if metric else []
     if _is_capacity_count_storage_metric(storage_metric_type):
         metric = UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY.get(
             (storage_metric_type, storage_frequency)
@@ -690,6 +751,14 @@ def _filters_for_route(
             "storage_metric_type": storage_metric_type,
             "storage_type": storage_type,
             "storage_types_all": storage_types_all,
+        }
+    if storage_dataset == "lng_storage":
+        return {
+            "states": states,
+            "states_all": states_all,
+            "storage_dataset": storage_dataset,
+            "storage_frequency": storage_frequency,
+            "storage_metric_type": storage_metric_type,
         }
     if storage_dataset == "underground_storage_all_operators":
         filters = {
@@ -752,7 +821,18 @@ def route_query(user_query: str) -> EnergyRouteResult:
             regions=regions,
         )
         metric_is_capacity_count = _is_capacity_count_storage_metric(storage_metric_type)
-        if storage_dataset == "underground_storage_all_operators":
+        if storage_dataset == "lng_storage":
+            regions = []
+            storage_type = None
+            storage_types_all = False
+            storage_frequency = "monthly"
+            if national_storage_request:
+                states = ["united_states_total"]
+                states_all = False
+            elif not states:
+                states = ["united_states_total"]
+                states_all = False
+        elif storage_dataset == "underground_storage_all_operators":
             if not metric_is_capacity_count:
                 regions = []
             storage_type = None
@@ -843,7 +923,22 @@ def route_query(user_query: str) -> EnergyRouteResult:
                     regions = list(STORAGE_REGIONS)
         else:
             value_type = "level"
-            if storage_dataset == "underground_storage_by_type" and _is_yoy_storage_metric(storage_metric_type):
+            if storage_dataset == "lng_storage":
+                comparisons = ["none"]
+                if analysis_type in {"ranking", "regional_compare"} and not states:
+                    states_all = True
+                if _has_explicit_time_series_request(normalized):
+                    analysis_type = "time_series"
+                    chart_type = "line"
+                    output_mode = "chart_and_answer"
+                elif analysis_type in {"ranking", "regional_compare"}:
+                    chart_type = "bar"
+                    output_mode = "chart_and_answer"
+                else:
+                    analysis_type = "latest"
+                    chart_type = "none"
+                    output_mode = "answer"
+            elif storage_dataset == "underground_storage_by_type" and _is_yoy_storage_metric(storage_metric_type):
                 comparisons = ["none"]
                 analysis_type = "unsupported"
                 chart_type = "none"
@@ -902,6 +997,9 @@ def route_query(user_query: str) -> EnergyRouteResult:
             states = [state for state in states if not _is_national_storage_series(state)]
             if not states and not (_is_capacity_count_storage_metric(storage_metric_type) and regions):
                 states_all = True
+        if storage_dataset == "lng_storage" and not states:
+            states = ["united_states_total"]
+            states_all = False
         if _is_capacity_count_storage_metric(storage_metric_type) and regions:
             regions = [region for region in regions if region in UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS]
         if storage_dataset == "underground_storage_by_type":

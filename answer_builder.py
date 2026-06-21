@@ -2139,6 +2139,9 @@ def _storage_metric_label(metric_type: str) -> str:
         "total_gas": "Natural Gas in Storage",
         "base_gas": "Base Gas in Storage",
         "working_gas": "Working Gas in Storage",
+        "lng_storage_additions": "LNG Storage Additions",
+        "lng_storage_withdrawals": "LNG Storage Withdrawals",
+        "lng_storage_net_withdrawals": "LNG Storage Net Withdrawals",
         "total_capacity": "Total Underground Storage Capacity",
         "working_gas_capacity": "Working Gas Storage Capacity",
         "storage_field_count": "Underground Storage Field Count",
@@ -3147,7 +3150,7 @@ def _build_storage_answer_payload(
 ) -> AnswerPayload:
     storage_dataset = _route_storage_dataset(route)
 
-    if storage_dataset == "underground_storage_all_operators":
+    if storage_dataset in {"underground_storage_all_operators", "lng_storage"}:
         return _build_underground_storage_all_operators_payload(
             query=query,
             result=result,

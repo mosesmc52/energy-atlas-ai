@@ -55,7 +55,7 @@ def _expand_storage_fetch_window_for_baseline(
 def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type"}:
+    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type", "lng_storage"}:
         return False
     if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
         return False
@@ -91,7 +91,7 @@ def _storage_should_retry_with_latest_available_all_operators(
 ) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type"}:
+    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type", "lng_storage"}:
         return False
     if route.analysis_type not in {"latest", "ranking", "regional_compare"}:
         return False
@@ -105,7 +105,7 @@ def _storage_should_retry_with_latest_available_time_series(
 ) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type"}:
+    if route.storage_dataset not in {"underground_storage_all_operators", "underground_storage_by_type", "lng_storage"}:
         return False
     if route.analysis_type != "time_series":
         return False
@@ -493,6 +493,9 @@ class MetricExecutor:
             "underground_storage_working_gas_capacity_annual": self._eia_underground_storage_capacity_or_count,
             "underground_storage_field_count_monthly": self._eia_underground_storage_capacity_or_count,
             "underground_storage_field_count_annual": self._eia_underground_storage_capacity_or_count,
+            "lng_storage_additions_monthly": self._eia_lng_storage,
+            "lng_storage_withdrawals_monthly": self._eia_lng_storage,
+            "lng_storage_net_withdrawals_monthly": self._eia_lng_storage,
             "underground_storage_by_type_working_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_base_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_total_gas_monthly": self._eia_underground_storage_by_type,
@@ -1011,6 +1014,62 @@ class MetricExecutor:
                 EIAResult(df=frame, source=type_result.source, meta=type_result.meta)
             )
         return _concat_storage_type_results(results)
+
+    def _eia_lng_storage(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        states = _normalize_storage_states(filters)
+        metric_type = str(filters.get("storage_metric_type") or "lng_storage_additions")
+        frequency = str(filters.get("storage_frequency") or "monthly")
+
+        def fetch_for_state(state: str) -> EIAResult:
+            if metric_type == "lng_storage_additions":
+                return self.eia.lng_storage_additions(
+                    start=start,
+                    end=end,
+                    geography=state,
+                    frequency=frequency,
+                )
+            if metric_type == "lng_storage_withdrawals":
+                return self.eia.lng_storage_withdrawals(
+                    start=start,
+                    end=end,
+                    geography=state,
+                    frequency=frequency,
+                )
+            return self.eia.lng_storage_net_withdrawals(
+                start=start,
+                end=end,
+                geography=state,
+                frequency=frequency,
+            )
+
+        if len(states) == 1:
+            state = states[0]
+            result = fetch_for_state(state)
+            frame = result.df.copy() if result.df is not None else pd.DataFrame(columns=["date", "value", "geography"])
+            if "geography" not in frame.columns:
+                frame["geography"] = state
+            frame["state"] = state
+            frame = frame[["date", "value", "geography", "state"]]
+            return EIAResult(df=frame, source=result.source, meta=result.meta)
+
+        results = []
+        for state in states:
+            state_result = fetch_for_state(state)
+            frame = state_result.df.copy() if state_result.df is not None else pd.DataFrame(columns=["date", "value", "geography"])
+            if not frame.empty:
+                if "geography" not in frame.columns:
+                    frame["geography"] = state
+                frame["state"] = state
+            results.append(
+                EIAResult(
+                    df=frame[["date", "value", "geography", "state"]] if not frame.empty else pd.DataFrame(columns=["date", "value", "geography", "state"]),
+                    source=state_result.source,
+                    meta=state_result.meta,
+                )
+            )
+        return _concat_storage_geography_results(results)
 
     def _eia_henry_hub_spot(
         self, *, start: str, end: str, filters: Dict[str, Any]

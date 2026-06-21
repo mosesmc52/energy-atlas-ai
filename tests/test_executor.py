@@ -1009,6 +1009,79 @@ class TestMetricExecutor(unittest.TestCase):
             ["east", "midwest", "south_central", "mountain", "pacific"],
         )
 
+    def test_lng_storage_additions_routes_to_lng_adapter(self) -> None:
+        eia = Mock()
+        eia.lng_storage_additions.return_value = _geography_storage_result("united_states_total", value=250.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="lng_storage_additions_monthly",
+                start="2020-01-01",
+                end="2020-12-31",
+                filters={
+                    "states": ["united_states_total"],
+                    "storage_frequency": "monthly",
+                    "storage_metric_type": "lng_storage_additions",
+                },
+            )
+        )
+
+        eia.lng_storage_additions.assert_called_once_with(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="united_states_total",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["state"].tolist(), ["united_states_total"])
+
+    def test_lng_storage_withdrawals_multiple_states_concatenate(self) -> None:
+        eia = Mock()
+        eia.lng_storage_withdrawals.side_effect = lambda geography, **kwargs: _geography_storage_result(geography, value=20.0 if geography == "tx" else 30.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="lng_storage_withdrawals_monthly",
+                start="2020-01-01",
+                end="2020-12-31",
+                filters={
+                    "states": ["tx", "la"],
+                    "storage_frequency": "monthly",
+                    "storage_metric_type": "lng_storage_withdrawals",
+                },
+            )
+        )
+
+        self.assertEqual(eia.lng_storage_withdrawals.call_count, 2)
+        self.assertEqual(set(result.df["state"]), {"tx", "la"})
+        self.assertEqual(set(result.df["geography"]), {"tx", "la"})
+
+    def test_lng_storage_net_withdrawals_default_to_us_total(self) -> None:
+        eia = Mock()
+        eia.lng_storage_net_withdrawals.return_value = _geography_storage_result("united_states_total", value=44.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="lng_storage_net_withdrawals_monthly",
+                start="2020-01-01",
+                end="2020-12-31",
+                filters={
+                    "storage_frequency": "monthly",
+                    "storage_metric_type": "lng_storage_net_withdrawals",
+                },
+            )
+        )
+
+        eia.lng_storage_net_withdrawals.assert_called_once_with(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="united_states_total",
+            frequency="monthly",
+        )
+        self.assertEqual(result.df["state"].tolist(), ["united_states_total"])
+
     def test_weather_forecast_metric_passes_region_filter(self) -> None:
         eia = Mock()
         eia.weather_degree_days_forecast_vs_5y.return_value = Mock(

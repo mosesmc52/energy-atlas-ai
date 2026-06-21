@@ -819,6 +819,188 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             },
         )
 
+    def _canonical_lng_storage_geography_for_api(self, geography: str) -> str:
+        if geography == "united_states_total":
+            return "us_total"
+        return geography
+
+    def lng_storage_additions(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        frequency: str = "monthly",
+    ) -> EIAResult:
+        if geography not in self.UNDERGROUND_STORAGE_STATES:
+            raise ValueError(
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+            )
+        if frequency != "monthly":
+            raise ValueError("Invalid LNG storage frequency. Expected monthly.")
+
+        geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m")
+        request_end = pd.Timestamp(end).strftime("%Y-%m")
+        rows = self.client.natural_gas.lng_storage_additions(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=f"EIA LNG Storage Additions ({geography.replace('_', ' ').title()}, {frequency.title()})",
+                reference="eia-ng-client:natural_gas.lng_storage_additions",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": "lng_storage_additions",
+                "geography": geography,
+            },
+        )
+
+    def lng_storage_withdrawals(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        frequency: str = "monthly",
+    ) -> EIAResult:
+        if geography not in self.UNDERGROUND_STORAGE_STATES:
+            raise ValueError(
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+            )
+        if frequency != "monthly":
+            raise ValueError("Invalid LNG storage frequency. Expected monthly.")
+
+        geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m")
+        request_end = pd.Timestamp(end).strftime("%Y-%m")
+        rows = self.client.natural_gas.lng_storage_withdrawls(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=f"EIA LNG Storage Withdrawals ({geography.replace('_', ' ').title()}, {frequency.title()})",
+                reference="eia-ng-client:natural_gas.lng_storage_withdrawls",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": "lng_storage_withdrawals",
+                "geography": geography,
+            },
+        )
+
+    def lng_storage_net_withdrawals(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        frequency: str = "monthly",
+    ) -> EIAResult:
+        if geography not in self.UNDERGROUND_STORAGE_STATES:
+            raise ValueError(
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+            )
+        if frequency != "monthly":
+            raise ValueError("Invalid LNG storage frequency. Expected monthly.")
+
+        geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y-%m")
+        request_end = pd.Timestamp(end).strftime("%Y-%m")
+        rows = self.client.natural_gas.lng_storage_net_withdrawls(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=f"EIA LNG Storage Net Withdrawals ({geography.replace('_', ' ').title()}, {frequency.title()})",
+                reference="eia-ng-client:natural_gas.lng_storage_net_withdrawls",
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": "lng_storage_net_withdrawals",
+                "geography": geography,
+            },
+        )
+
     def underground_storage_by_type(
         self,
         *,
