@@ -49,6 +49,7 @@ STORAGE_DATASETS: Final[tuple[str, ...]] = (
     "weekly_working_gas",
     "underground_storage_all_operators",
     "underground_storage_by_type",
+    "lng_storage",
 )
 
 STORAGE_FREQUENCIES: Final[tuple[str, ...]] = (
@@ -61,6 +62,9 @@ STORAGE_METRIC_TYPES: Final[tuple[str, ...]] = (
     "working_gas",
     "base_gas",
     "total_gas",
+    "lng_storage_additions",
+    "lng_storage_withdrawals",
+    "lng_storage_net_withdrawals",
     "total_capacity",
     "working_gas_capacity",
     "storage_field_count",
@@ -193,9 +197,16 @@ UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str,
     ("storage_field_count", "annual"): "underground_storage_field_count_annual",
 }
 
+LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
+    ("lng_storage_additions", "annual"): "lng_storage_additions_annual",
+    ("lng_storage_withdrawals", "annual"): "lng_storage_withdrawals_annual",
+    ("lng_storage_net_withdrawals", "annual"): "lng_storage_net_withdrawals_annual",
+}
+
 SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(
     list(STORAGE_METRIC_BY_VALUE_TYPE.values())
     + list(UNDERGROUND_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY.values())
+    + list(LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
 )

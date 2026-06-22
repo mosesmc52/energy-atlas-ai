@@ -264,6 +264,81 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
         self.assertEqual(result.meta["metric_type"], "storage_field_count")
         self.assertEqual(result.source.reference, "eia-ng-client:natural_gas.underground_storage_count")
 
+    @patch("tools.eia_adapter.EIAClient")
+    def test_lng_storage_additions_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.lng_storage_additions.return_value = [
+            {"period": "2024-01", "value": "123.4"},
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.lng_storage_additions(
+            start="2024-01-15",
+            end="2024-12-20",
+            geography="united_states_total",
+            frequency="annual",
+        )
+
+        client.natural_gas.lng_storage_additions.assert_called_once_with(
+            start="2024",
+            end="2024",
+            geography="us_total",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["united_states_total"])
+        self.assertEqual(result.meta["metric_type"], "lng_storage_additions")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_lng_storage_withdrawals_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.lng_storage_withdrawls.return_value = [
+            {"period": "2024-01", "value": "123.4"},
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.lng_storage_withdrawals(
+            start="2024-01-15",
+            end="2024-12-20",
+            geography="tx",
+            frequency="annual",
+        )
+
+        client.natural_gas.lng_storage_withdrawls.assert_called_once_with(
+            start="2024",
+            end="2024",
+            geography="tx",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["tx"])
+        self.assertEqual(result.meta["metric_type"], "lng_storage_withdrawals")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_lng_storage_net_withdrawals_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.lng_storage_net_withdrawls.return_value = [
+            {"period": "2024-01", "value": "123.4"},
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.lng_storage_net_withdrawals(
+            start="2024-01-15",
+            end="2024-12-20",
+            geography="la",
+            frequency="annual",
+        )
+
+        client.natural_gas.lng_storage_net_withdrawls.assert_called_once_with(
+            start="2024",
+            end="2024",
+            geography="la",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["la"])
+        self.assertEqual(result.meta["metric_type"], "lng_storage_net_withdrawals")
+
 
 if __name__ == "__main__":
     unittest.main()

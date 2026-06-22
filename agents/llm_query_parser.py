@@ -7,6 +7,7 @@ from typing import Optional
 from agents.llm_router import (
     CHART_TYPES,
     COMPARISONS,
+    LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY,
     OUTPUT_MODES,
     STORAGE_ANALYSIS_TYPES,
     STORAGE_DATASETS,
@@ -66,6 +67,8 @@ STORAGE_TERMS = (
     "storage capacity",
     "field count",
     "storage field count",
+    "lng storage",
+    "liquefied natural gas storage",
 )
 
 NON_STORAGE_NATGAS_TERMS = (
@@ -210,6 +213,16 @@ ALL_OPERATORS_TERMS = (
     "how many storage fields",
     "count of storage fields",
     "underground storage count",
+)
+
+LNG_STORAGE_TERMS = (
+    "lng storage",
+    "liquefied natural gas storage",
+    "lng storage additions",
+    "lng storage withdrawals",
+    "lng storage withdrawls",
+    "lng storage net withdrawals",
+    "lng storage net withdrawls",
 )
 
 YOY_CUES = (
@@ -362,6 +375,41 @@ def _parse_storage_metric_type(q: str) -> str:
     if any(
         term in q
         for term in (
+            "lng storage net withdrawals",
+            "lng storage net withdrawls",
+            "lng net withdrawals",
+            "lng net withdrawls",
+            "net withdrawals from lng storage",
+            "net withdrawls from lng storage",
+        )
+    ):
+        return "lng_storage_net_withdrawals"
+    if any(
+        term in q
+        for term in (
+            "lng storage withdrawals",
+            "lng storage withdrawls",
+            "lng withdrawals",
+            "lng withdrawls",
+            "withdrawals from lng storage",
+            "withdrawls from lng storage",
+        )
+    ):
+        return "lng_storage_withdrawals"
+    if any(
+        term in q
+        for term in (
+            "lng storage additions",
+            "lng additions",
+            "additions to lng storage",
+            "lng storage injected",
+            "lng storage injection",
+        )
+    ):
+        return "lng_storage_additions"
+    if any(
+        term in q
+        for term in (
             "storage field count",
             "field count",
             "storage fields",
@@ -438,6 +486,12 @@ def _capacity_count_regions() -> list[str]:
 
 
 def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions: list[str], metric_type: str) -> str:
+    if metric_type in {
+        "lng_storage_additions",
+        "lng_storage_withdrawals",
+        "lng_storage_net_withdrawals",
+    } or _contains_any(q, LNG_STORAGE_TERMS):
+        return "lng_storage"
     has_by_type_terms = any(
         term in q
         for term in (
@@ -632,6 +686,14 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
             regions = []
         if not states and _asks_all_states(q):
             states_all = True
+        storage_type = None
+        storage_types_all = False
+    elif storage_dataset == "lng_storage":
+        regions = []
+        if storage_frequency != "monthly":
+            storage_frequency = "monthly"
+        if not states:
+            states = ["united_states_total"]
         storage_type = None
         storage_types_all = False
     elif storage_dataset == "underground_storage_by_type":
