@@ -277,14 +277,14 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
             start="2024-01-15",
             end="2024-12-20",
             geography="united_states_total",
-            frequency="monthly",
+            frequency="annual",
         )
 
         client.natural_gas.lng_storage_additions.assert_called_once_with(
-            start="2024-01",
-            end="2024-12",
+            start="2024",
+            end="2024",
             geography="us_total",
-            frequency="monthly",
+            frequency="annual",
         )
         self.assertEqual(result.df["geography"].tolist(), ["united_states_total"])
         self.assertEqual(result.meta["metric_type"], "lng_storage_additions")
@@ -302,14 +302,14 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
             start="2024-01-15",
             end="2024-12-20",
             geography="tx",
-            frequency="monthly",
+            frequency="annual",
         )
 
         client.natural_gas.lng_storage_withdrawls.assert_called_once_with(
-            start="2024-01",
-            end="2024-12",
+            start="2024",
+            end="2024",
             geography="tx",
-            frequency="monthly",
+            frequency="annual",
         )
         self.assertEqual(result.df["geography"].tolist(), ["tx"])
         self.assertEqual(result.meta["metric_type"], "lng_storage_withdrawals")
@@ -327,14 +327,14 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
             start="2024-01-15",
             end="2024-12-20",
             geography="la",
-            frequency="monthly",
+            frequency="annual",
         )
 
         client.natural_gas.lng_storage_net_withdrawls.assert_called_once_with(
-            start="2024-01",
-            end="2024-12",
+            start="2024",
+            end="2024",
             geography="la",
-            frequency="monthly",
+            frequency="annual",
         )
         self.assertEqual(result.df["geography"].tolist(), ["la"])
         self.assertEqual(result.meta["metric_type"], "lng_storage_net_withdrawals")

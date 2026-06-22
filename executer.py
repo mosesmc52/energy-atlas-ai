@@ -65,7 +65,7 @@ def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) ->
 def _storage_should_expand_for_default_time_series_history(route: EnergyRouteResult) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset != "underground_storage_by_type":
+    if route.storage_dataset not in {"underground_storage_by_type", "lng_storage"}:
         return False
     if route.analysis_type != "time_series":
         return False
@@ -151,7 +151,11 @@ def _normalize_storage_regions(filters: dict) -> list[str]:
     return regions or ["lower48"]
 
 
-def _normalize_storage_states(filters: dict) -> list[str]:
+def _normalize_storage_states(
+    filters: dict,
+    *,
+    valid_states: set[str] | None = None,
+) -> list[str]:
     raw_states = filters.get("states")
     states_all = bool(filters.get("states_all"))
     if raw_states is None:
@@ -159,14 +163,23 @@ def _normalize_storage_states(filters: dict) -> list[str]:
         raw_states = [raw_state] if raw_state else ["united_states_total"]
     elif isinstance(raw_states, str):
         raw_states = [raw_states]
-    return _resolve_storage_states(raw_states, states_all)
+    return _resolve_storage_states(
+        raw_states,
+        states_all,
+        valid_states=valid_states or EIAAdapter.UNDERGROUND_STORAGE_STATES,
+    )
 
 
-def _resolve_storage_states(states: list[str], states_all: bool) -> list[str]:
+def _resolve_storage_states(
+    states: list[str],
+    states_all: bool,
+    *,
+    valid_states: set[str],
+) -> list[str]:
     if states_all:
         return [
             state
-            for state in EIAAdapter.UNDERGROUND_STORAGE_STATES
+            for state in valid_states
             if state != "united_states_total"
         ]
 
@@ -177,12 +190,12 @@ def _resolve_storage_states(states: list[str], states_all: bool) -> list[str]:
             continue
         if state == "all":
             resolved_states.extend(
-                [s for s in EIAAdapter.UNDERGROUND_STORAGE_STATES if s != "united_states_total"]
+                [s for s in valid_states if s != "united_states_total"]
             )
             continue
-        if state not in EIAAdapter.UNDERGROUND_STORAGE_STATES:
+        if state not in valid_states:
             raise ValueError(
-                f"Invalid storage state '{state}'. Expected one of: {sorted(EIAAdapter.UNDERGROUND_STORAGE_STATES)}"
+                f"Invalid storage state '{state}'. Expected one of: {sorted(valid_states)}"
             )
         if state not in resolved_states:
             resolved_states.append(state)
@@ -493,9 +506,9 @@ class MetricExecutor:
             "underground_storage_working_gas_capacity_annual": self._eia_underground_storage_capacity_or_count,
             "underground_storage_field_count_monthly": self._eia_underground_storage_capacity_or_count,
             "underground_storage_field_count_annual": self._eia_underground_storage_capacity_or_count,
-            "lng_storage_additions_monthly": self._eia_lng_storage,
-            "lng_storage_withdrawals_monthly": self._eia_lng_storage,
-            "lng_storage_net_withdrawals_monthly": self._eia_lng_storage,
+            "lng_storage_additions_annual": self._eia_lng_storage,
+            "lng_storage_withdrawals_annual": self._eia_lng_storage,
+            "lng_storage_net_withdrawals_annual": self._eia_lng_storage,
             "underground_storage_by_type_working_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_base_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_total_gas_monthly": self._eia_underground_storage_by_type,
@@ -1018,9 +1031,12 @@ class MetricExecutor:
     def _eia_lng_storage(
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
-        states = _normalize_storage_states(filters)
+        states = _normalize_storage_states(
+            filters,
+            valid_states=EIAAdapter.LNG_STORAGE_STATES,
+        )
         metric_type = str(filters.get("storage_metric_type") or "lng_storage_additions")
-        frequency = str(filters.get("storage_frequency") or "monthly")
+        frequency = str(filters.get("storage_frequency") or "annual")
 
         def fetch_for_state(state: str) -> EIAResult:
             if metric_type == "lng_storage_additions":

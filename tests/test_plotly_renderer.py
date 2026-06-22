@@ -243,6 +243,32 @@ class TestPlotlyRenderer(unittest.TestCase):
         self.assertEqual([metric["value"] for metric in metrics], [110.0, 210.0, 100.0])
         self.assertEqual(metrics[2]["subtitle"], "Midwest - East")
 
+    def test_compute_timeseries_summary_metrics_compares_states(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2020-01-01",
+                        "2024-01-01",
+                        "2020-01-01",
+                        "2024-01-01",
+                    ]
+                ),
+                "value": [0.0, 0.0, 6500.0, 0.0],
+                "state": ["tx", "tx", "la", "la"],
+            }
+        )
+
+        metrics = compute_timeseries_summary_metrics(df, unit="MMcf")
+
+        self.assertEqual(len(metrics), 3)
+        self.assertEqual(
+            [metric["label"] for metric in metrics],
+            ["LA Latest", "TX Latest", "Spread"],
+        )
+        self.assertEqual([metric["value"] for metric in metrics], [0.0, 0.0, 0.0])
+        self.assertEqual(metrics[2]["subtitle"], "TX - LA")
+
     def test_storage_change_chart_gets_dashboard_styling(self) -> None:
         df = pd.DataFrame(
             {

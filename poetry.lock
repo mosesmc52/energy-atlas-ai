@@ -1072,13 +1072,13 @@ events = ["cryptography (>=36.0.2)", "requests (>=2.32.1)"]
 
 [[package]]
 name = "eia-ng-client"
-version = "0.1.80"
+version = "0.1.81"
 description = "A Python client for the EIA v2 natural gas API with structured access to production, storage, flows, prices, and gas-fired electricity generation."
 optional = false
 python-versions = "<4.0,>=3.9"
 files = [
-    {file = "eia_ng_client-0.1.80-py3-none-any.whl", hash = "sha256:330d46f515216a6ea52d6f10e4a2c44863ba4b1aeb7c87a6d670c50f81aefb1b"},
-    {file = "eia_ng_client-0.1.80.tar.gz", hash = "sha256:29c7774a09907edd0060acb5f4a499b94ee0059ec86256004d5525e4c6fad758"},
+    {file = "eia_ng_client-0.1.81-py3-none-any.whl", hash = "sha256:56b08677aa1af18266fe4e2863d3ca12cabc2bc1e7a42df2cb5348229b8d4798"},
+    {file = "eia_ng_client-0.1.81.tar.gz", hash = "sha256:5998be58ae23cc291ce3d2f22db77c7f0d5f1edbc20475f5f2048ae957d8cb16"},
 ]
 
 [package.dependencies]
@@ -6078,4 +6078,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<3.13"
-content-hash = "a0184a27f01d2d469292fae3e68ce6d57e73d3db336302de90bd8b9c5ba06724"
+content-hash = "75085e1409612dc8cfce4f4c826b8d283bae349e78655b6ebfda99ea6116c2a7"

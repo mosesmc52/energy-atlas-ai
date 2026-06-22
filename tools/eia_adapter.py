@@ -138,6 +138,47 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "wy",
         "united_states_total",
     }
+    LNG_STORAGE_STATES = {
+        "ak",
+        "al",
+        "ar",
+        "az",
+        "ca",
+        "ct",
+        "de",
+        "fl",
+        "ga",
+        "ia",
+        "id",
+        "il",
+        "in",
+        "la",
+        "ma",
+        "md",
+        "me",
+        "mn",
+        "mo",
+        "mt",
+        "nc",
+        "ne",
+        "nh",
+        "nj",
+        "nv",
+        "ny",
+        "ok",
+        "or",
+        "pa",
+        "ri",
+        "sc",
+        "sd",
+        "tn",
+        "tx",
+        "ut",
+        "va",
+        "wa",
+        "wi",
+        "united_states_total",
+    }
     UNDERGROUND_STORAGE_HISTORY_PREFIX = {
         "base_gas": ("n5010", "2"),
         "working_gas": ("n5020", "2"),
@@ -830,18 +871,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         start: str,
         end: str,
         geography: str,
-        frequency: str = "monthly",
+        frequency: str = "annual",
     ) -> EIAResult:
-        if geography not in self.UNDERGROUND_STORAGE_STATES:
+        if geography not in self.LNG_STORAGE_STATES:
             raise ValueError(
-                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.LNG_STORAGE_STATES)}"
             )
-        if frequency != "monthly":
-            raise ValueError("Invalid LNG storage frequency. Expected monthly.")
+        if frequency != "annual":
+            raise ValueError("Invalid LNG storage frequency. Expected annual.")
 
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
-        request_start = pd.Timestamp(start).strftime("%Y-%m")
-        request_end = pd.Timestamp(end).strftime("%Y-%m")
+        request_start = pd.Timestamp(start).strftime("%Y")
+        request_end = pd.Timestamp(end).strftime("%Y")
         rows = self.client.natural_gas.lng_storage_additions(
             start=request_start,
             end=request_end,
@@ -889,18 +930,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         start: str,
         end: str,
         geography: str,
-        frequency: str = "monthly",
+        frequency: str = "annual",
     ) -> EIAResult:
-        if geography not in self.UNDERGROUND_STORAGE_STATES:
+        if geography not in self.LNG_STORAGE_STATES:
             raise ValueError(
-                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.LNG_STORAGE_STATES)}"
             )
-        if frequency != "monthly":
-            raise ValueError("Invalid LNG storage frequency. Expected monthly.")
+        if frequency != "annual":
+            raise ValueError("Invalid LNG storage frequency. Expected annual.")
 
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
-        request_start = pd.Timestamp(start).strftime("%Y-%m")
-        request_end = pd.Timestamp(end).strftime("%Y-%m")
+        request_start = pd.Timestamp(start).strftime("%Y")
+        request_end = pd.Timestamp(end).strftime("%Y")
         rows = self.client.natural_gas.lng_storage_withdrawls(
             start=request_start,
             end=request_end,
@@ -948,18 +989,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         start: str,
         end: str,
         geography: str,
-        frequency: str = "monthly",
+        frequency: str = "annual",
     ) -> EIAResult:
-        if geography not in self.UNDERGROUND_STORAGE_STATES:
+        if geography not in self.LNG_STORAGE_STATES:
             raise ValueError(
-                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.UNDERGROUND_STORAGE_STATES)}"
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.LNG_STORAGE_STATES)}"
             )
-        if frequency != "monthly":
-            raise ValueError("Invalid LNG storage frequency. Expected monthly.")
+        if frequency != "annual":
+            raise ValueError("Invalid LNG storage frequency. Expected annual.")
 
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
-        request_start = pd.Timestamp(start).strftime("%Y-%m")
-        request_end = pd.Timestamp(end).strftime("%Y-%m")
+        request_start = pd.Timestamp(start).strftime("%Y")
+        request_end = pd.Timestamp(end).strftime("%Y")
         rows = self.client.natural_gas.lng_storage_net_withdrawls(
             start=request_start,
             end=request_end,

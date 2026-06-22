@@ -2624,6 +2624,7 @@ def _storage_payload(
     chart_spec: ChartSpec | None,
     source_date: str | None,
 ) -> AnswerPayload:
+    answer_text = re.sub(r"\blng\b", "LNG", answer_text, flags=re.IGNORECASE)
     return AnswerPayload(
         query=query,
         mode=mode,
@@ -2692,13 +2693,25 @@ def _underground_storage_time_series_answer(df: pd.DataFrame, route: Any) -> str
     unit = _underground_storage_unit(_route_storage_metric_type(route))
     group_column = _underground_storage_group_column(d)
     if group_column in d.columns and d[group_column].nunique() > 1:
-        latest = _underground_storage_latest_by_state_df(d).sort_values("value", ascending=False)
-        date = latest["date"].max().date().isoformat()
-        pairs = [
-            f"{_underground_storage_geography_label(group_column, row[group_column])}: {_format_number(float(row['value']))} {unit}"
-            for _, row in latest.iterrows()
-        ]
-        return f"As of {date}, latest geography {metric_label.lower()} was " + "; ".join(pairs) + "."
+        summaries: list[str] = []
+        scoped = d.sort_values([group_column, "date"])
+        for geography_value, geography_df in scoped.groupby(group_column, sort=False):
+            geography_df = geography_df.reset_index(drop=True)
+            summary = _underground_storage_period_change_summary(geography_df)
+            if not summary:
+                continue
+            geography = _underground_storage_geography_label(group_column, str(geography_value))
+            start_value = summary.get("start_value")
+            latest_value = summary.get("latest_value")
+            net_change = summary.get("net_change")
+            summaries.append(
+                f"{geography} moved from {_format_number(start_value)} {unit} on {summary.get('start_date')} "
+                f"to {_format_number(latest_value)} {unit} on {summary.get('latest_date')} "
+                f"({_format_number(net_change)} {unit} net)"
+            )
+        if summaries:
+            return f"{metric_label} over the displayed period: " + "; ".join(summaries) + "."
+        return "No data was returned for the requested period."
 
     summary = _underground_storage_period_change_summary(d)
     geography = _underground_storage_geography_label(

@@ -622,12 +622,12 @@ class TestStorageRouting(unittest.TestCase):
 
         self.assertEqual(route.domain, "storage")
         self.assertEqual(route.storage_dataset, "lng_storage")
-        self.assertEqual(route.storage_frequency, "monthly")
+        self.assertEqual(route.storage_frequency, "annual")
         self.assertEqual(route.storage_metric_type, "lng_storage_additions")
         self.assertEqual(route.states, ["united_states_total"])
         self.assertEqual(route.analysis_type, "latest")
         self.assertEqual(route.chart_type, "none")
-        self.assertEqual(route.primary_metric, "lng_storage_additions_monthly")
+        self.assertEqual(route.primary_metric, "lng_storage_additions_annual")
 
     def test_us_lng_storage_additions_since_2020(self) -> None:
         route = route_query("Show U.S. LNG storage additions since 2020.")
@@ -637,21 +637,23 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.states, ["united_states_total"])
         self.assertEqual(route.analysis_type, "time_series")
         self.assertEqual(route.chart_type, "line")
-        self.assertEqual(route.primary_metric, "lng_storage_additions_monthly")
+        self.assertEqual(route.primary_metric, "lng_storage_additions_annual")
 
     def test_texas_lng_storage_withdrawals(self) -> None:
         route = route_query("What are Texas LNG storage withdrawals?")
 
         self.assertEqual(route.storage_dataset, "lng_storage")
+        self.assertEqual(route.storage_frequency, "annual")
         self.assertEqual(route.storage_metric_type, "lng_storage_withdrawals")
         self.assertEqual(route.states, ["tx"])
         self.assertEqual(route.analysis_type, "latest")
-        self.assertEqual(route.primary_metric, "lng_storage_withdrawals_monthly")
+        self.assertEqual(route.primary_metric, "lng_storage_withdrawals_annual")
 
     def test_texas_lng_storage_withdrawals_since_2020(self) -> None:
         route = route_query("Show Texas LNG storage withdrawals since 2020.")
 
         self.assertEqual(route.storage_dataset, "lng_storage")
+        self.assertEqual(route.storage_frequency, "annual")
         self.assertEqual(route.storage_metric_type, "lng_storage_withdrawals")
         self.assertEqual(route.states, ["tx"])
         self.assertEqual(route.analysis_type, "time_series")
@@ -661,19 +663,42 @@ class TestStorageRouting(unittest.TestCase):
         route = route_query("What are U.S. LNG storage net withdrawals?")
 
         self.assertEqual(route.storage_dataset, "lng_storage")
+        self.assertEqual(route.storage_frequency, "annual")
         self.assertEqual(route.storage_metric_type, "lng_storage_net_withdrawals")
         self.assertEqual(route.states, ["united_states_total"])
         self.assertEqual(route.analysis_type, "latest")
-        self.assertEqual(route.primary_metric, "lng_storage_net_withdrawals_monthly")
+        self.assertEqual(route.primary_metric, "lng_storage_net_withdrawals_annual")
 
     def test_compare_texas_and_louisiana_lng_storage_withdrawals_since_2020(self) -> None:
         route = route_query("Compare Texas and Louisiana LNG storage withdrawals since 2020.")
 
         self.assertEqual(route.storage_dataset, "lng_storage")
+        self.assertEqual(route.storage_frequency, "annual")
         self.assertEqual(route.storage_metric_type, "lng_storage_withdrawals")
         self.assertEqual(route.states, ["tx", "la"])
         self.assertEqual(route.analysis_type, "time_series")
         self.assertEqual(route.chart_type, "line")
+
+    def test_compare_lng_storage_additions_in_texas_and_louisiana_defaults_to_time_series(self) -> None:
+        route = route_query("Compare LNG storage additions in Texas and Louisiana.")
+
+        self.assertEqual(route.storage_dataset, "lng_storage")
+        self.assertEqual(route.storage_frequency, "annual")
+        self.assertEqual(route.storage_metric_type, "lng_storage_additions")
+        self.assertEqual(route.states, ["tx", "la"])
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+
+    def test_which_state_has_the_most_lng_storage_additions_expands_states(self) -> None:
+        route = route_query("Which state has the most LNG storage additions?")
+
+        self.assertEqual(route.storage_dataset, "lng_storage")
+        self.assertEqual(route.storage_frequency, "annual")
+        self.assertEqual(route.storage_metric_type, "lng_storage_additions")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertTrue(route.states_all)
+        self.assertEqual(route.states, [])
 
     def test_underground_storage_withdrawals_in_texas_not_lng(self) -> None:
         route = route_query("What are underground storage withdrawals in Texas?")

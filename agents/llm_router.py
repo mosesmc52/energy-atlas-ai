@@ -198,9 +198,9 @@ UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str,
 }
 
 LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
-    ("lng_storage_additions", "monthly"): "lng_storage_additions_monthly",
-    ("lng_storage_withdrawals", "monthly"): "lng_storage_withdrawals_monthly",
-    ("lng_storage_net_withdrawals", "monthly"): "lng_storage_net_withdrawals_monthly",
+    ("lng_storage_additions", "annual"): "lng_storage_additions_annual",
+    ("lng_storage_withdrawals", "annual"): "lng_storage_withdrawals_annual",
+    ("lng_storage_net_withdrawals", "annual"): "lng_storage_net_withdrawals_annual",
 }
 
 SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(

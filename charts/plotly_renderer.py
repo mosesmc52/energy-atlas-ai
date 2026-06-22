@@ -124,8 +124,17 @@ def compute_timeseries_summary_metrics(
         return []
 
     selected_columns = [date_field, value_field]
+    group_field = None
     if "region" in df.columns:
-        selected_columns.append("region")
+        group_field = "region"
+    elif "state" in df.columns:
+        group_field = "state"
+    elif "geography" in df.columns:
+        group_field = "geography"
+    elif "storage_type" in df.columns:
+        group_field = "storage_type"
+    if group_field:
+        selected_columns.append(group_field)
     d = df[selected_columns].copy()
     d[date_field] = pd.to_datetime(d[date_field], errors="coerce")
     d[value_field] = pd.to_numeric(d[value_field], errors="coerce")
@@ -133,32 +142,45 @@ def compute_timeseries_summary_metrics(
     if d.empty:
         return []
 
-    if "region" in d.columns:
-        d["region"] = d["region"].astype(str)
-        unique_regions = [region for region in d["region"].dropna().unique().tolist() if region]
-        if len(unique_regions) > 1:
+    if group_field and group_field in d.columns:
+        d[group_field] = d[group_field].astype(str)
+        unique_groups = [group for group in d[group_field].dropna().unique().tolist() if group]
+        if len(unique_groups) > 1:
             latest_by_region = (
-                d.sort_values(["region", date_field])
-                .groupby("region", as_index=False, sort=False)
+                d.sort_values([group_field, date_field])
+                .groupby(group_field, as_index=False, sort=False)
                 .tail(1)
-                .sort_values("region")
+                .sort_values(group_field)
             )
             metrics: list[dict[str, float | str | None]] = []
             for _, row in latest_by_region.iterrows():
-                region_label = str(row["region"]).replace("_", " ").title()
+                raw_label = str(row[group_field])
+                if group_field == "state":
+                    region_label = "U.S." if raw_label == "united_states_total" else raw_label.upper()
+                elif group_field == "storage_type":
+                    region_label = raw_label.replace("_", " ")
+                else:
+                    region_label = raw_label.replace("_", " ").title()
                 metrics.append(
                     {
-                        "label": f"{region_label} Latest" if len(unique_regions) == 2 else region_label,
+                        "label": f"{region_label} Latest" if len(unique_groups) == 2 else region_label,
                         "value": float(row[value_field]),
                         "unit": unit or "",
                         "subtitle": row[date_field].date().isoformat(),
                     }
                 )
-            if len(unique_regions) == 2 and len(latest_by_region) == 2:
+            if len(unique_groups) == 2 and len(latest_by_region) == 2:
                 left = latest_by_region.iloc[0]
                 right = latest_by_region.iloc[1]
-                left_label = str(left["region"]).replace("_", " ").title()
-                right_label = str(right["region"]).replace("_", " ").title()
+                if group_field == "state":
+                    left_label = "U.S." if str(left[group_field]) == "united_states_total" else str(left[group_field]).upper()
+                    right_label = "U.S." if str(right[group_field]) == "united_states_total" else str(right[group_field]).upper()
+                elif group_field == "storage_type":
+                    left_label = str(left[group_field]).replace("_", " ")
+                    right_label = str(right[group_field]).replace("_", " ")
+                else:
+                    left_label = str(left[group_field]).replace("_", " ").title()
+                    right_label = str(right[group_field]).replace("_", " ").title()
                 metrics.append(
                     {
                         "label": "Spread",

@@ -825,7 +825,7 @@ def route_query(user_query: str) -> EnergyRouteResult:
             regions = []
             storage_type = None
             storage_types_all = False
-            storage_frequency = "monthly"
+            storage_frequency = "annual"
             if national_storage_request:
                 states = ["united_states_total"]
                 states_all = False
@@ -925,9 +925,26 @@ def route_query(user_query: str) -> EnergyRouteResult:
             value_type = "level"
             if storage_dataset == "lng_storage":
                 comparisons = ["none"]
-                if analysis_type in {"ranking", "regional_compare"} and not states:
+                has_multi_state_lng_compare = (
+                    len(states) > 1
+                    and not states_all
+                    and any(term in normalized for term in ("compare", "versus", " vs "))
+                )
+                if analysis_type in {"ranking", "regional_compare"} and (
+                    not states
+                    or (
+                        not national_storage_request
+                        and len(states) == 1
+                        and _is_national_storage_series(states[0])
+                        and any(
+                            term in normalized
+                            for term in ("which state", "rank states", "by state", "compare states", "all states")
+                        )
+                    )
+                ):
+                    states = []
                     states_all = True
-                if _has_explicit_time_series_request(normalized):
+                if _has_explicit_time_series_request(normalized) or has_multi_state_lng_compare:
                     analysis_type = "time_series"
                     chart_type = "line"
                     output_mode = "chart_and_answer"
@@ -997,7 +1014,7 @@ def route_query(user_query: str) -> EnergyRouteResult:
             states = [state for state in states if not _is_national_storage_series(state)]
             if not states and not (_is_capacity_count_storage_metric(storage_metric_type) and regions):
                 states_all = True
-        if storage_dataset == "lng_storage" and not states:
+        if storage_dataset == "lng_storage" and not states and not states_all:
             states = ["united_states_total"]
             states_all = False
         if _is_capacity_count_storage_metric(storage_metric_type) and regions:
