@@ -13,6 +13,10 @@ class ReportRecord:
     period_ending: str | None = None
     summary_text: str = ""
     body_text: str = ""
+    report_family: str | None = None
+    domain_tags: list[str] = field(default_factory=list)
+    metric_tags: list[str] = field(default_factory=list)
+    geography_tags: list[str] = field(default_factory=list)
     topics: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -29,5 +33,9 @@ class ReportChunk:
     published_date: str | None = None
     release_date: str | None = None
     period_ending: str | None = None
+    report_family: str | None = None
+    domain_tags: list[str] = field(default_factory=list)
+    metric_tags: list[str] = field(default_factory=list)
+    geography_tags: list[str] = field(default_factory=list)
     topics: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

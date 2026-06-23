@@ -3,7 +3,13 @@ import re
 
 from .base import BaseCrawler
 from .models import ReportRecord
-from .utils import absolute_url, clean_text, extract_topics_from_text
+from .utils import (
+    absolute_url,
+    clean_text,
+    extract_topics_from_text,
+    infer_geography_tags_from_text,
+    infer_metric_tags_from_text,
+)
 
 class STEONaturalGasCrawler(BaseCrawler):
     source_name = "eia"
@@ -35,6 +41,10 @@ class STEONaturalGasCrawler(BaseCrawler):
             published_date=pub_match.group(1) if pub_match else None,
             summary_text=body_text[:2000],
             body_text=body_text,
+            report_family="steo_natural_gas",
+            domain_tags=["natural_gas", "outlook"],
+            metric_tags=infer_metric_tags_from_text(body_text),
+            geography_tags=infer_geography_tags_from_text(body_text),
             topics=extract_topics_from_text(body_text),
             metadata={"crawler": self.__class__.__name__},
         )

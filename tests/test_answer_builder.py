@@ -544,6 +544,163 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertEqual(len(payload.report_context_sources), 1)
         self.assertEqual(payload.report_context_sources[0].title, "Today in Energy")
 
+    def test_report_rag_uses_route_aware_storage_filters(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-01-01", "value": 2500.0},
+                {"date": "2026-01-08", "value": 2450.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="Natural Gas Weekly Update",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "working_gas_storage_lower48"},
+        )
+
+        route = self._storage_route(
+            storage_dataset="weekly_working_gas",
+            storage_frequency="weekly",
+            storage_metric_type="working_gas",
+            normalized_query="why did storage tighten this week?",
+        )
+
+        class _FakeResponse:
+            output_text = (
+                '{"answer":"Storage tightened","signal":{"status":"bullish","confidence":0.8},"summary":"Weekly storage commentary pointed to tighter balances.","drivers":["Storage withdrawals"],"data_points":[],"forecast":{"direction":"up","reasoning":"Storage was tighter"},"alerts":[],"sources":[{"title":"Natural Gas Weekly Update","date":"2026-01-18"}]}'
+            )
+
+        with patch.dict(
+            "os.environ",
+            {"ATLAS_USE_LLM_NARRATION": "true"},
+            clear=False,
+        ), patch(
+            "answer_builder._cached_report_chunks",
+            return_value=(
+                {
+                    "title": "Natural Gas Weekly Update",
+                    "report_type": "natural_gas_weekly_update",
+                    "report_family": "natural_gas_weekly",
+                    "text": "Storage withdrawals increased.",
+                    "published_date": "2026-01-18",
+                    "domain_tags": ["storage"],
+                    "metric_tags": ["working_gas"],
+                    "topics": ["storage"],
+                },
+            ),
+        ), patch(
+            "answer_builder.search_report_chunks",
+            return_value=[
+                {
+                    "title": "Natural Gas Weekly Update",
+                    "report_type": "natural_gas_weekly_update",
+                    "report_family": "natural_gas_weekly",
+                    "text": "Storage withdrawals increased.",
+                    "published_date": "2026-01-18",
+                    "domain_tags": ["storage"],
+                    "metric_tags": ["working_gas"],
+                    "topics": ["storage"],
+                }
+            ],
+        ) as mock_search, patch(
+            "answer_builder.client.responses.create",
+            return_value=_FakeResponse(),
+        ):
+            payload = build_answer_with_openai(
+                query="Why did storage tighten this week?",
+                result=result,
+                route=route,
+            )
+
+        self.assertTrue(payload.report_context_used)
+        self.assertEqual(
+            mock_search.call_args.kwargs["filters"]["report_families"],
+            ["natural_gas_weekly", "wngsr_supplement"],
+        )
+        self.assertEqual(
+            mock_search.call_args.kwargs["filters"]["domain_tags"],
+            ["storage"],
+        )
+
+    def test_report_rag_uses_lng_metric_filter_for_lng_route(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2024-01-01", "value": 14.0},
+                {"date": "2025-01-01", "value": 18.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="LNG Storage Additions",
+                reference="test",
+                retrieved_at=datetime(2026, 1, 22),
+            ),
+            meta={"metric": "lng_exports"},
+        )
+        route = self._storage_route(
+            storage_dataset="lng_storage",
+            storage_frequency="annual",
+            storage_metric_type="lng_storage_additions",
+            states=["tx"],
+            normalized_query="why are lng storage additions changing?",
+        )
+
+        class _FakeResponse:
+            output_text = (
+                '{"answer":"LNG additions changed","signal":{"status":"neutral","confidence":0.7},"summary":"Recent LNG commentary was mixed.","drivers":["LNG activity"],"data_points":[],"forecast":{"direction":"flat","reasoning":"Mixed signals"},"alerts":[],"sources":[{"title":"Today in Energy","date":"2026-01-18"}]}'
+            )
+
+        with patch.dict(
+            "os.environ",
+            {"ATLAS_USE_LLM_NARRATION": "true"},
+            clear=False,
+        ), patch(
+            "answer_builder._cached_report_chunks",
+            return_value=(
+                {
+                    "title": "Today in Energy",
+                    "report_type": "today_in_energy_natural_gas",
+                    "report_family": "today_in_energy_natural_gas",
+                    "text": "LNG storage additions changed because export flows shifted.",
+                    "published_date": "2026-01-18",
+                    "domain_tags": ["natural_gas"],
+                    "metric_tags": ["lng"],
+                    "topics": ["lng"],
+                },
+            ),
+        ), patch(
+            "answer_builder.search_report_chunks",
+            return_value=[
+                {
+                    "title": "Today in Energy",
+                    "report_type": "today_in_energy_natural_gas",
+                    "report_family": "today_in_energy_natural_gas",
+                    "text": "LNG storage additions changed because export flows shifted.",
+                    "published_date": "2026-01-18",
+                    "domain_tags": ["natural_gas"],
+                    "metric_tags": ["lng"],
+                    "topics": ["lng"],
+                }
+            ],
+        ) as mock_search, patch(
+            "answer_builder.client.responses.create",
+            return_value=_FakeResponse(),
+        ):
+            payload = build_answer_with_openai(
+                query="Why are LNG storage additions changing?",
+                result=result,
+                route=route,
+            )
+
+        self.assertTrue(payload.report_context_used)
+        self.assertIn("lng", mock_search.call_args.kwargs["filters"]["metric_tags"])
+
     def test_regional_storage_change_builds_structured_ranking_answer(self) -> None:
         df = pd.DataFrame(
             [

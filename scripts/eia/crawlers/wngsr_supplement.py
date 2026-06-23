@@ -2,7 +2,13 @@ from __future__ import annotations
 import re
 from .base import BaseCrawler
 from .models import ReportRecord
-from .utils import absolute_url, clean_text, extract_topics_from_text
+from .utils import (
+    absolute_url,
+    clean_text,
+    extract_topics_from_text,
+    infer_geography_tags_from_text,
+    infer_metric_tags_from_text,
+)
 
 class WNGSRSupplementCrawler(BaseCrawler):
     source_name = "eia"
@@ -35,6 +41,10 @@ class WNGSRSupplementCrawler(BaseCrawler):
             period_ending=period_match.group(1) if period_match else None,
             summary_text=body_text[:1600],
             body_text=body_text,
+            report_family="wngsr_supplement",
+            domain_tags=["natural_gas", "storage"],
+            metric_tags=infer_metric_tags_from_text(body_text),
+            geography_tags=infer_geography_tags_from_text(body_text),
             topics=extract_topics_from_text(body_text),
             metadata={"crawler": self.__class__.__name__},
         )

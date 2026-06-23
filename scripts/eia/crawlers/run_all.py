@@ -47,6 +47,10 @@ def build_chunks(records, chunk_size: int = 800, overlap: int = 120):
                 published_date=record.published_date,
                 release_date=record.release_date,
                 period_ending=record.period_ending,
+                report_family=record.report_family,
+                domain_tags=record.domain_tags,
+                metric_tags=record.metric_tags,
+                geography_tags=record.geography_tags,
                 topics=record.topics,
                 metadata=record.metadata,
             )

@@ -62,6 +62,7 @@ from scripts.eia.rag.retrieval import (
     search_report_chunks,
     should_use_report_rag,
 )
+from scripts.eia.rag.report_selector import select_report_filters
 from tools.eia_adapter import EIAResult
 
 SYSTEM_INSTRUCTIONS = (
@@ -185,7 +186,10 @@ def _is_report_narrative_query(query: str) -> bool:
 
 
 def _build_report_rag_context(
-    query: str, *, top_k: int = 4
+    query: str,
+    route: Any | None = None,
+    *,
+    top_k: int = 4,
 ) -> tuple[str, list[AnswerSourceSummary], bool, str]:
     if not should_use_report_rag(query):
         logger.info("report_rag used=false reason=heuristic query=%r", query)
@@ -201,12 +205,19 @@ def _build_report_rag_context(
         )
         return "", [], False, "missing_or_empty_chunk_file"
 
-    matches = search_report_chunks(query, chunks, top_k=top_k)
+    filters = select_report_filters(query, route)
+    matches = search_report_chunks(
+        query,
+        chunks,
+        top_k=int(filters.get("top_k") or top_k),
+        filters=filters,
+    )
     if not matches:
         logger.info(
-            "report_rag used=false reason=no_matches path=%s query=%r",
+            "report_rag used=false reason=no_matches path=%s query=%r filters=%s",
             report_chunks_path,
             query,
+            filters,
         )
         return "", [], False, "no_retrieval_matches"
 
@@ -3906,7 +3917,7 @@ def build_answer_with_openai(
             report_context_used,
             report_context_reason,
         ) = (
-            _build_report_rag_context(query)
+            _build_report_rag_context(query, route)
         )
         report_context_block = report_context_text or "Report Context:\nNone retrieved."
         user_text = (
