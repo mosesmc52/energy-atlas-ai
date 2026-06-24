@@ -109,17 +109,50 @@ _STORAGE_DOWNLOAD_URLS = {
 }
 
 _UNDERGROUND_STORAGE_DOWNLOAD_URLS = {
-    ("total_gas", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAT_MMCF_M.xls",
-    ("base_gas", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAB_MMCF_M.xls",
-    ("working_gas", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAO_MMCF_M.xls",
-    ("net_withdrawals", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAN_MMCF_M.xls",
-    ("injections", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAI_MMCF_M.xls",
-    ("withdrawals", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAW_MMCF_M.xls",
-    ("working_gas_yoy_volume_change", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAH_MMCF_M.xls",
-    ("working_gas_yoy_pct_change", "monthly"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAH_PCT_M.xls",
-    ("net_withdrawals", "annual"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAN_MMCF_A.xls",
-    ("injections", "annual"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAI_MMCF_A.xls",
-    ("withdrawals", "annual"): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAW_MMCF_A.xls",
+    (
+        "total_gas",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAT_MMCF_M.xls",
+    (
+        "base_gas",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAB_MMCF_M.xls",
+    (
+        "working_gas",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAO_MMCF_M.xls",
+    (
+        "net_withdrawals",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAN_MMCF_M.xls",
+    (
+        "injections",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAI_MMCF_M.xls",
+    (
+        "withdrawals",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAW_MMCF_M.xls",
+    (
+        "working_gas_yoy_volume_change",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAH_MMCF_M.xls",
+    (
+        "working_gas_yoy_pct_change",
+        "monthly",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAH_PCT_M.xls",
+    (
+        "net_withdrawals",
+        "annual",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAN_MMCF_A.xls",
+    (
+        "injections",
+        "annual",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAI_MMCF_A.xls",
+    (
+        "withdrawals",
+        "annual",
+    ): "https://www.eia.gov/dnav/ng/xls/NG_STOR_SUM_A_EPG0_SAW_MMCF_A.xls",
 }
 
 
@@ -176,9 +209,11 @@ def _storage_download_links_for_source(source) -> list[tuple[str, str]]:
         return links
 
     if reference == "eia-ng-client:natural_gas.underground_storage_all_operators":
-        metric_type = str(
-            params.get("metric_type") or params.get("storage_metric_type") or ""
-        ).strip().lower()
+        metric_type = (
+            str(params.get("metric_type") or params.get("storage_metric_type") or "")
+            .strip()
+            .lower()
+        )
         frequency = str(params.get("frequency") or "").strip().lower()
         url = _UNDERGROUND_STORAGE_DOWNLOAD_URLS.get((metric_type, frequency))
         if url:
@@ -367,7 +402,9 @@ def format_grouped_timeseries_summary_table(
     scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
     scoped["value"] = pd.to_numeric(scoped["value"], errors="coerce")
     scoped[group_field] = scoped[group_field].astype(str)
-    scoped = scoped.dropna(subset=["date", "value", group_field]).sort_values([group_field, "date"])
+    scoped = scoped.dropna(subset=["date", "value", group_field]).sort_values(
+        [group_field, "date"]
+    )
     if scoped.empty:
         return ""
 
@@ -385,11 +422,31 @@ def format_grouped_timeseries_summary_table(
         display_label = str(group_value).replace("_", " ").title()
         row = [
             display_label,
-            _format_card_value(metric_map.get("Latest", {}).get("value"), str(metric_map.get("Latest", {}).get("unit") or "")) or "",
-            _format_card_value(metric_map.get("Previous", {}).get("value"), str(metric_map.get("Previous", {}).get("unit") or "")) or "",
-            _format_card_value(metric_map.get("Low", {}).get("value"), str(metric_map.get("Low", {}).get("unit") or "")) or "",
-            _format_card_value(metric_map.get("High", {}).get("value"), str(metric_map.get("High", {}).get("unit") or "")) or "",
-            _format_card_value(metric_map.get("5Y Avg", {}).get("value"), str(metric_map.get("5Y Avg", {}).get("unit") or "")) or "",
+            _format_card_value(
+                metric_map.get("Latest", {}).get("value"),
+                str(metric_map.get("Latest", {}).get("unit") or ""),
+            )
+            or "",
+            _format_card_value(
+                metric_map.get("Previous", {}).get("value"),
+                str(metric_map.get("Previous", {}).get("unit") or ""),
+            )
+            or "",
+            _format_card_value(
+                metric_map.get("Low", {}).get("value"),
+                str(metric_map.get("Low", {}).get("unit") or ""),
+            )
+            or "",
+            _format_card_value(
+                metric_map.get("High", {}).get("value"),
+                str(metric_map.get("High", {}).get("unit") or ""),
+            )
+            or "",
+            _format_card_value(
+                metric_map.get("5Y Avg", {}).get("value"),
+                str(metric_map.get("5Y Avg", {}).get("unit") or ""),
+            )
+            or "",
         ]
         rows.append("| " + " | ".join(row) + " |")
 
@@ -710,49 +767,29 @@ def _response_cache_set(cache_key: str, outcome: AgentOutcome) -> None:
 async def set_starters():
     return [
         cl.Starter(
-            label="Weekly Summary",
-            message="Give me this week’s Energy Atlas summary",
-            icon="/public/icons/summary.svg",
-        ),
-        cl.Starter(
-            label="Price of henry hub",
-            message="What is the current Henry Hub price?",
-            icon="/public/icons/dollar.svg",
-        ),
-        cl.Starter(
-            label="Production",
-            message="Is gas production growing year over year?",
-            icon="/public/icons/gas-plant.svg",
-        ),
-        cl.Starter(
-            label="Electricity",
-            message="How much natural gas did power plants use last month?",
-            icon="/public/icons/electricity.svg",
-        ),
-        cl.Starter(
-            label="Consumption",
-            message="Which sector consumes the most gas (power, residential, industrial)?",
-            icon="/public/icons/gas.svg",
-        ),
-        cl.Starter(
-            label="Storage",
-            message="How much gas is currently in storage?",
+            label="Weekly Storage",
+            message="What did the latest EIA weekly report say about natural gas storage?",
             icon="/public/icons/storage-tank.svg",
         ),
         cl.Starter(
-            label="Exploration & Reserves",
-            message="Are gas reserves increasing or decreasing?",
-            icon="/public/icons/reserves.svg",
+            label="Storage vs Normal",
+            message="How does current U.S. natural gas storage compare to the 5-year average?",
+            icon="/public/icons/storage-tank.svg",
         ),
         cl.Starter(
-            label="Import",
-            message="Are imports rising or falling?",
-            icon="/public/icons/tanker-import.svg",
+            label="Regional Tightness",
+            message="Which storage region is most above or below normal?",
+            icon="/public/icons/storage-tank.svg",
         ),
         cl.Starter(
-            label="Export",
-            message="Are exports higher than last year?",
-            icon="/public/icons/tanker-export.svg",
+            label="Historical Trend",
+            message="Show Lower 48 storage over the last 5 years.",
+            icon="/public/icons/storage-tank.svg",
+        ),
+        cl.Starter(
+            label="Regional Comparison",
+            message="Compare East and Midwest storage since 2021.",
+            icon="/public/icons/storage-tank.svg",
         ),
     ]
 
@@ -865,7 +902,11 @@ async def on_message(message: cl.Message):
                 )
             ).send()
             return
-        if route.domain == "unsupported" or route.analysis_type == "unsupported" or route.primary_metric is None:
+        if (
+            route.domain == "unsupported"
+            or route.analysis_type == "unsupported"
+            or route.primary_metric is None
+        ):
             if looks_like_general_energy_question(user_query, previous_energy_context):
                 try:
                     answer = await asyncio.to_thread(
@@ -1059,12 +1100,12 @@ async def on_message(message: cl.Message):
 
         if payload.chart_spec is not None and not rendered_custom_lng_trade_view:
             chart_started = perf_counter() if DEBUG_ENABLED else 0.0
-            chart_df = _df_from_data_preview(getattr(payload, "chart_data_preview", None))
+            chart_df = _df_from_data_preview(
+                getattr(payload, "chart_data_preview", None)
+            )
             if chart_df is None:
                 chart_df = result.df
-            fig = render_plotly(
-                payload.chart_spec, chart_df, forecast_overlay=forecast
-            )
+            fig = render_plotly(payload.chart_spec, chart_df, forecast_overlay=forecast)
 
             summary_metrics = []
             summary_table = ""
