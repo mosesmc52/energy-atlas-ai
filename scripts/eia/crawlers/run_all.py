@@ -109,9 +109,9 @@ def main():
 
     crawlers = [
         NaturalGasWeeklyArchiveCrawler(start_date=start_date),
-        WNGSRSupplementCrawler(start_date=start_date),
-        STEONaturalGasCrawler(start_date=start_date),
-        TodayInEnergyNaturalGasCrawler(start_date=start_date),
+        # WNGSRSupplementCrawler(start_date=start_date),
+        # STEONaturalGasCrawler(start_date=start_date),
+        # TodayInEnergyNaturalGasCrawler(start_date=start_date),
     ]
 
     records = []
