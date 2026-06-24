@@ -59,13 +59,21 @@ def should_use_report_rag(question: str) -> bool:
     return any(keyword in query_tokens for keyword in _RAG_KEYWORDS)
 
 
-def search_report_chunks(query: str, chunks: list[dict], top_k: int = 5) -> list[dict]:
+def search_report_chunks_filtered(
+    query: str,
+    chunks: list[dict],
+    top_k: int = 5,
+    *,
+    filters: dict[str, Any] | None = None,
+) -> list[dict]:
     query_tokens = set(_tokenize(query))
     if not chunks or not query_tokens:
         return []
 
     scored: list[tuple[float, dict[str, Any]]] = []
     for chunk in chunks:
+        if filters and not _matches_filters(chunk, filters):
+            continue
         score = _score_chunk(query_tokens, chunk)
         if score <= 0:
             continue
@@ -79,6 +87,16 @@ def search_report_chunks(query: str, chunks: list[dict], top_k: int = 5) -> list
         reverse=True,
     )
     return [chunk for _, chunk in scored[:top_k]]
+
+
+def search_report_chunks(
+    query: str,
+    chunks: list[dict],
+    top_k: int = 5,
+    *,
+    filters: dict[str, Any] | None = None,
+) -> list[dict]:
+    return search_report_chunks_filtered(query, chunks, top_k=top_k, filters=filters)
 
 
 def _score_chunk(query_tokens: set[str], chunk: dict[str, Any]) -> float:
@@ -110,6 +128,41 @@ def _score_chunk(query_tokens: set[str], chunk: dict[str, Any]) -> float:
         score += round(recency_boost, 3)
 
     return score
+
+
+def _matches_filters(chunk: dict[str, Any], filters: dict[str, Any]) -> bool:
+    report_types = {str(value) for value in filters.get("report_types") or [] if str(value)}
+    if report_types and str(chunk.get("report_type") or "") not in report_types:
+        return False
+
+    report_families = {str(value) for value in filters.get("report_families") or [] if str(value)}
+    if report_families and str(chunk.get("report_family") or "") not in report_families:
+        return False
+
+    if not _chunk_matches_tags(chunk.get("domain_tags"), filters.get("domain_tags")):
+        return False
+    if not _chunk_matches_tags(chunk.get("metric_tags"), filters.get("metric_tags")):
+        return False
+    if not _chunk_matches_tags(chunk.get("geography_tags"), filters.get("geography_tags")):
+        return False
+
+    recency_days = filters.get("recency_days")
+    if recency_days:
+        parsed_date = _parse_date(chunk)
+        if parsed_date is None:
+            return False
+        age_days = max((date.today() - parsed_date).days, 0)
+        if age_days > int(recency_days):
+            return False
+    return True
+
+
+def _chunk_matches_tags(chunk_tags: Any, requested_tags: Any) -> bool:
+    requested = {str(value).strip().lower() for value in (requested_tags or []) if str(value).strip()}
+    if not requested:
+        return True
+    available = {str(value).strip().lower() for value in (chunk_tags or []) if str(value).strip()}
+    return bool(available & requested)
 
 
 def _parse_date(chunk: dict[str, Any]) -> date | None:

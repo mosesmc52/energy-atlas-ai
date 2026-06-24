@@ -33,6 +33,47 @@ def extract_topics_from_text(text: str) -> list[str]:
             out.append(topic)
     return sorted(set(out))
 
+
+def infer_metric_tags_from_text(text: str) -> list[str]:
+    t = (text or "").lower()
+    tag_map = {
+        "working_gas": ["working gas"],
+        "base_gas": ["base gas", "cushion gas"],
+        "injections": ["injection", "injections", "inject"],
+        "withdrawals": ["withdrawal", "withdrawals", "withdrawn"],
+        "net_withdrawals": ["net withdrawal", "net withdrawals", "net withdrawl", "net withdrawls"],
+        "lng": ["lng", "liquefied natural gas"],
+        "production": ["production", "dry gas", "marketed gas", "output"],
+        "consumption": ["consumption", "demand"],
+        "prices": ["henry hub", "price", "prices", "mmbtu", "futures"],
+        "capacity": ["capacity"],
+        "storage_field_count": ["storage fields", "field count", "number of storage fields"],
+    }
+    out = []
+    for tag, keywords in tag_map.items():
+        if any(keyword in t for keyword in keywords):
+            out.append(tag)
+    return sorted(set(out))
+
+
+def infer_geography_tags_from_text(text: str) -> list[str]:
+    t = (text or "").lower()
+    geography_map = {
+        "lower48": ["lower 48", "lower48"],
+        "east": [" east "],
+        "midwest": [" midwest "],
+        "south_central": ["south central", "south_central"],
+        "mountain": [" mountain "],
+        "pacific": [" pacific "],
+        "united_states_total": ["united states", "u.s.", "u.s", "national"],
+    }
+    padded = f" {t} "
+    out = []
+    for tag, keywords in geography_map.items():
+        if any(keyword in padded for keyword in keywords):
+            out.append(tag)
+    return sorted(set(out))
+
 def make_doc_id(source: str, report_type: str, title: str, url: str) -> str:
     raw = f"{source}|{report_type}|{title}|{url}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]

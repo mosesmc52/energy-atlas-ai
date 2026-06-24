@@ -3,7 +3,13 @@ import re
 
 from .base import BaseCrawler
 from .models import ReportRecord
-from .utils import absolute_url, clean_text, extract_topics_from_text
+from .utils import (
+    absolute_url,
+    clean_text,
+    extract_topics_from_text,
+    infer_geography_tags_from_text,
+    infer_metric_tags_from_text,
+)
 
 
 class TodayInEnergyNaturalGasCrawler(BaseCrawler):
@@ -69,6 +75,10 @@ class TodayInEnergyNaturalGasCrawler(BaseCrawler):
             published_date=published_date,
             summary_text=body_text[:1500],
             body_text=body_text,
+            report_family="today_in_energy_natural_gas",
+            domain_tags=["natural_gas"],
+            metric_tags=infer_metric_tags_from_text(body_text),
+            geography_tags=infer_geography_tags_from_text(body_text),
             topics=extract_topics_from_text(body_text),
             metadata={"crawler": self.__class__.__name__},
         )

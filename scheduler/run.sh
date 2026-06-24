@@ -60,24 +60,17 @@ step "[STEP 1] NOAA weather aggregation"
 run_cmd python "${WORKSPACE_ROOT}/scripts/noaa/download_and_aggregate_ghcnd.py"
 
 # ============================================================
-# STEP 2 — EIA crawlers
+# STEP 2 — Pipeline projects ingestion
 # ============================================================
 
-step "[STEP 2] EIA crawlers"
-run_cmd python "${WORKSPACE_ROOT}/scripts/eia/crawlers/run_all.py"
-
-# ============================================================
-# STEP 3 — Pipeline projects ingestion
-# ============================================================
-
-step "[STEP 3] Pipeline projects ingestion"
+step "[STEP 2] Pipeline projects ingestion"
 run_cmd python "${WORKSPACE_ROOT}/scripts/eia/ng/pipelines/ingest_pipeline_projects.py"
 
 # ============================================================
-# STEP 4 — State-to-state capacity ingestion
+# STEP 3 — State-to-state capacity ingestion
 # ============================================================
 
-step "[STEP 4] State-to-state capacity ingestion"
+step "[STEP 3] State-to-state capacity ingestion"
 run_cmd python "${WORKSPACE_ROOT}/scripts/eia/ng/pipelines/ingest_state_to_state_capacity.py"
 
 

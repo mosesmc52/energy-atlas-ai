@@ -336,6 +336,41 @@ class TestMetricExecutor(unittest.TestCase):
         self.assertEqual(result.meta["fetch_start_date"], "2020-06-01")
         self.assertEqual(result.meta["fetch_end_date"], "2026-06-01")
 
+    def test_execute_storage_route_expands_fetch_window_for_weekly_storage_report_query(self) -> None:
+        eia = Mock()
+        eia.storage_working_gas.side_effect = lambda region, start, end: _storage_result(region)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="latest",
+            primary_metric="working_gas_storage_lower48",
+            metrics=["working_gas_storage_lower48"],
+            storage_dataset="weekly_working_gas",
+            storage_frequency="weekly",
+            storage_metric_type="working_gas",
+            regions=["lower48"],
+            start_date=None,
+            end_date="2026-06-23",
+            chart_type="none",
+            output_mode="answer",
+            normalized_query="summarize the latest natural gas weekly storage commentary.",
+            filters={
+                "regions": ["lower48"],
+                "storage_dataset": "weekly_working_gas",
+                "storage_frequency": "weekly",
+                "storage_metric_type": "working_gas",
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        eia.storage_working_gas.assert_called_once_with(
+            start="2020-06-23",
+            end="2026-06-23",
+            region="lower48",
+        )
+        self.assertEqual(result.meta["fetch_start_date"], "2020-06-23")
+        self.assertEqual(result.meta["fetch_end_date"], "2026-06-23")
+
     def test_execute_storage_route_expands_latest_all_operators_monthly_window(self) -> None:
         eia = Mock()
         eia.underground_storage_all_operators.side_effect = lambda state, **kwargs: _state_storage_result(state)

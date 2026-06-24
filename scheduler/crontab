@@ -4,6 +4,8 @@ BASH_ENV=/etc/environment
 
 # m h dom mon dow user command
 */5 * * * * root cd /workspace && python app/manage.py cron_healthcheck >> /proc/1/fd/1 2>> /proc/1/fd/2
-# Run the daily ingestion/sync job once per day at 01:00.
-0 1 * * * root cd /workspace && /workspace/scheduler/run.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
+# Refresh EIA weekly/report RAG inputs once per week on Thursday at 11:00 AM America/New_York.
+CRON_TZ=America/New_York
+0 11 * * 4 root cd /workspace && /workspace/scheduler/run_eia_reports.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
+CRON_TZ=UTC
 */15 * * * * root cd /workspace && python app/manage.py evaluate_due_alert_rules >> /proc/1/fd/1 2>> /proc/1/fd/2
