@@ -227,6 +227,7 @@ def _shared_answer_context(shared_answer: SharedAnswer) -> dict:
             {
                 "title": title,
                 "date": str(source.get("date") or "").strip(),
+                "url": str(source.get("url") or "").strip(),
             }
         )
 

@@ -34,7 +34,27 @@ def _storage_requires_baseline_history(route: EnergyRouteResult) -> bool:
     return route.domain == "storage" and (
         route.analysis_type in {"seasonal_compare", "deviation_from_normal"}
         or bool(comparisons & {"five_year_avg", "five_year_range", "seasonal_normal"})
+        or _storage_is_weekly_report_query(route)
     )
+
+
+def _storage_is_weekly_report_query(route: EnergyRouteResult) -> bool:
+    if route.domain != "storage":
+        return False
+    if route.storage_dataset != "weekly_working_gas":
+        return False
+    query = str(route.normalized_query or "").strip().lower()
+    if not query:
+        return False
+    report_terms = (
+        "report",
+        "commentary",
+        "what did eia say",
+        "natural gas weekly",
+        "weekly storage report",
+        "summarize",
+    )
+    return any(term in query for term in report_terms)
 
 
 def _expand_storage_fetch_window_for_baseline(

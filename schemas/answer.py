@@ -54,6 +54,7 @@ class AnswerAlert(BaseModel):
 class AnswerSourceSummary(BaseModel):
     title: str
     date: Optional[str] = None
+    url: Optional[str] = None
 
 
 class SuggestedAlert(BaseModel):

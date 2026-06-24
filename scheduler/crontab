@@ -8,3 +8,4 @@ BASH_ENV=/etc/environment
 CRON_TZ=America/New_York
 0 11 * * 4 root cd /workspace && /workspace/scheduler/run_eia_reports.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
 CRON_TZ=UTC
+*/15 * * * * root cd /workspace && python app/manage.py evaluate_due_alert_rules >> /proc/1/fd/1 2>> /proc/1/fd/2

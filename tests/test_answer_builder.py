@@ -701,6 +701,132 @@ class TestAnswerBuilder(unittest.TestCase):
         self.assertTrue(payload.report_context_used)
         self.assertIn("lng", mock_search.call_args.kwargs["filters"]["metric_tags"])
 
+    def test_weekly_storage_report_query_bypasses_storage_short_circuit(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-06-05", "value": 2750.0},
+                {"date": "2026-06-12", "value": 2759.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="EIA Natural Gas Storage: Working Gas (Lower48)",
+                reference="test",
+                retrieved_at=datetime(2026, 6, 13),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "lower48"}},
+        )
+        route = self._storage_route(
+            storage_dataset="weekly_working_gas",
+            storage_frequency="weekly",
+            storage_metric_type="working_gas",
+            regions=["lower48"],
+            normalized_query="summarize the latest natural gas weekly storage commentary.",
+        )
+
+        class _FakeResponse:
+            output_text = (
+                '{"answer":"The latest Natural Gas Weekly emphasized storage commentary.","signal":{"status":"neutral","confidence":0.7},"summary":"Storage commentary was retrieved from the weekly report.","drivers":["Weekly storage narrative"],"data_points":[],"forecast":{"direction":"flat","reasoning":"Narrative-only summary"},"alerts":[],"sources":[{"title":"Natural Gas Weekly Update","date":"2026-06-12"}]}'
+            )
+
+        with patch.dict(
+            "os.environ",
+            {"ATLAS_USE_LLM_NARRATION": "false", "ATLAS_RESPONSE_MODE": "fast"},
+            clear=False,
+        ), patch(
+            "answer_builder._cached_report_chunks",
+            return_value=(
+                {
+                    "title": "Natural Gas Weekly Update",
+                    "report_type": "natural_gas_weekly_update",
+                    "report_family": "natural_gas_weekly",
+                    "text": "Storage commentary described the latest weekly move.",
+                    "published_date": "2026-06-12",
+                    "domain_tags": ["storage"],
+                    "metric_tags": ["working_gas"],
+                    "topics": ["storage"],
+                },
+            ),
+        ), patch(
+            "answer_builder.client.responses.create",
+            return_value=_FakeResponse(),
+        ):
+            payload = build_answer_with_openai(
+                query="Summarize the latest Natural Gas Weekly storage commentary.",
+                result=result,
+                route=route,
+            )
+
+        self.assertTrue(payload.report_context_used)
+        self.assertEqual(payload.report_context_reason, "retrieval_matches_found")
+        self.assertIn("weekly", payload.answer_text.lower())
+        self.assertIsNotNone(payload.chart_spec)
+        self.assertEqual(payload.chart_spec.chart_type, "line")
+        self.assertEqual(payload.chart_spec.title, "Working Gas in Storage")
+
+    def test_weekly_storage_why_query_uses_report_context(self) -> None:
+        df = pd.DataFrame(
+            [
+                {"date": "2026-06-05", "value": 2750.0},
+                {"date": "2026-06-12", "value": 2759.0},
+            ]
+        )
+        result = EIAResult(
+            df=df,
+            source=SourceRef(
+                source_type="eia_api",
+                label="EIA Natural Gas Storage: Working Gas (Lower48)",
+                reference="test",
+                retrieved_at=datetime(2026, 6, 13),
+            ),
+            meta={"metric": "working_gas_storage_lower48", "filters": {"region": "lower48"}},
+        )
+        route = self._storage_route(
+            storage_dataset="weekly_working_gas",
+            storage_frequency="weekly",
+            storage_metric_type="working_gas",
+            regions=["lower48"],
+            normalized_query="why did storage tighten this week?",
+        )
+
+        class _FakeResponse:
+            output_text = (
+                '{"answer":"Storage tightened because the weekly report highlighted tighter balances.","signal":{"status":"bullish","confidence":0.74},"summary":"Weekly report context was used.","drivers":["Storage tightened this week"],"data_points":[],"forecast":{"direction":"up","reasoning":"Report commentary suggests tighter balances"},"alerts":[],"sources":[{"title":"Natural Gas Weekly Update","date":"2026-06-12"}]}'
+            )
+
+        with patch.dict(
+            "os.environ",
+            {"ATLAS_USE_LLM_NARRATION": "false", "ATLAS_RESPONSE_MODE": "fast"},
+            clear=False,
+        ), patch(
+            "answer_builder._cached_report_chunks",
+            return_value=(
+                {
+                    "title": "Natural Gas Weekly Update",
+                    "report_type": "natural_gas_weekly_update",
+                    "report_family": "natural_gas_weekly",
+                    "text": "Storage tightened this week as balances turned firmer.",
+                    "published_date": "2026-06-12",
+                    "domain_tags": ["storage"],
+                    "metric_tags": ["working_gas"],
+                    "topics": ["storage"],
+                },
+            ),
+        ), patch(
+            "answer_builder.client.responses.create",
+            return_value=_FakeResponse(),
+        ):
+            payload = build_answer_with_openai(
+                query="Why did storage tighten this week?",
+                result=result,
+                route=route,
+            )
+
+        self.assertTrue(payload.report_context_used)
+        self.assertEqual(payload.report_context_reason, "retrieval_matches_found")
+
     def test_regional_storage_change_builds_structured_ranking_answer(self) -> None:
         df = pd.DataFrame(
             [

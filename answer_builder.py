@@ -164,7 +164,13 @@ def _dedupe_report_sources(chunks: list[dict]) -> list[AnswerSourceSummary]:
         if not title or key in seen:
             continue
         seen.add(key)
-        sources.append(AnswerSourceSummary(title=title, date=date_value))
+        sources.append(
+            AnswerSourceSummary(
+                title=title,
+                date=date_value,
+                url=str(chunk.get("url") or "").strip() or None,
+            )
+        )
     return sources
 
 
@@ -175,14 +181,34 @@ def _is_report_narrative_query(query: str) -> bool:
     cues = (
         "report",
         "tell us",
+        "why",
         "what does",
+        "what did eia say",
         "market balance",
         "fundamentals",
+        "weekly",
+        "this week",
+        "latest",
+        "recent",
+        "commentary",
+        "summarize",
         "tightening",
         "loosening",
         "implication",
     )
     return any(cue in q for cue in cues)
+
+
+def _is_storage_report_query(query: str, route: Any | None) -> bool:
+    return bool(
+        route is not None
+        and _route_domain(route) == "storage"
+        and _route_storage_dataset(route) == "weekly_working_gas"
+        and (
+            _is_report_narrative_query(query)
+            or should_use_report_rag(query)
+        )
+    )
 
 
 def _build_report_rag_context(
@@ -561,6 +587,7 @@ def _normalize_structured_response(payload: dict[str, Any], *, metric: str, quer
             AnswerSourceSummary(
                 title=str(item.get("title") or "").strip(),
                 date=str(item.get("date") or "").strip() or None,
+                url=str(item.get("url") or "").strip() or None,
             )
             for item in source_items
             if isinstance(item, dict) and str(item.get("title") or "").strip()
@@ -3568,7 +3595,9 @@ def build_answer_with_openai(
         region_label = "Lower 48"
     source_date = src.retrieved_at.date().isoformat() if src.retrieved_at else None
 
-    if route is not None and _route_domain(route) == "storage":
+    storage_report_query = _is_storage_report_query(query, route)
+
+    if route is not None and _route_domain(route) == "storage" and not storage_report_query:
         return _build_storage_answer_payload(
             query=query,
             result=result,
@@ -3586,7 +3615,11 @@ def build_answer_with_openai(
         os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
-    use_llm_narration = narration_enabled or response_mode in {"analysis", "detailed"}
+    use_llm_narration = (
+        narration_enabled
+        or response_mode in {"analysis", "detailed"}
+        or storage_report_query
+    )
     prefer_report_narration = (
         use_llm_narration
         and _is_report_narrative_query(query)
@@ -4016,6 +4049,16 @@ def build_answer_with_openai(
         df = df.sort_values("date").reset_index(drop=True)
     chart_df = df
     chart_spec = chart_policy(metric=metric, mode=mode, df=df, query=query)
+    if storage_report_query:
+        chart_df = df.sort_values("date").reset_index(drop=True) if df is not None and "date" in df.columns else df
+        chart_spec = ChartSpec(
+            chart_type="line",
+            title="Working Gas in Storage",
+            x="date",
+            y=["value"],
+            x_label="Date",
+            y_label="Storage (Bcf)",
+        )
     if _is_same_time_five_year_comparison_query(query):
         baseline_mode = "median" if any(t in (query or "").lower() for t in ("median", "medium")) else "average"
         comparison_chart_df = _series_with_five_year_average_line(
