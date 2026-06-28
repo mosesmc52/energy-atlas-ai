@@ -12,6 +12,7 @@ from agents.llm_router import (
     STORAGE_ANALYSIS_TYPES,
     STORAGE_DATASETS,
     STORAGE_FREQUENCIES,
+    STORAGE_INSIGHT_TYPES,
     STORAGE_METRIC_TYPES,
     STORAGE_REGIONS,
     STORAGE_TYPES,
@@ -30,6 +31,7 @@ class EnergyQueryParse:
     storage_metric_type: str = "working_gas"
     storage_type: str | None = None
     storage_types_all: bool = False
+    storage_insight_type: str | None = None
     regions: list[str] = field(default_factory=list)
     states: list[str] = field(default_factory=list)
     states_all: bool = False
@@ -225,6 +227,40 @@ LNG_STORAGE_TERMS = (
     "lng storage net withdrawls",
 )
 
+STORAGE_INSIGHT_TERMS = (
+    "how full",
+    "full is storage",
+    "storage utilization",
+    "utilization rate",
+    "percent full",
+    "% full",
+    "remaining capacity",
+    "spare capacity",
+    "unused capacity",
+    "storage space remaining",
+    "available capacity",
+    "least remaining capacity",
+    "most remaining capacity",
+    "capacity per field",
+    "average storage field size",
+    "average capacity per field",
+    "storage capacity per field",
+    "capacity most concentrated",
+    "historical maximum",
+    "historical max",
+    "record high",
+    "all-time high",
+    "near its max",
+    "near maximum",
+    "when was storage last this high",
+    "weekly storage report",
+    "storage report analysis",
+    "this week's storage report",
+    "latest storage report",
+    "weekly report card",
+    "storage summary",
+)
+
 YOY_CUES = (
     "year ago",
     "from year ago",
@@ -355,6 +391,64 @@ def _parse_storage_type(q: str) -> tuple[str | None, bool]:
     if "aquifer" in q:
         return "aquifer", False
     return None, False
+
+
+def _parse_storage_insight_type(q: str) -> str | None:
+    if any(term in q for term in ("how full", "full is storage", "storage utilization", "utilization rate", "percent full", "% full")):
+        return "storage_utilization"
+    if any(
+        term in q
+        for term in (
+            "remaining capacity",
+            "remaining storage capacity",
+            "spare capacity",
+            "unused capacity",
+            "storage space remaining",
+            "available capacity",
+            "least remaining capacity",
+            "least remaining storage capacity",
+            "most remaining capacity",
+            "most remaining storage capacity",
+        )
+    ):
+        return "remaining_capacity"
+    if any(
+        term in q
+        for term in (
+            "capacity per field",
+            "average storage field size",
+            "average capacity per field",
+            "storage capacity per field",
+            "capacity most concentrated",
+        )
+    ):
+        return "capacity_per_field"
+    if any(
+        term in q
+        for term in (
+            "historical maximum",
+            "historical max",
+            "record high",
+            "all-time high",
+            "near its max",
+            "near maximum",
+            "when was storage last this high",
+        )
+    ):
+        return "historical_max_compare"
+    if any(
+        term in q
+        for term in (
+            "weekly storage report",
+            "storage report analysis",
+            "this week's storage report",
+            "latest storage report",
+            "weekly report card",
+            "storage summary",
+        )
+    ):
+        return "weekly_report_card"
+    return None
 
 
 def _has_explicit_time_series_request(q: str) -> bool:
@@ -666,6 +760,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     states_all = False
     storage_frequency = _parse_storage_frequency(q)
     storage_metric_type = _parse_storage_metric_type(q)
+    storage_insight_type = _parse_storage_insight_type(q)
     metric_is_capacity_count = _is_capacity_count_storage_metric(storage_metric_type)
     storage_type, storage_types_all = _parse_storage_type(q)
     storage_dataset = _parse_storage_dataset(
@@ -729,6 +824,47 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     output_mode = _parse_output_mode(q, chart_type)
     date_expression = _parse_date_expression(q)
 
+    if storage_insight_type in STORAGE_INSIGHT_TYPES:
+        analysis_type = "explain"
+        if storage_insight_type == "weekly_report_card":
+            storage_dataset = "weekly_working_gas"
+            storage_frequency = "weekly"
+            storage_metric_type = "working_gas"
+            regions = regions or ["lower48"]
+            states = []
+            states_all = False
+            chart_type = "table"
+            output_mode = "answer"
+        elif storage_insight_type == "historical_max_compare":
+            if states:
+                storage_dataset = "underground_storage_all_operators"
+                storage_frequency = "monthly" if storage_frequency == "weekly" else storage_frequency
+            else:
+                storage_dataset = "weekly_working_gas"
+                storage_frequency = "weekly"
+                regions = regions or ["lower48"]
+                states = []
+                states_all = False
+            chart_type = "line" if _has_explicit_time_series_request(q) or "near" in q or "last this high" in q else "none"
+            output_mode = "chart_and_answer" if chart_type != "none" else "answer"
+        else:
+            storage_dataset = "underground_storage_all_operators"
+            storage_frequency = "monthly" if storage_frequency == "weekly" else storage_frequency
+            if storage_insight_type == "storage_utilization" and not (states_all or len(states) > 1 or regions):
+                chart_type = "none"
+                output_mode = "answer"
+            else:
+                chart_type = "bar"
+                output_mode = "chart_and_answer"
+            if storage_insight_type in {"storage_utilization", "remaining_capacity"} and "which region" in q:
+                regions = _capacity_count_regions()
+                states = []
+                states_all = False
+            if storage_insight_type == "capacity_per_field" and not states and not regions and any(
+                term in q for term in ("which state", "rank states", "largest", "most concentrated", "by state")
+            ):
+                states_all = True
+
     analysis_type = _sanitize(analysis_type, STORAGE_ANALYSIS_TYPES, "unsupported")
     storage_dataset = _sanitize(storage_dataset, STORAGE_DATASETS, "weekly_working_gas")
     storage_frequency = _sanitize(storage_frequency, STORAGE_FREQUENCIES, "weekly")
@@ -747,6 +883,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         storage_metric_type=storage_metric_type,
         storage_type=storage_type,
         storage_types_all=storage_types_all,
+        storage_insight_type=storage_insight_type,
         regions=regions,
         states=states,
         states_all=states_all,
@@ -761,6 +898,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
             "storage_metric_type": storage_metric_type,
             "storage_type": storage_type,
             "storage_types_all": storage_types_all,
+            "storage_insight_type": storage_insight_type,
             "regions": regions,
             "states": states,
             "states_all": states_all,

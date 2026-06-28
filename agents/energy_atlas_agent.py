@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import Callable, Optional
 
 from agents.agent_policy import AgentPolicy, load_agent_policy
-from agents.router import EnergyRouteResult, route_query
+from agents.router import EnergyRouteResult, RouteContext, context_from_route, route_query
 from executer import MetricExecutor, MetricResult
 from schemas.answer import AnswerPayload
 
@@ -42,7 +42,7 @@ class EnergyAtlasAgent:
         *,
         executor: MetricExecutor,
         model: Optional[str] = None,
-        route_fn: Callable[[str], EnergyRouteResult] = route_query,
+        route_fn: Callable[..., EnergyRouteResult] = route_query,
         answer_builder_fn: Optional[Callable[..., AnswerPayload]] = None,
         policy: Optional[AgentPolicy] = None,
         policy_path: Optional[str] = None,
@@ -61,6 +61,7 @@ class EnergyAtlasAgent:
         self.model = model or resolved_policy.answer_model
         self._route_fn = route_fn
         self._answer_builder_fn = answer_builder_fn
+        self._last_route_context: RouteContext | None = None
 
     def _execute_storage_route(self, route: EnergyRouteResult) -> MetricResult:
         filters = dict(route.filters or {})
@@ -71,6 +72,7 @@ class EnergyAtlasAgent:
         filters["storage_metric_type"] = route.storage_metric_type
         filters["storage_type"] = route.storage_type
         filters["storage_types_all"] = route.storage_types_all
+        filters["storage_insight_type"] = route.storage_insight_type
         prepared_route = replace(route, filters=filters)
         if DEBUG_ENABLED:
             logger.info(
@@ -96,10 +98,19 @@ class EnergyAtlasAgent:
         self,
         *,
         user_query: str,
+        previous_route_context: RouteContext | dict | None = None,
         forecaster=None,
     ) -> AgentOutcome:
+        resolved_previous_context = previous_route_context
+        if isinstance(previous_route_context, dict):
+            resolved_previous_context = RouteContext(**previous_route_context)
+        if resolved_previous_context is None:
+            resolved_previous_context = self._last_route_context
         route_started = perf_counter()
-        route = self._route_fn(user_query)
+        route = self._route_fn(
+            user_query,
+            previous_context=resolved_previous_context,
+        )
         route_ms = (perf_counter() - route_started) * 1000
         if DEBUG_ENABLED:
             logger.info(
@@ -164,6 +175,8 @@ class EnergyAtlasAgent:
                 payload.structured_response is not None,
                 len(str(payload.answer_text or "")),
             )
+        if route.domain == "storage" and route.analysis_type != "unsupported" and route.primary_metric is not None:
+            self._last_route_context = context_from_route(route)
 
         return AgentOutcome(
             route=route,

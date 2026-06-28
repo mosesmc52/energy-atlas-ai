@@ -20,6 +20,7 @@ def _storage_route(**overrides) -> EnergyRouteResult:
         "storage_metric_type": "working_gas",
         "storage_type": None,
         "storage_types_all": False,
+        "storage_insight_type": None,
         "regions": ["lower48"],
         "states": [],
         "states_all": False,
@@ -274,7 +275,77 @@ class TestMetricExecutor(unittest.TestCase):
 
         self.assertEqual(eia.storage_working_gas.call_count, 2)
         self.assertEqual(set(result.df["region"]), {"east", "midwest"})
-        self.assertEqual(list(result.df.columns), ["date", "value", "region"])
+
+    def test_storage_utilization_joins_working_gas_and_capacity(self) -> None:
+        eia = Mock()
+        eia.underground_storage_all_operators.return_value = _state_storage_result("tx", 300.0)
+        eia.underground_storage_capacity.return_value = _geography_storage_result("tx", 500.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute_storage_route(
+            _storage_route(
+                analysis_type="explain",
+                primary_metric="storage_utilization",
+                metrics=["storage_utilization"],
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="working_gas",
+                storage_insight_type="storage_utilization",
+                states=["tx"],
+                regions=[],
+                chart_type="none",
+                output_mode="answer",
+            )
+        )
+
+        self.assertEqual(float(result.df.iloc[0]["working_gas"]), 300.0)
+        self.assertEqual(float(result.df.iloc[0]["working_gas_capacity"]), 500.0)
+        self.assertEqual(float(result.df.iloc[0]["remaining_capacity"]), 200.0)
+        self.assertEqual(float(result.df.iloc[0]["value"]), 60.0)
+        self.assertEqual(result.meta["metric"], "storage_utilization")
+
+    def test_weekly_storage_report_card_returns_prior_and_five_year_fields(self) -> None:
+        eia = Mock()
+        rows = []
+        for year, value, weekly_change in [
+            (2019, 2000.0, 60.0),
+            (2020, 2100.0, 65.0),
+            (2021, 2200.0, 70.0),
+            (2022, 2300.0, 75.0),
+            (2023, 2400.0, 80.0),
+            (2024, 2500.0, 85.0),
+        ]:
+            rows.append({"date": f"{year}-06-15", "value": value, "weekly_change": weekly_change, "region": "lower48"})
+        eia.storage_working_gas.return_value = EIAResult(
+            df=pd.DataFrame(rows),
+            source=SourceRef(source_type="eia_api", label="Storage", reference="ref:storage", parameters={}),
+            meta={},
+        )
+        eia.storage_working_gas_change_weekly.return_value = EIAResult(
+            df=pd.DataFrame([{"date": row["date"], "value": row["weekly_change"]} for row in rows]),
+            source=SourceRef(source_type="eia_api", label="Storage Change", reference="ref:change", parameters={}),
+            meta={},
+        )
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute_storage_route(
+            _storage_route(
+                analysis_type="explain",
+                primary_metric="storage_weekly_report_card",
+                metrics=["storage_weekly_report_card"],
+                storage_dataset="weekly_working_gas",
+                storage_frequency="weekly",
+                storage_metric_type="working_gas",
+                storage_insight_type="weekly_report_card",
+                regions=["lower48"],
+                chart_type="table",
+                output_mode="answer",
+            )
+        )
+
+        self.assertIn("prior_weekly_change", result.df.columns)
+        self.assertIn("five_year_avg_storage", result.df.columns)
+        self.assertEqual(float(result.df.iloc[0]["current_storage"]), 2500.0)
 
     def test_storage_level_single_region_keeps_region_column(self) -> None:
         eia = Mock()

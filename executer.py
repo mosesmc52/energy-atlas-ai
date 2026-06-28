@@ -602,6 +602,9 @@ class MetricExecutor:
         filters["storage_metric_type"] = route.storage_metric_type
         filters["storage_type"] = route.storage_type
         filters["storage_types_all"] = bool(route.storage_types_all or filters.get("storage_types_all"))
+        filters["storage_insight_type"] = getattr(route, "storage_insight_type", None)
+        if route.analysis_type == "explain" and getattr(route, "storage_insight_type", None):
+            return self.execute_storage_insight_route(route)
         if route.storage_metric_type in {"total_capacity", "working_gas_capacity", "storage_field_count"}:
             filters["regions"] = [
                 region
@@ -763,6 +766,452 @@ class MetricExecutor:
                 len(result.df),
             )
         return result
+
+    def execute_storage_insight_route(self, route: EnergyRouteResult) -> MetricResult:
+        insight_type = str(getattr(route, "storage_insight_type", "") or "")
+        if not insight_type:
+            raise ValueError("Storage insight route is missing storage_insight_type.")
+
+        fetch_end_date = route.end_date or date.today().isoformat()
+        if insight_type == "historical_max_compare":
+            if route.start_date:
+                fetch_start_date = route.start_date
+            else:
+                fetch_start_date = (pd.Timestamp(fetch_end_date) - pd.DateOffset(years=20)).date().isoformat()
+        elif insight_type == "weekly_report_card":
+            fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_baseline(
+                start_date=route.start_date,
+                end_date=route.end_date,
+                years=6,
+            )
+        elif route.start_date:
+            fetch_start_date = route.start_date
+        else:
+            fetch_start_date, fetch_end_date = _expand_storage_fetch_window_for_latest_all_operators(
+                end_date=route.end_date,
+                frequency=route.storage_frequency,
+            )
+
+        if insight_type == "storage_utilization":
+            result = self._build_storage_utilization_result(route, fetch_start_date, fetch_end_date)
+        elif insight_type == "remaining_capacity":
+            result = self._build_storage_remaining_capacity_result(route, fetch_start_date, fetch_end_date)
+        elif insight_type == "capacity_per_field":
+            result = self._build_storage_capacity_per_field_result(route, fetch_start_date, fetch_end_date)
+        elif insight_type == "historical_max_compare":
+            result = self._build_storage_historical_max_compare_result(route, fetch_start_date, fetch_end_date)
+        elif insight_type == "weekly_report_card":
+            result = self._build_weekly_storage_report_card_result(route, fetch_start_date, fetch_end_date)
+        else:
+            raise ValueError(f"Unsupported storage insight type: {insight_type}")
+
+        if result.meta is None:
+            result.meta = {}
+        result.meta.update(
+            {
+                "domain": "storage",
+                "analysis_type": route.analysis_type,
+                "storage_dataset": route.storage_dataset,
+                "storage_frequency": route.storage_frequency,
+                "storage_metric_type": route.storage_metric_type,
+                "storage_insight_type": insight_type,
+                "chart_type": route.chart_type,
+                "output_mode": route.output_mode,
+                "regions": list(route.regions or []),
+                "states": list(route.states or []),
+                "states_all": route.states_all,
+                "start_date": route.start_date,
+                "end_date": route.end_date,
+                "fetch_start_date": fetch_start_date,
+                "fetch_end_date": fetch_end_date,
+            }
+        )
+        return result
+
+    def _execute_storage_metric(
+        self,
+        *,
+        metric: str,
+        start: str,
+        end: str,
+        filters: Dict[str, Any],
+    ) -> MetricResult:
+        return self.execute(
+            ExecuteRequest(
+                metric=metric,
+                start=start,
+                end=end,
+                filters=filters,
+            )
+        )
+
+    def _normalize_storage_insight_geography_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy() if df is not None else pd.DataFrame()
+        if out.empty:
+            return pd.DataFrame(columns=["date", "value", "geography"])
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out["value"] = pd.to_numeric(out["value"], errors="coerce")
+        if "geography" not in out.columns:
+            if "state" in out.columns:
+                out["geography"] = out["state"]
+            elif "region" in out.columns:
+                out["geography"] = out["region"]
+            else:
+                out["geography"] = "united_states_total"
+        out["geography"] = out["geography"].astype(str)
+        return out.dropna(subset=["date", "value", "geography"]).reset_index(drop=True)
+
+    def _latest_by_geography(self, df: pd.DataFrame) -> pd.DataFrame:
+        d = self._normalize_storage_insight_geography_df(df)
+        if d.empty:
+            return d
+        return (
+            d.sort_values(["geography", "date"])
+            .groupby("geography", as_index=False, sort=False)
+            .tail(1)
+            .reset_index(drop=True)
+        )
+
+    def _build_derived_storage_source(
+        self,
+        *,
+        label: str,
+        reference: str,
+        parameters: Dict[str, Any],
+    ) -> SourceRef:
+        return SourceRef(
+            source_type="manual",
+            label=label,
+            reference=reference,
+            parameters=parameters,
+        )
+
+    def _working_gas_component_result(
+        self,
+        route: EnergyRouteResult,
+        *,
+        start: str,
+        end: str,
+    ) -> MetricResult:
+        if route.regions and not route.states:
+            return self._execute_storage_metric(
+                metric="working_gas_storage_lower48",
+                start=start,
+                end=end,
+                filters={"regions": list(route.regions or ["lower48"])},
+            )
+        frequency = route.storage_frequency if route.storage_frequency in {"monthly", "annual"} else "monthly"
+        metric = f"underground_storage_working_gas_{frequency}"
+        return self._execute_storage_metric(
+            metric=metric,
+            start=start,
+            end=end,
+            filters={
+                "states": list(route.states or []),
+                "states_all": bool(route.states_all),
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": frequency,
+                "storage_metric_type": "working_gas",
+            },
+        )
+
+    def _build_storage_utilization_frame(
+        self,
+        route: EnergyRouteResult,
+        *,
+        start: str,
+        end: str,
+    ) -> tuple[pd.DataFrame, dict[str, Any]]:
+        working_gas_result = self._working_gas_component_result(route, start=start, end=end)
+        capacity_frequency = route.storage_frequency if route.storage_frequency in {"monthly", "annual"} else "monthly"
+        capacity_result = self._execute_storage_metric(
+            metric=f"underground_storage_working_gas_capacity_{capacity_frequency}",
+            start=start,
+            end=end,
+            filters={
+                "states": list(route.states or []),
+                "states_all": bool(route.states_all),
+                "regions": list(route.regions or []),
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": capacity_frequency,
+                "storage_metric_type": "working_gas_capacity",
+            },
+        )
+        working_gas_df = self._latest_by_geography(working_gas_result.df).rename(columns={"value": "working_gas"})
+        capacity_df = self._latest_by_geography(capacity_result.df).rename(columns={"value": "working_gas_capacity"})
+        merged = working_gas_df.merge(
+            capacity_df[["geography", "date", "working_gas_capacity"]],
+            on="geography",
+            how="inner",
+            suffixes=("_working_gas", "_capacity"),
+        )
+        if merged.empty:
+            return pd.DataFrame(columns=["date", "geography", "working_gas", "working_gas_capacity", "utilization_pct", "remaining_capacity", "value"]), {
+                "component_metrics": ["working_gas", "working_gas_capacity"],
+            }
+        merged["date"] = merged[["date_working_gas", "date_capacity"]].max(axis=1)
+        merged["remaining_capacity"] = merged["working_gas_capacity"] - merged["working_gas"]
+        merged["utilization_pct"] = (merged["working_gas"] / merged["working_gas_capacity"]) * 100.0
+        if route.states or route.states_all:
+            merged["state"] = merged["geography"]
+        elif route.regions:
+            merged["region"] = merged["geography"]
+        return merged[
+            [column for column in ("date", "geography", "state", "region", "working_gas", "working_gas_capacity", "utilization_pct", "remaining_capacity") if column in merged.columns]
+        ], {
+            "component_metrics": ["working_gas", "working_gas_capacity"],
+            "component_sources": [working_gas_result.source.reference, capacity_result.source.reference],
+        }
+
+    def _build_storage_utilization_result(self, route: EnergyRouteResult, start: str, end: str) -> MetricResult:
+        df, meta = self._build_storage_utilization_frame(route, start=start, end=end)
+        if not df.empty:
+            df["value"] = df["utilization_pct"]
+        source = self._build_derived_storage_source(
+            label="Derived Storage Utilization",
+            reference="energy_atlas:storage_utilization",
+            parameters={"start": start, "end": end},
+        )
+        return MetricResult(df=df, source=source, meta={"metric": "storage_utilization", "units": "%", **meta})
+
+    def _build_storage_remaining_capacity_result(self, route: EnergyRouteResult, start: str, end: str) -> MetricResult:
+        df, meta = self._build_storage_utilization_frame(route, start=start, end=end)
+        if not df.empty:
+            df["value"] = df["remaining_capacity"]
+        source = self._build_derived_storage_source(
+            label="Derived Remaining Storage Capacity",
+            reference="energy_atlas:storage_remaining_capacity",
+            parameters={"start": start, "end": end},
+        )
+        return MetricResult(df=df, source=source, meta={"metric": "storage_remaining_capacity", "units": "MMcf", **meta})
+
+    def _build_storage_capacity_per_field_result(self, route: EnergyRouteResult, start: str, end: str) -> MetricResult:
+        frequency = route.storage_frequency if route.storage_frequency in {"monthly", "annual"} else "monthly"
+        capacity_result = self._execute_storage_metric(
+            metric=f"underground_storage_working_gas_capacity_{frequency}",
+            start=start,
+            end=end,
+            filters={
+                "states": list(route.states or []),
+                "states_all": bool(route.states_all),
+                "regions": list(route.regions or []),
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": frequency,
+                "storage_metric_type": "working_gas_capacity",
+            },
+        )
+        count_result = self._execute_storage_metric(
+            metric=f"underground_storage_field_count_{frequency}",
+            start=start,
+            end=end,
+            filters={
+                "states": list(route.states or []),
+                "states_all": bool(route.states_all),
+                "regions": list(route.regions or []),
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": frequency,
+                "storage_metric_type": "storage_field_count",
+            },
+        )
+        capacity_df = self._latest_by_geography(capacity_result.df).rename(columns={"value": "capacity"})
+        count_df = self._latest_by_geography(count_result.df).rename(columns={"value": "storage_field_count"})
+        merged = capacity_df.merge(
+            count_df[["geography", "date", "storage_field_count"]],
+            on="geography",
+            how="inner",
+            suffixes=("_capacity", "_count"),
+        )
+        if merged.empty:
+            df = pd.DataFrame(columns=["date", "geography", "capacity", "storage_field_count", "capacity_per_field", "value"])
+        else:
+            merged = merged.loc[pd.to_numeric(merged["storage_field_count"], errors="coerce") > 0].copy()
+            merged["date"] = merged[["date_capacity", "date_count"]].max(axis=1)
+            merged["capacity_per_field"] = merged["capacity"] / merged["storage_field_count"]
+            merged["value"] = merged["capacity_per_field"]
+            if route.states or route.states_all:
+                merged["state"] = merged["geography"]
+            elif route.regions:
+                merged["region"] = merged["geography"]
+            df = merged[
+                [column for column in ("date", "geography", "state", "region", "capacity", "storage_field_count", "capacity_per_field", "value") if column in merged.columns]
+            ]
+        source = self._build_derived_storage_source(
+            label="Derived Storage Capacity per Field",
+            reference="energy_atlas:storage_capacity_per_field",
+            parameters={"start": start, "end": end},
+        )
+        return MetricResult(
+            df=df,
+            source=source,
+            meta={
+                "metric": "storage_capacity_per_field",
+                "units": "MMcf/field",
+                "component_metrics": ["working_gas_capacity", "storage_field_count"],
+                "component_sources": [capacity_result.source.reference, count_result.source.reference],
+            },
+        )
+
+    def _build_storage_historical_max_compare_result(self, route: EnergyRouteResult, start: str, end: str) -> MetricResult:
+        if route.states:
+            frequency = route.storage_frequency if route.storage_frequency in {"monthly", "annual"} else "monthly"
+            result = self._execute_storage_metric(
+                metric=f"underground_storage_working_gas_{frequency}",
+                start=start,
+                end=end,
+                filters={
+                    "states": list(route.states or []),
+                    "states_all": bool(route.states_all),
+                    "storage_dataset": "underground_storage_all_operators",
+                    "storage_frequency": frequency,
+                    "storage_metric_type": "working_gas",
+                },
+            )
+            df = self._normalize_storage_insight_geography_df(result.df)
+            units = "MMcf"
+        else:
+            result = self._execute_storage_metric(
+                metric="working_gas_storage_lower48",
+                start=start,
+                end=end,
+                filters={"regions": list(route.regions or ["lower48"])},
+            )
+            df = self._normalize_storage_insight_geography_df(result.df)
+            units = "Bcf"
+        rows: list[pd.DataFrame] = []
+        for geography, group in df.groupby("geography", sort=False):
+            group = group.sort_values("date").reset_index(drop=True)
+            if group.empty:
+                continue
+            max_idx = group["value"].idxmax()
+            max_row = group.loc[max_idx]
+            current_row = group.iloc[-1]
+            group = group.copy()
+            group["current_storage"] = float(current_row["value"])
+            group["max_observed_storage"] = float(max_row["value"])
+            group["max_observed_date"] = pd.Timestamp(max_row["date"]).date().isoformat()
+            group["pct_of_max_observed"] = (
+                (float(current_row["value"]) / float(max_row["value"])) * 100.0 if float(max_row["value"]) else pd.NA
+            )
+            group["difference_from_max"] = float(current_row["value"]) - float(max_row["value"])
+            group["value"] = pd.to_numeric(group["value"], errors="coerce")
+            if route.states:
+                group["state"] = geography
+            else:
+                group["region"] = geography
+            rows.append(group)
+        out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(
+            columns=["date", "value", "geography", "current_storage", "max_observed_storage", "max_observed_date", "pct_of_max_observed", "difference_from_max"]
+        )
+        source = self._build_derived_storage_source(
+            label="Derived Storage Historical Maximum Comparison",
+            reference="energy_atlas:storage_historical_max_compare",
+            parameters={"start": start, "end": end},
+        )
+        return MetricResult(
+            df=out,
+            source=source,
+            meta={"metric": "storage_historical_max_compare", "units": units, "component_sources": [result.source.reference]},
+        )
+
+    def _same_week_samples(self, df: pd.DataFrame, *, value_column: str, target_date: pd.Timestamp, years: int = 5, tolerance_days: int = 10) -> list[float]:
+        samples: list[float] = []
+        latest_year = int(target_date.year)
+        for year in range(latest_year - years, latest_year):
+            shifted = target_date - pd.DateOffset(years=(latest_year - year))
+            candidates = df.loc[
+                (df["date"].dt.year == year)
+                & (df["date"] >= (shifted - pd.Timedelta(days=tolerance_days)))
+                & (df["date"] <= (shifted + pd.Timedelta(days=tolerance_days)))
+            ].copy()
+            if candidates.empty or value_column not in candidates.columns:
+                continue
+            candidates["days_from_target"] = (candidates["date"] - shifted).abs().dt.days
+            picked = candidates.sort_values(["days_from_target", "date"]).iloc[0]
+            value = pd.to_numeric(picked[value_column], errors="coerce")
+            if pd.notna(value):
+                samples.append(float(value))
+        return samples
+
+    def _build_weekly_storage_report_card_result(self, route: EnergyRouteResult, start: str, end: str) -> MetricResult:
+        result = self._execute_storage_metric(
+            metric="working_gas_storage_lower48",
+            start=start,
+            end=end,
+            filters={"regions": list(route.regions or ["lower48"]), "include_weekly_change": True},
+        )
+        df = self._normalize_storage_insight_geography_df(result.df)
+        if "weekly_change" not in df.columns:
+            df["weekly_change"] = pd.NA
+        if df.empty:
+            out = pd.DataFrame(
+                columns=[
+                    "date",
+                    "current_storage",
+                    "weekly_change",
+                    "prior_weekly_change",
+                    "five_year_avg_storage",
+                    "storage_deviation_bcf",
+                    "storage_deviation_pct",
+                    "weekly_change_vs_prior",
+                    "weekly_change_vs_5y_avg",
+                    "value",
+                ]
+            )
+        else:
+            df = df.sort_values("date").reset_index(drop=True)
+            latest = df.iloc[-1]
+            prior = df.iloc[-2] if len(df) > 1 else None
+            target_date = pd.Timestamp(latest["date"])
+            storage_samples = self._same_week_samples(df, value_column="value", target_date=target_date)
+            weekly_change_samples = self._same_week_samples(df, value_column="weekly_change", target_date=target_date)
+            five_year_avg_storage = float(pd.Series(storage_samples, dtype="float64").mean()) if storage_samples else pd.NA
+            five_year_avg_change = float(pd.Series(weekly_change_samples, dtype="float64").mean()) if weekly_change_samples else pd.NA
+            current_storage = float(latest["value"])
+            weekly_change = float(latest["weekly_change"]) if pd.notna(latest["weekly_change"]) else pd.NA
+            prior_weekly_change = float(prior["weekly_change"]) if prior is not None and pd.notna(prior["weekly_change"]) else pd.NA
+            storage_deviation_bcf = current_storage - five_year_avg_storage if pd.notna(five_year_avg_storage) else pd.NA
+            storage_deviation_pct = (
+                ((current_storage - five_year_avg_storage) / five_year_avg_storage) * 100.0
+                if pd.notna(five_year_avg_storage) and five_year_avg_storage
+                else pd.NA
+            )
+            weekly_change_vs_prior = (
+                weekly_change - prior_weekly_change
+                if pd.notna(weekly_change) and pd.notna(prior_weekly_change)
+                else pd.NA
+            )
+            weekly_change_vs_5y_avg = (
+                weekly_change - five_year_avg_change
+                if pd.notna(weekly_change) and pd.notna(five_year_avg_change)
+                else pd.NA
+            )
+            out = pd.DataFrame(
+                [
+                    {
+                        "date": target_date,
+                        "geography": str(latest.get("geography") or "lower48"),
+                        "current_storage": current_storage,
+                        "weekly_change": weekly_change,
+                        "prior_weekly_change": prior_weekly_change,
+                        "five_year_avg_storage": five_year_avg_storage,
+                        "storage_deviation_bcf": storage_deviation_bcf,
+                        "storage_deviation_pct": storage_deviation_pct,
+                        "weekly_change_vs_prior": weekly_change_vs_prior,
+                        "weekly_change_vs_5y_avg": weekly_change_vs_5y_avg,
+                        "value": current_storage,
+                    }
+                ]
+            )
+        source = self._build_derived_storage_source(
+            label="Derived Weekly Storage Report Card",
+            reference="energy_atlas:storage_weekly_report_card",
+            parameters={"start": start, "end": end},
+        )
+        return MetricResult(
+            df=out,
+            source=source,
+            meta={"metric": "storage_weekly_report_card", "units": "Bcf", "component_sources": [result.source.reference]},
+        )
 
     def _to_metric_result(self, res: Any) -> MetricResult:
         """

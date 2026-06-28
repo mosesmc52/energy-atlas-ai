@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from agents.agent_policy import load_agent_policy
 from agents.energy_atlas_agent import EnergyAtlasAgent
-from agents.router import EnergyRouteResult
+from agents.router import EnergyRouteResult, RouteContext
 
 
 def _route(**overrides) -> EnergyRouteResult:
@@ -21,6 +21,7 @@ def _route(**overrides) -> EnergyRouteResult:
         "storage_metric_type": "working_gas",
         "storage_type": None,
         "storage_types_all": False,
+        "storage_insight_type": None,
         "regions": ["lower48"],
         "states": [],
         "states_all": False,
@@ -223,6 +224,53 @@ class TestEnergyAtlasAgent(unittest.TestCase):
         routed = executor.execute_storage_route.call_args.args[0]
         self.assertEqual(routed.filters["regions"], ["east", "midwest"])
         self.assertEqual(routed.filters["storage_metric_type"], "total_capacity")
+
+    def test_agent_passes_last_route_context_into_followup_route(self) -> None:
+        executor = Mock()
+        metric_result = Mock(df=Mock(), source=Mock(reference="ref:test"), meta={})
+        executor.execute_storage_route.return_value = metric_result
+        route_fn = Mock(side_effect=[_route(states=["tx"]), _route(states=["la"])])
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=Mock(return_value=Mock()),
+        )
+
+        agent.run(user_query="How full is Texas storage?")
+        agent.run(user_query="What about Louisiana?")
+
+        self.assertIsNone(route_fn.call_args_list[0].kwargs["previous_context"])
+        second_previous_context = route_fn.call_args_list[1].kwargs["previous_context"]
+        self.assertIsNotNone(second_previous_context)
+        self.assertEqual(second_previous_context.states, ["tx"])
+
+    def test_agent_uses_explicit_previous_route_context(self) -> None:
+        executor = Mock()
+        metric_result = Mock(df=Mock(), source=Mock(reference="ref:test"), meta={})
+        executor.execute_storage_route.return_value = metric_result
+        route_fn = Mock(return_value=_route(states=["la"]))
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=Mock(return_value=Mock()),
+        )
+
+        agent.run(
+            user_query="What about Louisiana?",
+            previous_route_context=RouteContext(
+                domain="storage",
+                analysis_type="explain",
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="working_gas",
+                storage_insight_type="storage_utilization",
+                states=["tx"],
+                chart_type="none",
+                output_mode="answer",
+            ),
+        )
+
+        self.assertEqual(route_fn.call_args.kwargs["previous_context"].states, ["tx"])
 
 
 if __name__ == "__main__":

@@ -2140,6 +2140,11 @@ def _route_storage_types_all(route) -> bool:
     return bool(getattr(route, "storage_types_all", False))
 
 
+def _route_storage_insight_type(route) -> str | None:
+    value = getattr(route, "storage_insight_type", None)
+    return str(value) if value else None
+
+
 def _storage_region_label(region: str | None) -> str:
     label = str(region or "lower48").replace("_", " ").title()
     return "Lower 48" if label == "Lower48" else label
@@ -2188,13 +2193,34 @@ def _storage_metric_label(metric_type: str) -> str:
         "withdrawals": "Withdrawals",
         "working_gas_yoy_volume_change": "Working Gas Change from Year Ago",
         "working_gas_yoy_pct_change": "Working Gas % Change from Year Ago",
+        "storage_utilization": "Storage Utilization",
+        "storage_remaining_capacity": "Remaining Storage Capacity",
+        "storage_capacity_per_field": "Storage Capacity per Field",
+        "storage_historical_max_compare": "Storage vs Historical Maximum",
+        "storage_weekly_report_card": "Weekly Storage Report Card",
     }.get(metric_type, "Working Gas in Storage")
 
 
 def _storage_metric_unit(metric_type: str) -> str:
     if metric_type == "storage_field_count":
         return "fields"
+    if metric_type == "storage_utilization":
+        return "%"
+    if metric_type == "storage_capacity_per_field":
+        return "MMcf/field"
+    if metric_type == "storage_weekly_report_card":
+        return "Bcf"
     return "%" if metric_type == "working_gas_yoy_pct_change" else "MMcf"
+
+
+def _is_storage_insight_metric(metric: str) -> bool:
+    return metric in {
+        "storage_utilization",
+        "storage_remaining_capacity",
+        "storage_capacity_per_field",
+        "storage_historical_max_compare",
+        "storage_weekly_report_card",
+    }
 
 
 def _underground_storage_metric_label(metric_type: str) -> str:
@@ -2920,6 +2946,132 @@ def _underground_storage_by_type_chart_spec_from_route(
     return None
 
 
+def _storage_insight_chart_spec_from_route(route: Any, df: pd.DataFrame, metric: str) -> ChartSpec | None:
+    chart_type = _route_chart_type(route)
+    if _route_output_mode(route) == "answer" or chart_type in {"", "none"}:
+        return None
+    if metric == "storage_historical_max_compare":
+        return ChartSpec(
+            chart_type="line",
+            title="Storage vs Historical Maximum",
+            x="date",
+            y=["value"],
+            x_label="Date",
+            y_label=_storage_metric_unit(metric),
+        )
+    if metric == "storage_weekly_report_card":
+        return ChartSpec(
+            chart_type="table",
+            title="Weekly Storage Report Card",
+            x="date",
+            y=["current_storage", "weekly_change", "five_year_avg_storage"],
+            x_label="Date",
+            y_label="Bcf",
+        )
+    x_field = "state" if "state" in df.columns else "region" if "region" in df.columns else "geography"
+    x_label = "State" if x_field == "state" else "Region" if x_field == "region" else "Geography"
+    return ChartSpec(
+        chart_type="bar",
+        title=_storage_metric_label(metric),
+        x=x_field,
+        y=["value"],
+        x_label=x_label,
+        y_label=_storage_metric_unit(metric),
+    )
+
+
+def _storage_utilization_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _underground_storage_latest_by_state_df(df)
+    if latest.empty:
+        return "No data was returned for the requested period."
+    row = latest.sort_values("value", ascending=False).iloc[0]
+    geography_column = _underground_storage_group_column(latest)
+    geography = _underground_storage_geography_label(geography_column, row.get(geography_column))
+    return (
+        f"As of {row['date'].date().isoformat()}, {geography} storage was {_format_number(float(row['utilization_pct']))}% full: "
+        f"{_format_number(float(row['working_gas']))} MMcf working gas versus "
+        f"{_format_number(float(row['working_gas_capacity']))} MMcf working gas capacity. Remaining capacity was "
+        f"{_format_number(float(row['remaining_capacity']))} MMcf."
+    )
+
+
+def _storage_remaining_capacity_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _underground_storage_latest_by_state_df(df)
+    if latest.empty:
+        return "No data was returned for the requested period."
+    ascending = any(term in str(getattr(route, "normalized_query", "") or "") for term in ("least remaining", "tightest", "least spare"))
+    ranked = latest.sort_values("remaining_capacity", ascending=ascending).reset_index(drop=True)
+    row = ranked.iloc[0]
+    geography_column = _underground_storage_group_column(ranked)
+    geography = _underground_storage_geography_label(geography_column, row.get(geography_column))
+    qualifier = "least remaining" if ascending else "most remaining"
+    return (
+        f"As of {row['date'].date().isoformat()}, {geography} had the {qualifier} working gas capacity at "
+        f"{_format_number(float(row['remaining_capacity']))} MMcf. Storage was {_format_number(float(row['utilization_pct']))}% full."
+    )
+
+
+def _storage_capacity_per_field_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _underground_storage_latest_by_state_df(df)
+    if latest.empty:
+        return "No data was returned for the requested period."
+    ranked = latest.sort_values("capacity_per_field", ascending=False).reset_index(drop=True)
+    row = ranked.iloc[0]
+    geography_column = _underground_storage_group_column(ranked)
+    geography = _underground_storage_geography_label(geography_column, row.get(geography_column))
+    return (
+        f"As of {row['date'].date().isoformat()}, {geography} averaged "
+        f"{_format_number(float(row['capacity_per_field']))} MMcf of working gas capacity per storage field."
+    )
+
+
+def _storage_historical_max_compare_answer(df: pd.DataFrame, route: Any) -> str:
+    latest = _underground_storage_latest_by_state_df(df)
+    if latest.empty:
+        return "No data was returned for the requested period."
+    row = latest.iloc[-1]
+    geography_column = _underground_storage_group_column(latest)
+    geography = _underground_storage_geography_label(geography_column, row.get(geography_column))
+    units = str((getattr(route, "filters", {}) or {}).get("storage_frequency") or "")
+    unit = "MMcf" if geography_column == "state" else "Bcf"
+    return (
+        f"As of {row['date'].date().isoformat()}, {geography} working gas storage was "
+        f"{_format_number(float(row['current_storage']))} {unit}, or {_format_number(float(row['pct_of_max_observed']))}% "
+        f"of its historical maximum of {_format_number(float(row['max_observed_storage']))} {unit} set on {row['max_observed_date']}."
+    )
+
+
+def _storage_weekly_report_card_answer(df: pd.DataFrame, route: Any) -> str:
+    if df is None or df.empty:
+        return "No data was returned for the requested period."
+    row = df.iloc[-1]
+    deviation = pd.to_numeric(row.get("storage_deviation_bcf"), errors="coerce")
+    direction = "above" if pd.notna(deviation) and float(deviation) > 0 else "below" if pd.notna(deviation) and float(deviation) < 0 else "in line with"
+    weekly_change = pd.to_numeric(row.get("weekly_change"), errors="coerce")
+    prior_weekly_change = pd.to_numeric(row.get("prior_weekly_change"), errors="coerce")
+    vs_prior = pd.to_numeric(row.get("weekly_change_vs_prior"), errors="coerce")
+    pace = "accelerated" if pd.notna(vs_prior) and float(vs_prior) > 0 else "slowed" if pd.notna(vs_prior) and float(vs_prior) < 0 else "was unchanged"
+    five_year_avg_storage = pd.to_numeric(row.get("five_year_avg_storage"), errors="coerce")
+    prior_clause = (
+        ""
+        if pd.isna(prior_weekly_change)
+        else f" versus {_format_number(float(prior_weekly_change))} Bcf in the prior reporting period"
+    )
+    avg_clause = (
+        ""
+        if pd.isna(five_year_avg_storage)
+        else f" of {_format_number(float(five_year_avg_storage))} Bcf"
+    )
+    return (
+        f"Latest weekly storage report: Storage was {_format_number(float(row['current_storage']))} Bcf as of "
+        f"{pd.Timestamp(row['date']).date().isoformat()}. Weekly change was {_format_number(float(weekly_change))} Bcf"
+        f"{prior_clause}."
+        f" Storage was {_format_number(abs(float(deviation)) if pd.notna(deviation) else 0)} Bcf {direction} the same-week 5-year average"
+        f"{avg_clause}."
+        f" Injections/withdrawals {pace}. Interpretation is descriptive only and does not imply causality."
+    )
+
+
 def _storage_time_series_answer(df: pd.DataFrame, route: Any) -> str:
     d = _storage_prepare_df(df)
     if d.empty:
@@ -3200,6 +3352,36 @@ def _build_storage_answer_payload(
     source_date: str | None,
 ) -> AnswerPayload:
     storage_dataset = _route_storage_dataset(route)
+    metric_name = str((result.meta or {}).get("metric") or getattr(route, "primary_metric", "") or "")
+
+    if _is_storage_insight_metric(metric_name):
+        df = _underground_storage_prepare_df(result.df)
+        answer_text = {
+            "storage_utilization": _storage_utilization_answer,
+            "storage_remaining_capacity": _storage_remaining_capacity_answer,
+            "storage_capacity_per_field": _storage_capacity_per_field_answer,
+            "storage_historical_max_compare": _storage_historical_max_compare_answer,
+            "storage_weekly_report_card": _storage_weekly_report_card_answer,
+        }[metric_name](df, route)
+        chart_df = df
+        if metric_name != "storage_historical_max_compare":
+            chart_df = _underground_storage_latest_by_state_df(df)
+        chart_spec = _storage_insight_chart_spec_from_route(route, chart_df, metric_name)
+        return AnswerPayload(
+            query=query,
+            mode=mode,
+            answer_text=answer_text,
+            structured_response=None,
+            report_context_used=False,
+            report_context_reason="storage_insight_route",
+            report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+            data_preview=_maybe_data_preview(chart_df),
+            chart_data_preview=_make_chart_preview(chart_df),
+            chart_spec=chart_spec,
+            sources=[result.source],
+            warnings=None,
+            generated_at=datetime.utcnow(),
+        )
 
     if storage_dataset in {"underground_storage_all_operators", "lng_storage"}:
         return _build_underground_storage_all_operators_payload(

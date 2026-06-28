@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 
 from agents.llm_router import STORAGE_REGIONS, UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
-from agents.router import route_query
+from agents.router import context_from_route, route_query
 
 
 class TestStorageRouting(unittest.TestCase):
@@ -264,6 +264,114 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
         self.assertEqual(route.states, ["tx", "la"])
         self.assertFalse(route.states_all)
+
+    def test_how_full_is_texas_storage_routes_to_utilization_insight(self) -> None:
+        route = route_query("How full is Texas storage?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "explain")
+        self.assertEqual(route.storage_insight_type, "storage_utilization")
+        self.assertEqual(route.primary_metric, "storage_utilization")
+        self.assertEqual(route.states, ["tx"])
+
+    def test_least_remaining_capacity_by_region_routes_to_remaining_capacity_insight(self) -> None:
+        route = route_query("Which region has the least remaining storage capacity?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "explain")
+        self.assertEqual(route.storage_insight_type, "remaining_capacity")
+        self.assertEqual(route.primary_metric, "storage_remaining_capacity")
+        self.assertEqual(route.chart_type, "bar")
+        self.assertEqual(route.regions, list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS))
+
+    def test_largest_average_storage_field_size_routes_to_capacity_per_field(self) -> None:
+        route = route_query("Which state has the largest average storage field size?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "explain")
+        self.assertEqual(route.storage_insight_type, "capacity_per_field")
+        self.assertEqual(route.primary_metric, "storage_capacity_per_field")
+        self.assertTrue(route.states_all)
+
+    def test_lower48_historical_max_routes_to_storage_explain(self) -> None:
+        route = route_query("Is Lower 48 storage near its historical maximum?")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "explain")
+        self.assertEqual(route.storage_insight_type, "historical_max_compare")
+        self.assertEqual(route.primary_metric, "storage_historical_max_compare")
+        self.assertEqual(route.regions, ["lower48"])
+
+    def test_weekly_storage_report_analysis_routes_to_report_card(self) -> None:
+        route = route_query("Analyze this week's storage report.")
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "explain")
+        self.assertEqual(route.storage_insight_type, "weekly_report_card")
+        self.assertEqual(route.primary_metric, "storage_weekly_report_card")
+        self.assertEqual(route.storage_dataset, "weekly_working_gas")
+        self.assertEqual(route.regions, ["lower48"])
+
+    def test_followup_inherits_storage_utilization_and_replaces_state(self) -> None:
+        previous = route_query("How full is Texas storage?")
+        route = route_query("What about Louisiana?", previous_context=previous)
+
+        self.assertEqual(route.domain, "storage")
+        self.assertEqual(route.analysis_type, "explain")
+        self.assertEqual(route.storage_insight_type, "storage_utilization")
+        self.assertEqual(route.states, ["la"])
+
+    def test_followup_replaces_lower48_with_east_and_keeps_time_window(self) -> None:
+        previous = route_query("Show Lower 48 storage over the last 5 years.")
+        route = route_query("What about East?", previous_context=context_from_route(previous))
+
+        self.assertEqual(route.storage_dataset, "weekly_working_gas")
+        self.assertEqual(route.regions, ["east"])
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.start_date, previous.start_date)
+        self.assertEqual(route.end_date, previous.end_date)
+
+    def test_followup_adds_five_year_average_context(self) -> None:
+        previous = route_query("Compare East and Midwest storage since 2021.")
+        route = route_query("Show that versus the 5-year average.", previous_context=previous)
+
+        self.assertEqual(route.storage_dataset, "weekly_working_gas")
+        self.assertEqual(route.regions, ["east", "midwest"])
+        self.assertIn("five_year_avg", route.comparisons)
+        self.assertEqual(route.analysis_type, "seasonal_compare")
+
+    def test_followup_switches_metric_to_field_count_and_keeps_ranking_scope(self) -> None:
+        previous = route_query("Which state has the most working gas storage capacity?")
+        route = route_query("What about field count?", previous_context=previous)
+
+        self.assertEqual(route.storage_metric_type, "storage_field_count")
+        self.assertEqual(route.storage_dataset, "underground_storage_all_operators")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertTrue(route.states_all)
+
+    def test_followup_replaces_storage_type(self) -> None:
+        previous = route_query("What is working gas storage in salt caverns?")
+        route = route_query("What about aquifers?", previous_context=previous)
+
+        self.assertEqual(route.storage_dataset, "underground_storage_by_type")
+        self.assertEqual(route.storage_type, "aquifer")
+        self.assertEqual(route.analysis_type, "latest")
+
+    def test_followup_turns_weekly_report_into_time_series(self) -> None:
+        previous = route_query("Analyze this week's storage report.")
+        route = route_query("Show it over time.", previous_context=previous)
+
+        self.assertEqual(route.storage_dataset, "weekly_working_gas")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.chart_type, "line")
+
+    def test_clear_new_question_does_not_inherit_previous_geography(self) -> None:
+        previous = route_query("How full is Texas storage?")
+        route = route_query("Show Lower 48 storage over the last 5 years.", previous_context=previous)
+
+        self.assertEqual(route.storage_dataset, "weekly_working_gas")
+        self.assertEqual(route.regions, ["lower48"])
+        self.assertEqual(route.analysis_type, "time_series")
 
     def test_total_us_base_gas_in_storage_uses_national_series_only(self) -> None:
         route = route_query("What is total U.S. base gas in storage?")

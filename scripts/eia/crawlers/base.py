@@ -41,7 +41,11 @@ class BaseCrawler:
         return resp.text
 
     def fetch_soup(self, url: str) -> BeautifulSoup:
-        return BeautifulSoup(self.fetch_html(url), "lxml")
+        html = self.fetch_html(url)
+        try:
+            return BeautifulSoup(html, "lxml")
+        except Exception:
+            return BeautifulSoup(html, "html.parser")
 
     def _normalize_date(self, value: str | date | None) -> date | None:
         if value is None or value == "":
