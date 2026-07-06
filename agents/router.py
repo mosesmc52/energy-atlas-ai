@@ -9,6 +9,7 @@ from agents.llm_router import (
     LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY,
     STORAGE_DATASETS,
     STORAGE_FREQUENCIES,
+    STORAGE_INSIGHT_TYPES,
     STORAGE_METRIC_BY_VALUE_TYPE,
     STORAGE_METRIC_TYPES,
     STORAGE_REGIONS,
@@ -164,6 +165,9 @@ RANKING_INTENT_TERMS = (
     "ranking",
     "by region",
     "by state",
+    "all regions",
+    "all storage regions",
+    "storage regions",
 )
 
 NATIONAL_STORAGE_TERMS = (
@@ -173,6 +177,65 @@ NATIONAL_STORAGE_TERMS = (
     "u.s. total",
     "national",
     "nationwide",
+)
+
+FOLLOWUP_QUERY_TERMS = (
+    "what about",
+    "how about",
+    "and",
+    "also",
+    "compare that",
+    "compare against",
+    "show that",
+    "show it",
+    "show only",
+    "plot that",
+    "plot it",
+    "over time",
+    "since then",
+    "same for",
+    "do the same for",
+    "versus the 5-year average",
+    "versus the five-year average",
+    "instead",
+)
+
+FOLLOWUP_TRANSFORM_TERMS = (
+    "compare against",
+    "compare to",
+    "versus",
+    "vs ",
+    "show only",
+    "only the last",
+    "last three years",
+    "last 3 years",
+    "rank regions",
+    "rank states",
+    "rank storage types",
+    "rank instead",
+    "why",
+    "explain",
+    "show capacity",
+    "show field count",
+    "show storage utilization",
+    "how full is it",
+    "how full is storage",
+    "how much capacity remains",
+    "how much remains",
+)
+
+NEW_DOMAIN_TERMS = (
+    "production",
+    "consumption",
+    "demand",
+    "price",
+    "weather",
+    "pipeline",
+    "exports",
+    "export",
+    "imports",
+    "import",
+    "power",
 )
 
 MONTHLY_STORAGE_TERMS = ("monthly", "month", "by month")
@@ -288,6 +351,17 @@ UNDERGROUND_STATE_ALIASES = {
     "united_states_total": ("united states", "u.s.", " us ", "u.s. total", "national"),
 }
 
+ROUTER_REGION_ALIASES = {
+    "lower48": ("lower 48", "lower48", "u.s.", "united states"),
+    "east": ("east", "eastern"),
+    "midwest": ("midwest", "mid-west"),
+    "mountain": ("mountain",),
+    "pacific": ("pacific",),
+    "south_central": ("south central", "south-central"),
+    "south_central_salt": ("south central salt", "salt region", "south-central salt"),
+    "south_central_nonsalt": ("south central nonsalt", "south-central nonsalt", "nonsalt region"),
+}
+
 
 @dataclass(frozen=True)
 class EnergyRouteResult:
@@ -299,7 +373,9 @@ class EnergyRouteResult:
     storage_frequency: str
     storage_metric_type: str
     storage_type: Optional[str]
+    storage_types: list[str]
     storage_types_all: bool
+    storage_insight_type: Optional[str]
     regions: list[str]
     states: list[str]
     states_all: bool
@@ -316,6 +392,51 @@ class EnergyRouteResult:
     ambiguous: bool = False
     reason: Optional[str] = None
     normalized_query: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RouteContext:
+    domain: str | None = None
+    analysis_type: str | None = None
+    storage_dataset: str | None = None
+    storage_frequency: str | None = None
+    storage_metric_type: str | None = None
+    storage_insight_type: str | None = None
+    storage_type: str | None = None
+    storage_types: list[str] = field(default_factory=list)
+    storage_types_all: bool = False
+    regions: list[str] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
+    states_all: bool = False
+    start_date: str | None = None
+    end_date: str | None = None
+    comparisons: list[str] = field(default_factory=list)
+    ranking_basis: str | None = None
+    chart_type: str | None = None
+    output_mode: str | None = None
+
+
+def context_from_route(route: EnergyRouteResult) -> RouteContext:
+    return RouteContext(
+        domain=route.domain,
+        analysis_type=route.analysis_type,
+        storage_dataset=route.storage_dataset,
+        storage_frequency=route.storage_frequency,
+        storage_metric_type=route.storage_metric_type,
+        storage_insight_type=route.storage_insight_type,
+        storage_type=route.storage_type,
+        storage_types=list(route.storage_types or []),
+        storage_types_all=route.storage_types_all,
+        regions=list(route.regions or []),
+        states=list(route.states or []),
+        states_all=route.states_all,
+        start_date=route.start_date,
+        end_date=route.end_date,
+        comparisons=list(route.comparisons or []),
+        ranking_basis=route.ranking_basis,
+        chart_type=route.chart_type,
+        output_mode=route.output_mode,
+    )
 
 
 def normalize_query(user_query: str) -> str:
@@ -371,10 +492,104 @@ def _parse_storage_type_from_text(normalized_query: str) -> tuple[Optional[str],
     return None, False
 
 
+def _parse_storage_types_from_text(normalized_query: str) -> list[str]:
+    matches: list[str] = []
+    checks = (
+        ("salt_cavern", ("salt cavern", "salt caverns", "salt-cavern", "salt storage")),
+        ("depleted_field", ("depleted field", "depleted fields", "depleted reservoir", "depleted reservoirs")),
+        ("aquifer", ("aquifer", "aquifers")),
+    )
+    for storage_type, aliases in checks:
+        if any(alias in normalized_query for alias in aliases) and storage_type not in matches:
+            matches.append(storage_type)
+    return matches
+
+
+def _parse_storage_insight_type(normalized_query: str) -> str | None:
+    if any(
+        term in normalized_query
+        for term in ("how full", "full is storage", "storage utilization", "utilization rate", "percent full", "% full")
+    ):
+        return "storage_utilization"
+    if any(
+        term in normalized_query
+        for term in (
+            "remaining capacity",
+            "remaining storage capacity",
+            "capacity remains",
+            "how much capacity remains",
+            "spare capacity",
+            "unused capacity",
+            "storage space remaining",
+            "available capacity",
+            "least remaining capacity",
+            "least remaining storage capacity",
+            "most remaining capacity",
+            "most remaining storage capacity",
+        )
+    ):
+        return "remaining_capacity"
+    if any(
+        term in normalized_query
+        for term in (
+            "capacity per field",
+            "average storage field size",
+            "average capacity per field",
+            "storage capacity per field",
+            "capacity most concentrated",
+        )
+    ):
+        return "capacity_per_field"
+    if any(
+        term in normalized_query
+        for term in (
+            "historical maximum",
+            "historical max",
+            "record high",
+            "all-time high",
+            "near its max",
+            "near maximum",
+            "when was storage last this high",
+        )
+    ):
+        return "historical_max_compare"
+    if any(
+        term in normalized_query
+        for term in (
+            "weekly storage report",
+            "storage report analysis",
+            "this week's storage report",
+            "latest storage report",
+            "weekly report card",
+            "storage summary",
+        )
+    ):
+        return "weekly_report_card"
+    return None
+
+
 def _parse_storage_metric_type_from_text(
     normalized_query: str,
     parsed_metric_type: str,
 ) -> str:
+    if (
+        any(
+            term in normalized_query
+            for term in (
+                "compare lng additions and withdrawals",
+                "compare lng storage additions and withdrawals",
+            )
+        )
+        or (
+            "lng" in normalized_query
+            and "addition" in normalized_query
+            and any(term in normalized_query for term in ("withdrawal", "withdrawals", "withdrawls"))
+            and "net withdrawal" not in normalized_query
+            and "net withdrawals" not in normalized_query
+            and "net withdrawls" not in normalized_query
+        )
+    ):
+        return "lng_storage_additions_vs_withdrawals"
     if any(
         term in normalized_query
         for term in (
@@ -410,6 +625,8 @@ def _parse_storage_metric_type_from_text(
         )
     ):
         return "lng_storage_additions"
+    if any(term in normalized_query for term in ("lng storage", "liquefied natural gas storage")):
+        return "lng_storage"
     if any(
         term in normalized_query
         for term in (
@@ -488,9 +705,11 @@ def _is_capacity_count_storage_metric(storage_metric_type: str) -> bool:
 
 def _is_lng_storage_metric(storage_metric_type: str) -> bool:
     return storage_metric_type in {
+        "lng_storage",
         "lng_storage_additions",
         "lng_storage_withdrawals",
         "lng_storage_net_withdrawals",
+        "lng_storage_additions_vs_withdrawals",
     }
 
 
@@ -551,6 +770,175 @@ def _parse_states_from_text(normalized_query: str) -> list[str]:
         if positions and state in UNDERGROUND_STORAGE_STATES:
             matches.append((min(positions), state))
     return [state for _, state in sorted(matches, key=lambda item: item[0])]
+
+
+def _parse_regions_from_text(normalized_query: str) -> list[str]:
+    padded = f" {normalized_query} "
+    matches: list[tuple[int, str]] = []
+    for region, aliases in ROUTER_REGION_ALIASES.items():
+        positions = [padded.find(alias) for alias in aliases if alias in padded]
+        if positions and region in STORAGE_REGIONS:
+            matches.append((min(positions), region))
+    return [region for _, region in sorted(matches, key=lambda item: item[0])]
+
+
+def _is_followup_query(normalized_query: str) -> bool:
+    query = str(normalized_query or "").strip().lower()
+    if not query:
+        return False
+    if any(term in query for term in FOLLOWUP_QUERY_TERMS):
+        return True
+    if len(query.split()) <= 4:
+        if _parse_states_from_text(query):
+            return True
+        if _parse_regions_from_text(query):
+            return True
+        storage_type, storage_types_all = _parse_storage_type_from_text(query)
+        if storage_type or storage_types_all:
+            return True
+        if query in {"texas", "louisiana", "east", "midwest", "lower 48", "south central"}:
+            return True
+    return False
+
+
+def _is_contextual_followup_query(
+    normalized_query: str,
+    context: RouteContext | None,
+) -> bool:
+    query = str(normalized_query or "").strip().lower()
+    if not query or not context or str(context.domain or "") != "storage":
+        return False
+    if _is_followup_query(query):
+        return True
+    if _is_new_domain_query(query):
+        return False
+
+    words = query.split()
+    short_query = len(words) <= 6
+    has_transform_term = any(term in query for term in FOLLOWUP_TRANSFORM_TERMS)
+    has_pronoun_reference = any(term in query for term in ("it", "that", "this", "instead", "too"))
+    has_storage_lens_switch = any(
+        term in query
+        for term in (
+            "capacity",
+            "field count",
+            "utilization",
+            "how full",
+            "remaining",
+            "five-year average",
+            "5-year average",
+            "last three years",
+            "last 3 years",
+            "rank",
+            "why",
+            "explain",
+        )
+    )
+
+    if short_query and (has_transform_term or has_pronoun_reference or has_storage_lens_switch):
+        return True
+    return False
+
+
+def _is_new_domain_query(normalized_query: str) -> bool:
+    query = str(normalized_query or "").strip().lower()
+    return any(term in query for term in NEW_DOMAIN_TERMS)
+
+
+def _has_explicit_storage_date_override(
+    normalized_query: str,
+    date_expression: str | None,
+) -> bool:
+    if date_expression:
+        return True
+    return any(
+        term in normalized_query
+        for term in (
+            "today",
+            "yesterday",
+            "this week",
+            "this month",
+            "this year",
+            "since ",
+            "from ",
+            "through ",
+            "over the last",
+            "last ",
+            "ytd",
+            "year to date",
+        )
+    )
+
+
+def _has_explicit_storage_metric_override(normalized_query: str) -> bool:
+    return any(
+        term in normalized_query
+        for term in (
+            "working gas",
+            "base gas",
+            "cushion gas",
+            "total gas",
+            "injections",
+            "withdrawals",
+            "net withdrawals",
+            "capacity",
+            "field count",
+            "lng storage",
+            "5-year average",
+            "five-year average",
+        )
+    )
+
+
+def _apply_followup_geography(
+    normalized_query: str,
+    route: EnergyRouteResult,
+    context: RouteContext,
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    states = _parse_states_from_text(normalized_query)
+    regions = _parse_regions_from_text(normalized_query)
+    storage_type, storage_types_all = _parse_storage_type_from_text(normalized_query)
+
+    if any(term in normalized_query for term in ("by state", "same for states", "all states")):
+        updates["states"] = []
+        updates["states_all"] = True
+        updates["regions"] = []
+    elif states:
+        updates["states"] = states
+        updates["states_all"] = False
+        if route.storage_dataset != "weekly_working_gas":
+            updates["regions"] = []
+    elif regions:
+        updates["regions"] = regions
+        updates["states"] = []
+        updates["states_all"] = False
+    elif _has_national_storage_request(normalized_query):
+        if route.storage_dataset == "weekly_working_gas":
+            updates["regions"] = ["lower48"]
+            updates["states"] = []
+            updates["states_all"] = False
+        else:
+            updates["states"] = ["united_states_total"]
+            updates["states_all"] = False
+            updates["regions"] = []
+
+    if any(term in normalized_query for term in ("by region", "all regions")):
+        if route.storage_dataset == "weekly_working_gas":
+            updates["regions"] = list(STORAGE_REGIONS)
+        else:
+            updates["regions"] = list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS)
+        updates["states"] = []
+        updates["states_all"] = False
+
+    if storage_type:
+        updates["storage_type"] = storage_type
+        updates["storage_types_all"] = False
+    elif storage_types_all:
+        updates["storage_type"] = None
+        updates["storage_types_all"] = True
+
+    return updates
 
 
 def _resolve_storage_dataset(
@@ -633,6 +1021,23 @@ def infer_storage_analysis_type_from_text(
         )
 
     if analysis_type == "ranking":
+        return (
+            analysis_type,
+            resolved_value_type,
+            resolved_comparisons,
+            ranking_basis,
+            resolved_chart_type,
+            resolved_output_mode,
+        )
+
+    if any(
+        term in normalized_query
+        for term in ("compare all storage regions", "all storage regions", "compare all regions", "all regions")
+    ):
+        analysis_type = "regional_compare"
+        resolved_value_type = "level"
+        resolved_chart_type = "bar"
+        resolved_output_mode = "chart_and_answer"
         return (
             analysis_type,
             resolved_value_type,
@@ -737,21 +1142,30 @@ def _filters_for_route(
     storage_frequency: str,
     storage_metric_type: str,
     storage_type: str | None,
+    storage_types: list[str],
     storage_types_all: bool,
+    storage_insight_type: str | None,
     regions: list[str],
     states: list[str],
     states_all: bool,
 ) -> dict[str, Any]:
     if domain != "storage":
         return {}
+    extra_filters: dict[str, Any] = {}
+    if storage_insight_type:
+        extra_filters["storage_insight_type"] = storage_insight_type
     if storage_dataset == "underground_storage_by_type":
-        return {
+        filters = {
             "storage_dataset": storage_dataset,
             "storage_frequency": storage_frequency,
             "storage_metric_type": storage_metric_type,
             "storage_type": storage_type,
             "storage_types_all": storage_types_all,
+            **extra_filters,
         }
+        if storage_types:
+            filters["storage_types"] = storage_types
+        return filters
     if storage_dataset == "lng_storage":
         return {
             "states": states,
@@ -759,6 +1173,7 @@ def _filters_for_route(
             "storage_dataset": storage_dataset,
             "storage_frequency": storage_frequency,
             "storage_metric_type": storage_metric_type,
+            **extra_filters,
         }
     if storage_dataset == "underground_storage_all_operators":
         filters = {
@@ -768,6 +1183,7 @@ def _filters_for_route(
             "storage_frequency": storage_frequency,
             "storage_metric_type": storage_metric_type,
         }
+        filters.update(extra_filters)
         if _is_capacity_count_storage_metric(storage_metric_type):
             filters["regions"] = regions
         return filters
@@ -776,14 +1192,30 @@ def _filters_for_route(
         "storage_dataset": storage_dataset,
         "storage_frequency": storage_frequency,
         "storage_metric_type": storage_metric_type,
+        **extra_filters,
     }
 
 
-def route_query(user_query: str) -> EnergyRouteResult:
+def route_query(
+    user_query: str,
+    previous_context: RouteContext | EnergyRouteResult | None = None,
+) -> EnergyRouteResult:
     normalized = normalize_query(user_query)
+    context: RouteContext | None
+    if isinstance(previous_context, EnergyRouteResult):
+        context = context_from_route(previous_context)
+    else:
+        context = previous_context
+    use_followup_context = bool(
+        context
+        and _is_contextual_followup_query(normalized, context)
+        and not _is_new_domain_query(normalized)
+        and str(context.domain or "") == "storage"
+    )
     national_storage_request = _has_national_storage_request(normalized)
     start_date, end_date = resolve_date_range(user_query)
     parsed = llm_parse_query(user_query=user_query, normalized_query=normalized)
+    parsed_domain = parsed.domain if not (use_followup_context and parsed.domain == "unsupported") else "storage"
 
     regions = list(parsed.regions or [])
     states = [state for state in list(getattr(parsed, "states", []) or []) if state in UNDERGROUND_STORAGE_STATES]
@@ -791,7 +1223,11 @@ def route_query(user_query: str) -> EnergyRouteResult:
     storage_type = getattr(parsed, "storage_type", None)
     if storage_type not in STORAGE_TYPES:
         storage_type = None
+    storage_types = [value for value in list(getattr(parsed, "storage_types", []) or []) if value in STORAGE_TYPES]
     storage_types_all = bool(getattr(parsed, "storage_types_all", False))
+    storage_insight_type = getattr(parsed, "storage_insight_type", None)
+    if storage_insight_type not in STORAGE_INSIGHT_TYPES:
+        storage_insight_type = _parse_storage_insight_type(normalized)
     storage_frequency = _parse_storage_frequency_from_text(
         normalized, getattr(parsed, "storage_frequency", "weekly")
     )
@@ -802,15 +1238,22 @@ def route_query(user_query: str) -> EnergyRouteResult:
     if states_from_text:
         states = states_from_text
         states_all = False
-    if parsed.domain == "storage":
+    if parsed_domain == "storage":
         regions = [region for region in regions if region in STORAGE_REGIONS]
         storage_type_from_text, storage_types_all_from_text = _parse_storage_type_from_text(normalized)
+        storage_types_from_text = _parse_storage_types_from_text(normalized)
         if storage_type_from_text in STORAGE_TYPES:
             storage_type = storage_type_from_text
             storage_types_all = False
         elif storage_types_all_from_text:
             storage_type = None
             storage_types_all = True
+        if len(storage_types_from_text) > 1:
+            storage_types = list(storage_types_from_text)
+            storage_type = None
+            storage_types_all = False
+        elif storage_types_from_text:
+            storage_types = list(storage_types_from_text)
         storage_dataset = _resolve_storage_dataset(
             normalized,
             parsed_dataset=getattr(parsed, "storage_dataset", "weekly_working_gas"),
@@ -824,6 +1267,7 @@ def route_query(user_query: str) -> EnergyRouteResult:
         if storage_dataset == "lng_storage":
             regions = []
             storage_type = None
+            storage_types = []
             storage_types_all = False
             storage_frequency = "annual"
             if national_storage_request:
@@ -836,6 +1280,7 @@ def route_query(user_query: str) -> EnergyRouteResult:
             if not metric_is_capacity_count:
                 regions = []
             storage_type = None
+            storage_types = []
             storage_types_all = False
             if storage_frequency not in {"monthly", "annual"}:
                 storage_frequency = "monthly"
@@ -871,11 +1316,14 @@ def route_query(user_query: str) -> EnergyRouteResult:
             states_all = False
             if storage_frequency not in {"monthly", "annual"}:
                 storage_frequency = "monthly"
+            if len(storage_types) > 1:
+                analysis_type = "regional_compare"
         else:
             storage_dataset = "weekly_working_gas"
             storage_frequency = "weekly"
             storage_metric_type = "working_gas"
             storage_type = None
+            storage_types = []
             storage_types_all = False
             states = []
             states_all = False
@@ -887,15 +1335,96 @@ def route_query(user_query: str) -> EnergyRouteResult:
         storage_frequency = "weekly"
         storage_metric_type = "working_gas"
         storage_type = None
+        storage_types = []
         storage_types_all = False
+        storage_insight_type = None
 
-    analysis_type = parsed.analysis_type
+    analysis_type = parsed.analysis_type if parsed_domain == parsed.domain else "latest"
     value_type = parsed.value_type
     comparisons = list(parsed.comparisons or ["none"])
     chart_type = parsed.chart_type
     output_mode = parsed.output_mode
     ranking_basis = "current_storage"
-    if parsed.domain == "storage":
+    if use_followup_context and context:
+        explicit_states = _parse_states_from_text(normalized)
+        explicit_regions = _parse_regions_from_text(normalized)
+        explicit_storage_type, explicit_storage_types_all = _parse_storage_type_from_text(normalized)
+        explicit_geography = bool(
+            explicit_states
+            or explicit_regions
+            or explicit_storage_type
+            or explicit_storage_types_all
+            or national_storage_request
+            or "by state" in normalized
+            or "by region" in normalized
+        )
+        explicit_metric = _has_explicit_storage_metric_override(normalized)
+        explicit_date = _has_explicit_storage_date_override(normalized, parsed.date_expression)
+        explicit_frequency = _has_term(normalized, MONTHLY_STORAGE_TERMS + ANNUAL_STORAGE_TERMS) or "weekly" in normalized
+        explicit_time_series = any(term in normalized for term in ("over time", "plot that", "plot it", "show that over time", "trend"))
+        explicit_rank = any(
+            term in normalized
+            for term in (
+                "rank them",
+                "which is highest",
+                "which is lowest",
+                "compare all",
+                "rank regions",
+                "rank states",
+                "rank storage types",
+                "rank instead",
+            )
+        )
+        explicit_explain = any(term in normalized for term in ("why", "explain that"))
+        explicit_five_year = any(term in normalized for term in ("5-year average", "five-year average", "seasonal average", "versus the 5-year average", "versus the five-year average"))
+
+        if parsed_domain != "storage":
+            parsed_domain = "storage"
+        if not explicit_metric and context.storage_metric_type:
+            storage_metric_type = context.storage_metric_type
+        if not explicit_metric and context.storage_insight_type:
+            storage_insight_type = context.storage_insight_type
+        if not explicit_frequency and context.storage_frequency:
+            storage_frequency = context.storage_frequency
+        if not explicit_date:
+            start_date = context.start_date
+            end_date = context.end_date
+        if not explicit_storage_type and not explicit_storage_types_all and context.storage_type:
+            storage_type = context.storage_type
+            storage_types_all = context.storage_types_all
+            if not storage_types:
+                storage_types = list(context.storage_types or [])
+        if not explicit_geography:
+            regions = list(context.regions or regions)
+            states = list(context.states or states)
+            states_all = bool(context.states_all)
+        if context.storage_dataset and not explicit_metric and not explicit_geography:
+            storage_dataset = context.storage_dataset
+        elif context.storage_dataset and not explicit_metric and storage_dataset == "weekly_working_gas" and context.storage_dataset != "weekly_working_gas":
+            storage_dataset = context.storage_dataset
+        if context.comparisons and not explicit_five_year:
+            comparisons = list(context.comparisons)
+        if context.ranking_basis and not explicit_metric:
+            ranking_basis = context.ranking_basis
+        if context.analysis_type and not any((explicit_time_series, explicit_rank, explicit_explain, explicit_five_year)):
+            analysis_type = context.analysis_type
+        if context.chart_type and not any((explicit_time_series, explicit_rank, explicit_explain, explicit_five_year)):
+            chart_type = context.chart_type
+        if context.output_mode and not any((explicit_time_series, explicit_rank, explicit_explain, explicit_five_year)):
+            output_mode = context.output_mode
+
+        if (
+            explicit_metric
+            and not any((explicit_time_series, explicit_rank, explicit_explain, explicit_five_year))
+            and str(context.analysis_type or "") == "explain"
+            and storage_insight_type is None
+        ):
+            multi_geography = states_all or len(states) > 1 or len(regions) > 1
+            analysis_type = "regional_compare" if multi_geography else "latest"
+            chart_type = "bar" if multi_geography else "none"
+            output_mode = "chart_and_answer" if multi_geography else "answer"
+
+    if parsed_domain == "storage":
         if storage_dataset == "weekly_working_gas":
             (
                 analysis_type,
@@ -930,6 +1459,7 @@ def route_query(user_query: str) -> EnergyRouteResult:
                     and not states_all
                     and any(term in normalized for term in ("compare", "versus", " vs "))
                 )
+                has_multi_metric_lng_compare = storage_metric_type == "lng_storage_additions_vs_withdrawals"
                 if analysis_type in {"ranking", "regional_compare"} and (
                     not states
                     or (
@@ -938,13 +1468,13 @@ def route_query(user_query: str) -> EnergyRouteResult:
                         and _is_national_storage_series(states[0])
                         and any(
                             term in normalized
-                            for term in ("which state", "rank states", "by state", "compare states", "all states")
+                            for term in ("which state", "rank states", "by state", "compare states", "all states", "across states")
                         )
                     )
                 ):
                     states = []
                     states_all = True
-                if _has_explicit_time_series_request(normalized) or has_multi_state_lng_compare:
+                if _has_explicit_time_series_request(normalized) or has_multi_state_lng_compare or has_multi_metric_lng_compare:
                     analysis_type = "time_series"
                     chart_type = "line"
                     output_mode = "chart_and_answer"
@@ -1021,7 +1551,11 @@ def route_query(user_query: str) -> EnergyRouteResult:
             regions = [region for region in regions if region in UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS]
         if storage_dataset == "underground_storage_by_type":
             comparisons = ["none"]
-            if analysis_type == "latest":
+            if len(storage_types) > 1:
+                analysis_type = "regional_compare"
+                chart_type = "bar"
+                output_mode = "chart_and_answer"
+            elif analysis_type == "latest":
                 chart_type = "none"
                 output_mode = "answer"
             elif analysis_type in {"ranking", "regional_compare"}:
@@ -1030,20 +1564,173 @@ def route_query(user_query: str) -> EnergyRouteResult:
             elif analysis_type == "time_series":
                 chart_type = "line"
                 output_mode = "chart_and_answer"
+        if storage_insight_type == "weekly_report_card":
+            analysis_type = "explain"
+            storage_dataset = "weekly_working_gas"
+            storage_frequency = "weekly"
+            storage_metric_type = "working_gas"
+            storage_type = None
+            storage_types_all = False
+            regions = [region for region in regions if region in STORAGE_REGIONS] or ["lower48"]
+            states = []
+            states_all = False
+            comparisons = ["none"]
+            chart_type = "table"
+            output_mode = "answer"
+        elif storage_insight_type == "historical_max_compare":
+            analysis_type = "explain"
+            comparisons = ["none"]
+            storage_type = None
+            storage_types_all = False
+            if states:
+                storage_dataset = "underground_storage_all_operators"
+                if storage_frequency not in {"monthly", "annual"}:
+                    storage_frequency = "monthly"
+                regions = []
+            else:
+                storage_dataset = "weekly_working_gas"
+                storage_frequency = "weekly"
+                storage_metric_type = "working_gas"
+                states = []
+                states_all = False
+                regions = [region for region in regions if region in STORAGE_REGIONS] or ["lower48"]
+            chart_type = "line" if (_has_explicit_time_series_request(normalized) or "near" in normalized or "last this high" in normalized) else "none"
+            output_mode = "chart_and_answer" if chart_type != "none" else "answer"
+        elif storage_insight_type in {"storage_utilization", "remaining_capacity", "capacity_per_field"}:
+            analysis_type = "explain"
+            storage_dataset = "underground_storage_all_operators"
+            if storage_frequency not in {"monthly", "annual"}:
+                storage_frequency = "monthly"
+            storage_type = None
+            storage_types_all = False
+            comparisons = ["none"]
+            if any(term in normalized for term in ("which region", "by region", "compare regions", "rank regions")):
+                regions = list(UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS)
+                states = []
+                states_all = False
+            elif any(term in normalized for term in ("lower 48", "lower48")):
+                regions = ["lower48"]
+                states = []
+                states_all = False
+            elif not states and not regions and any(
+                term in normalized
+                for term in ("which state", "rank states", "by state", "all states", "largest average", "most concentrated")
+            ):
+                states_all = True
+            elif not states and not regions and not states_all:
+                states = ["united_states_total"]
+            chart_type = "none" if storage_insight_type == "storage_utilization" and len(states) == 1 and not states_all and not regions else "bar"
+            output_mode = "answer" if chart_type == "none" else "chart_and_answer"
 
-    primary_metric, metrics = _storage_metrics_for_route(
-        storage_dataset=storage_dataset,
-        storage_frequency=storage_frequency,
-        storage_metric_type=storage_metric_type,
-        value_type=value_type,
-    ) if parsed.domain == "storage" else _metrics_for_route(parsed.domain, value_type)
+        if use_followup_context and context:
+            provisional_route = EnergyRouteResult(
+                domain="storage",
+                analysis_type=analysis_type,
+                primary_metric=None,
+                metrics=[],
+                storage_dataset=storage_dataset,
+                storage_frequency=storage_frequency,
+                storage_metric_type=storage_metric_type,
+                storage_type=storage_type,
+                storage_types=list(storage_types),
+                storage_types_all=storage_types_all,
+                storage_insight_type=storage_insight_type,
+                regions=list(regions),
+                states=list(states),
+                states_all=states_all,
+                start_date=start_date,
+                end_date=end_date,
+                date_expression=parsed.date_expression,
+                value_type=value_type,
+                comparisons=list(comparisons),
+                ranking_basis=ranking_basis,
+                chart_type=chart_type,
+                output_mode=output_mode,
+                filters={},
+                confidence=parsed.confidence,
+                ambiguous=parsed.ambiguous,
+                reason=parsed.reason,
+                normalized_query=normalized,
+            )
+            geography_updates = _apply_followup_geography(normalized, provisional_route, context)
+            if "regions" in geography_updates:
+                regions = list(geography_updates["regions"])
+            if "states" in geography_updates:
+                states = list(geography_updates["states"])
+            if "states_all" in geography_updates:
+                states_all = bool(geography_updates["states_all"])
+            if "storage_type" in geography_updates:
+                storage_type = geography_updates["storage_type"]
+            if "storage_types_all" in geography_updates:
+                storage_types_all = bool(geography_updates["storage_types_all"])
 
-    if parsed.domain == "storage" and analysis_type == "unsupported":
+            if any(term in normalized for term in ("over time", "plot that", "plot it", "show that over time", "trend", "show it over time")):
+                analysis_type = "time_series"
+                chart_type = "line"
+                output_mode = "chart_and_answer"
+                if storage_insight_type == "weekly_report_card":
+                    storage_insight_type = None
+                    storage_dataset = "weekly_working_gas"
+                    storage_frequency = "weekly"
+                    storage_metric_type = "working_gas"
+                    comparisons = ["none"]
+            elif any(
+                term in normalized
+                for term in (
+                    "rank them",
+                    "which is highest",
+                    "which is lowest",
+                    "compare all",
+                    "rank regions",
+                    "rank states",
+                    "rank storage types",
+                    "rank instead",
+                )
+            ):
+                analysis_type = "ranking" if any(term in normalized for term in ("rank", "highest", "lowest")) else "regional_compare"
+                chart_type = "bar"
+                output_mode = "chart_and_answer"
+                if storage_dataset == "weekly_working_gas" and any(
+                    term in normalized for term in ("rank regions", "compare all", "rank instead")
+                ):
+                    regions = list(STORAGE_REGIONS)
+            elif any(term in normalized for term in ("why", "explain that")):
+                analysis_type = "explain"
+                output_mode = "answer" if chart_type == "none" else "chart_and_answer"
+
+            if any(term in normalized for term in ("5-year average", "five-year average", "seasonal average", "versus the 5-year average", "versus the five-year average")):
+                cleaned_comparisons = [comp for comp in comparisons if comp and comp != "none"]
+                if "five_year_avg" not in cleaned_comparisons:
+                    cleaned_comparisons.append("five_year_avg")
+                comparisons = cleaned_comparisons or ["five_year_avg"]
+                if storage_dataset == "weekly_working_gas":
+                    analysis_type = "seasonal_compare"
+                    chart_type = "seasonal_line"
+                    output_mode = "chart_and_answer"
+
+    if parsed_domain == "storage" and storage_insight_type in STORAGE_INSIGHT_TYPES:
+        primary_metric = {
+            "storage_utilization": "storage_utilization",
+            "remaining_capacity": "storage_remaining_capacity",
+            "capacity_per_field": "storage_capacity_per_field",
+            "historical_max_compare": "storage_historical_max_compare",
+            "weekly_report_card": "storage_weekly_report_card",
+        }[storage_insight_type]
+        metrics = [primary_metric]
+    else:
+        primary_metric, metrics = _storage_metrics_for_route(
+            storage_dataset=storage_dataset,
+            storage_frequency=storage_frequency,
+            storage_metric_type=storage_metric_type,
+            value_type=value_type,
+        ) if parsed_domain == "storage" else _metrics_for_route(parsed_domain, value_type)
+
+    if parsed_domain == "storage" and analysis_type == "unsupported":
         primary_metric = None
         metrics = []
 
     return EnergyRouteResult(
-        domain=parsed.domain,
+        domain=parsed_domain,
         analysis_type=analysis_type,
         primary_metric=primary_metric,
         metrics=metrics,
@@ -1051,7 +1738,9 @@ def route_query(user_query: str) -> EnergyRouteResult:
         storage_frequency=storage_frequency,
         storage_metric_type=storage_metric_type,
         storage_type=storage_type,
+        storage_types=storage_types,
         storage_types_all=storage_types_all,
+        storage_insight_type=storage_insight_type,
         regions=regions,
         states=states,
         states_all=states_all,
@@ -1064,12 +1753,14 @@ def route_query(user_query: str) -> EnergyRouteResult:
         chart_type=chart_type,
         output_mode=output_mode,
         filters=_filters_for_route(
-            parsed.domain,
+            parsed_domain,
             storage_dataset=storage_dataset,
             storage_frequency=storage_frequency,
             storage_metric_type=storage_metric_type,
             storage_type=storage_type,
+            storage_types=storage_types,
             storage_types_all=storage_types_all,
+            storage_insight_type=storage_insight_type,
             regions=regions,
             states=states,
             states_all=states_all,

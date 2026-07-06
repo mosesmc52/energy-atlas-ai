@@ -72,10 +72,53 @@ class TestAnswerBuilder(unittest.TestCase):
             payload.chart_data_preview.rows,
             columns=payload.chart_data_preview.columns,
         )
+        self.assertIsNotNone(payload.comparison_context)
+        self.assertEqual(payload.comparison_context.visualization, "time_series")
+        self.assertEqual(
+            [obj.label for obj in payload.comparison_context.objects],
+            ["East", "Midwest"],
+        )
         self.assertEqual(set(chart_df["region"]), {"east", "midwest"})
         figure = render_plotly(payload.chart_spec, chart_df)
         self.assertEqual(len(figure.data), 2)
         self.assertEqual({trace.name for trace in figure.data}, {"East", "Midwest"})
+
+    def test_storage_route_state_bar_compare_includes_comparison_context(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2026-01-31", "2026-01-31"],
+                "value": [1200.0, 1100.0],
+                "state": ["tx", "la"],
+            }
+        )
+        payload = build_answer_with_openai(
+            query="Compare Texas and Louisiana working gas.",
+            result=EIAResult(
+                df=df,
+                source=SourceRef(
+                    source_type="eia_api",
+                    label="EIA Storage",
+                    reference="test",
+                    retrieved_at=datetime(2026, 6, 1),
+                ),
+                meta={"metric": "underground_storage_working_gas_monthly"},
+            ),
+            route=self._storage_route(
+                analysis_type="regional_compare",
+                storage_dataset="underground_storage_all_operators",
+                storage_frequency="monthly",
+                storage_metric_type="working_gas",
+                chart_type="bar",
+                states=["tx", "la"],
+            ),
+        )
+
+        self.assertIsNotNone(payload.comparison_context)
+        self.assertEqual(payload.comparison_context.visualization, "bar")
+        self.assertEqual(
+            [obj.label for obj in payload.comparison_context.objects],
+            ["TX", "LA"],
+        )
 
     def test_storage_route_single_region_time_series_with_region_column_has_start_date(self) -> None:
         df = pd.DataFrame(

@@ -57,6 +57,17 @@ class AnswerSourceSummary(BaseModel):
     url: Optional[str] = None
 
 
+class ComparisonObject(BaseModel):
+    id: str
+    label: str
+    kind: Literal["region", "state", "storage_type", "geography"]
+
+
+class ComparisonContext(BaseModel):
+    visualization: Literal["bar", "time_series"]
+    objects: List[ComparisonObject] = Field(default_factory=list)
+
+
 class SuggestedAlert(BaseModel):
     title: str
     reason: str
@@ -85,6 +96,7 @@ class AnswerPayload(BaseModel):
     report_context_used: bool = False
     report_context_reason: Optional[str] = None
     report_context_sources: List[AnswerSourceSummary] = Field(default_factory=list)
+    comparison_context: Optional[ComparisonContext] = None
     data_preview: Optional[DataPreview] = None
     chart_data_preview: Optional[DataPreview] = None
     chart_spec: Optional[ChartSpec] = None  # <-- no quotes

@@ -25,6 +25,14 @@ STORAGE_ANALYSIS_TYPES: Final[tuple[str, ...]] = (
     "unsupported",
 )
 
+STORAGE_INSIGHT_TYPES: Final[tuple[str, ...]] = (
+    "storage_utilization",
+    "remaining_capacity",
+    "capacity_per_field",
+    "historical_max_compare",
+    "weekly_report_card",
+)
+
 STORAGE_REGIONS: Final[tuple[str, ...]] = (
     "lower48",
     "east",
@@ -59,12 +67,14 @@ STORAGE_FREQUENCIES: Final[tuple[str, ...]] = (
 )
 
 STORAGE_METRIC_TYPES: Final[tuple[str, ...]] = (
+    "lng_storage",
     "working_gas",
     "base_gas",
     "total_gas",
     "lng_storage_additions",
     "lng_storage_withdrawals",
     "lng_storage_net_withdrawals",
+    "lng_storage_additions_vs_withdrawals",
     "total_capacity",
     "working_gas_capacity",
     "storage_field_count",
@@ -198,9 +208,11 @@ UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str,
 }
 
 LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
+    ("lng_storage", "annual"): "lng_storage_annual",
     ("lng_storage_additions", "annual"): "lng_storage_additions_annual",
     ("lng_storage_withdrawals", "annual"): "lng_storage_withdrawals_annual",
     ("lng_storage_net_withdrawals", "annual"): "lng_storage_net_withdrawals_annual",
+    ("lng_storage_additions_vs_withdrawals", "annual"): "lng_storage_additions_vs_withdrawals_annual",
 }
 
 SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(
@@ -209,4 +221,11 @@ SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(
     + list(UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
+    + [
+        "storage_utilization",
+        "storage_remaining_capacity",
+        "storage_capacity_per_field",
+        "storage_historical_max_compare",
+        "storage_weekly_report_card",
+    ]
 )
