@@ -71,6 +71,10 @@ class EnergyAtlasAgent:
         filters["storage_frequency"] = route.storage_frequency
         filters["storage_metric_type"] = route.storage_metric_type
         filters["storage_type"] = route.storage_type
+        if route.storage_types:
+            filters["storage_types"] = list(route.storage_types)
+        elif "storage_types" in filters and not filters.get("storage_types"):
+            filters.pop("storage_types", None)
         filters["storage_types_all"] = route.storage_types_all
         filters["storage_insight_type"] = route.storage_insight_type
         prepared_route = replace(route, filters=filters)

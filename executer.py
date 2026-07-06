@@ -85,7 +85,11 @@ def _storage_should_expand_for_latest_all_operators(route: EnergyRouteResult) ->
 def _storage_should_expand_for_default_time_series_history(route: EnergyRouteResult) -> bool:
     if route.domain != "storage":
         return False
-    if route.storage_dataset not in {"underground_storage_by_type", "lng_storage"}:
+    if route.storage_dataset not in {
+        "underground_storage_all_operators",
+        "underground_storage_by_type",
+        "lng_storage",
+    }:
         return False
     if route.analysis_type != "time_series":
         return False
@@ -526,9 +530,11 @@ class MetricExecutor:
             "underground_storage_working_gas_capacity_annual": self._eia_underground_storage_capacity_or_count,
             "underground_storage_field_count_monthly": self._eia_underground_storage_capacity_or_count,
             "underground_storage_field_count_annual": self._eia_underground_storage_capacity_or_count,
+            "lng_storage_annual": self._eia_lng_storage,
             "lng_storage_additions_annual": self._eia_lng_storage,
             "lng_storage_withdrawals_annual": self._eia_lng_storage,
             "lng_storage_net_withdrawals_annual": self._eia_lng_storage,
+            "lng_storage_additions_vs_withdrawals_annual": self._eia_lng_storage,
             "underground_storage_by_type_working_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_base_gas_monthly": self._eia_underground_storage_by_type,
             "underground_storage_by_type_total_gas_monthly": self._eia_underground_storage_by_type,
@@ -601,6 +607,10 @@ class MetricExecutor:
         filters["storage_frequency"] = route.storage_frequency
         filters["storage_metric_type"] = route.storage_metric_type
         filters["storage_type"] = route.storage_type
+        if route.storage_types:
+            filters["storage_types"] = list(route.storage_types)
+        elif not filters.get("storage_types"):
+            filters.pop("storage_types", None)
         filters["storage_types_all"] = bool(route.storage_types_all or filters.get("storage_types_all"))
         filters["storage_insight_type"] = getattr(route, "storage_insight_type", None)
         if route.analysis_type == "explain" and getattr(route, "storage_insight_type", None):
@@ -730,6 +740,7 @@ class MetricExecutor:
                 "storage_frequency": route.storage_frequency,
                 "storage_metric_type": route.storage_metric_type,
                 "storage_type": route.storage_type,
+                "storage_types": list(route.storage_types or []),
                 "storage_types_all": route.storage_types_all,
                 "chart_type": route.chart_type,
                 "output_mode": route.output_mode,
@@ -1185,23 +1196,23 @@ class MetricExecutor:
                 if pd.notna(weekly_change) and pd.notna(five_year_avg_change)
                 else pd.NA
             )
-            out = pd.DataFrame(
-                [
-                    {
-                        "date": target_date,
-                        "geography": str(latest.get("geography") or "lower48"),
-                        "current_storage": current_storage,
-                        "weekly_change": weekly_change,
-                        "prior_weekly_change": prior_weekly_change,
-                        "five_year_avg_storage": five_year_avg_storage,
-                        "storage_deviation_bcf": storage_deviation_bcf,
-                        "storage_deviation_pct": storage_deviation_pct,
-                        "weekly_change_vs_prior": weekly_change_vs_prior,
-                        "weekly_change_vs_5y_avg": weekly_change_vs_5y_avg,
-                        "value": current_storage,
-                    }
-                ]
-            )
+            out = df.copy()
+            out["current_storage"] = pd.NA
+            out["prior_weekly_change"] = pd.NA
+            out["five_year_avg_storage"] = pd.NA
+            out["storage_deviation_bcf"] = pd.NA
+            out["storage_deviation_pct"] = pd.NA
+            out["weekly_change_vs_prior"] = pd.NA
+            out["weekly_change_vs_5y_avg"] = pd.NA
+            latest_idx = out.index[-1]
+            out.at[latest_idx, "current_storage"] = current_storage
+            out.at[latest_idx, "prior_weekly_change"] = prior_weekly_change
+            out.at[latest_idx, "five_year_avg_storage"] = five_year_avg_storage
+            out.at[latest_idx, "storage_deviation_bcf"] = storage_deviation_bcf
+            out.at[latest_idx, "storage_deviation_pct"] = storage_deviation_pct
+            out.at[latest_idx, "weekly_change_vs_prior"] = weekly_change_vs_prior
+            out.at[latest_idx, "weekly_change_vs_5y_avg"] = weekly_change_vs_5y_avg
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
         source = self._build_derived_storage_source(
             label="Derived Weekly Storage Report Card",
             reference="energy_atlas:storage_weekly_report_card",
@@ -1504,10 +1515,17 @@ class MetricExecutor:
             filters,
             valid_states=EIAAdapter.LNG_STORAGE_STATES,
         )
-        metric_type = str(filters.get("storage_metric_type") or "lng_storage_additions")
+        metric_type = str(filters.get("storage_metric_type") or "lng_storage")
         frequency = str(filters.get("storage_frequency") or "annual")
 
         def fetch_for_state(state: str) -> EIAResult:
+            if metric_type == "lng_storage":
+                return self.eia.lng_storage(
+                    start=start,
+                    end=end,
+                    geography=state,
+                    frequency=frequency,
+                )
             if metric_type == "lng_storage_additions":
                 return self.eia.lng_storage_additions(
                     start=start,
@@ -1527,6 +1545,41 @@ class MetricExecutor:
                 end=end,
                 geography=state,
                 frequency=frequency,
+            )
+
+        if metric_type == "lng_storage_additions_vs_withdrawals":
+            additions = self.eia.lng_storage_additions(
+                start=start,
+                end=end,
+                geography="united_states_total",
+                frequency=frequency,
+            )
+            withdrawals = self.eia.lng_storage_withdrawals(
+                start=start,
+                end=end,
+                geography="united_states_total",
+                frequency=frequency,
+            )
+            frames: list[pd.DataFrame] = []
+            for label, result in (
+                ("additions", additions),
+                ("withdrawals", withdrawals),
+            ):
+                frame = result.df.copy() if result.df is not None else pd.DataFrame(columns=["date", "value", "geography"])
+                if frame.empty:
+                    continue
+                frame["geography"] = label
+                frame["state"] = "united_states_total"
+                frames.append(frame[["date", "value", "geography", "state"]])
+            combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["date", "value", "geography", "state"])
+            return EIAResult(
+                df=combined,
+                source=additions.source,
+                meta={
+                    **(additions.meta or {}),
+                    "metric_type": "lng_storage_additions_vs_withdrawals",
+                    "comparison_metrics": ["lng_storage_additions", "lng_storage_withdrawals"],
+                },
             )
 
         if len(states) == 1:

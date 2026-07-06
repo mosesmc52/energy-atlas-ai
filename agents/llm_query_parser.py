@@ -30,6 +30,7 @@ class EnergyQueryParse:
     storage_frequency: str = "weekly"
     storage_metric_type: str = "working_gas"
     storage_type: str | None = None
+    storage_types: list[str] = field(default_factory=list)
     storage_types_all: bool = False
     storage_insight_type: str | None = None
     regions: list[str] = field(default_factory=list)
@@ -393,6 +394,19 @@ def _parse_storage_type(q: str) -> tuple[str | None, bool]:
     return None, False
 
 
+def _parse_storage_types(q: str) -> list[str]:
+    matches: list[str] = []
+    checks = (
+        ("salt_cavern", ("salt cavern", "salt caverns", "salt-cavern", "salt storage")),
+        ("depleted_field", ("depleted field", "depleted fields", "depleted reservoir", "depleted reservoirs")),
+        ("aquifer", ("aquifer", "aquifers")),
+    )
+    for storage_type, aliases in checks:
+        if any(alias in q for alias in aliases) and storage_type not in matches:
+            matches.append(storage_type)
+    return matches
+
+
 def _parse_storage_insight_type(q: str) -> str | None:
     if any(term in q for term in ("how full", "full is storage", "storage utilization", "utilization rate", "percent full", "% full")):
         return "storage_utilization"
@@ -401,6 +415,8 @@ def _parse_storage_insight_type(q: str) -> str | None:
         for term in (
             "remaining capacity",
             "remaining storage capacity",
+            "capacity remains",
+            "how much capacity remains",
             "spare capacity",
             "unused capacity",
             "storage space remaining",
@@ -466,6 +482,18 @@ def _parse_storage_metric_type(q: str) -> str:
     # - "working gas percent change from year ago" -> working_gas_yoy_pct_change
     # - "year-over-year increase/decrease in working gas" -> volume change unless percent/pct/% is explicit
     # - For underground_storage_all_operators, do not treat "year ago" as seasonal_compare intent
+    if (
+        any(term in q for term in ("compare lng additions and withdrawals", "compare lng storage additions and withdrawals"))
+        or (
+            "lng" in q
+            and "addition" in q
+            and any(term in q for term in ("withdrawal", "withdrawals", "withdrawls"))
+            and "net withdrawal" not in q
+            and "net withdrawals" not in q
+            and "net withdrawls" not in q
+        )
+    ):
+        return "lng_storage_additions_vs_withdrawals"
     if any(
         term in q
         for term in (
@@ -501,6 +529,8 @@ def _parse_storage_metric_type(q: str) -> str:
         )
     ):
         return "lng_storage_additions"
+    if any(term in q for term in ("lng storage", "liquefied natural gas storage")):
+        return "lng_storage"
     if any(
         term in q
         for term in (
@@ -581,9 +611,11 @@ def _capacity_count_regions() -> list[str]:
 
 def _parse_storage_dataset(q: str, *, frequency: str, states: list[str], regions: list[str], metric_type: str) -> str:
     if metric_type in {
+        "lng_storage",
         "lng_storage_additions",
         "lng_storage_withdrawals",
         "lng_storage_net_withdrawals",
+        "lng_storage_additions_vs_withdrawals",
     } or _contains_any(q, LNG_STORAGE_TERMS):
         return "lng_storage"
     has_by_type_terms = any(
@@ -763,6 +795,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     storage_insight_type = _parse_storage_insight_type(q)
     metric_is_capacity_count = _is_capacity_count_storage_metric(storage_metric_type)
     storage_type, storage_types_all = _parse_storage_type(q)
+    storage_types = _parse_storage_types(q)
     storage_dataset = _parse_storage_dataset(
         q,
         frequency=storage_frequency,
@@ -797,12 +830,16 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         states_all = False
         if storage_frequency not in {"monthly", "annual"}:
             storage_frequency = "monthly"
+        if len(storage_types) > 1:
+            storage_type = None
+            storage_types_all = False
     else:
         states = []
         states_all = False
         storage_frequency = "weekly"
         storage_metric_type = "working_gas"
         storage_type = None
+        storage_types = []
         storage_types_all = False
     if metric_is_capacity_count and not states and not _asks_all_regions(q):
         regions = [region for region in regions if region != "lower48"]
@@ -870,6 +907,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
     storage_frequency = _sanitize(storage_frequency, STORAGE_FREQUENCIES, "weekly")
     storage_metric_type = _sanitize(storage_metric_type, STORAGE_METRIC_TYPES, "working_gas")
     storage_type = storage_type if storage_type in STORAGE_TYPES else None
+    storage_types = [value for value in storage_types if value in STORAGE_TYPES]
     value_type = _sanitize(value_type, VALUE_TYPES, "level")
     chart_type = _sanitize(chart_type, CHART_TYPES, "none")
     output_mode = _sanitize(output_mode, OUTPUT_MODES, "answer")
@@ -882,6 +920,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
         storage_frequency=storage_frequency,
         storage_metric_type=storage_metric_type,
         storage_type=storage_type,
+        storage_types=storage_types,
         storage_types_all=storage_types_all,
         storage_insight_type=storage_insight_type,
         regions=regions,
@@ -897,6 +936,7 @@ def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryPar
             "storage_frequency": storage_frequency,
             "storage_metric_type": storage_metric_type,
             "storage_type": storage_type,
+            "storage_types": storage_types,
             "storage_types_all": storage_types_all,
             "storage_insight_type": storage_insight_type,
             "regions": regions,

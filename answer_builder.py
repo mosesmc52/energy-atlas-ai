@@ -50,6 +50,8 @@ from schemas.answer import (
     AnswerForecast,
     AnswerPayload,
     AnswerSourceSummary,
+    ComparisonContext,
+    ComparisonObject,
     DataPreview,
     SignalSummary,
     SuggestedAlert,
@@ -2182,9 +2184,11 @@ def _storage_metric_label(metric_type: str) -> str:
         "total_gas": "Natural Gas in Storage",
         "base_gas": "Base Gas in Storage",
         "working_gas": "Working Gas in Storage",
+        "lng_storage": "LNG Storage",
         "lng_storage_additions": "LNG Storage Additions",
         "lng_storage_withdrawals": "LNG Storage Withdrawals",
         "lng_storage_net_withdrawals": "LNG Storage Net Withdrawals",
+        "lng_storage_additions_vs_withdrawals": "LNG Storage Additions vs Withdrawals",
         "total_capacity": "Total Underground Storage Capacity",
         "working_gas_capacity": "Working Gas Storage Capacity",
         "storage_field_count": "Underground Storage Field Count",
@@ -2211,6 +2215,66 @@ def _storage_metric_unit(metric_type: str) -> str:
     if metric_type == "storage_weekly_report_card":
         return "Bcf"
     return "%" if metric_type == "working_gas_yoy_pct_change" else "MMcf"
+
+
+def _comparison_visualization_from_chart_spec(chart_spec: ChartSpec | None) -> str | None:
+    if chart_spec is None:
+        return None
+    if chart_spec.chart_type == "bar":
+        return "bar"
+    if chart_spec.chart_type in {"line", "seasonal_line"}:
+        return "time_series"
+    return None
+
+
+def _comparison_objects_from_df(df: pd.DataFrame) -> list[ComparisonObject]:
+    if df is None or df.empty:
+        return []
+    for column, kind, formatter in (
+        ("state", "state", _storage_state_label),
+        ("region", "region", _storage_region_label),
+        ("storage_type", "storage_type", _storage_type_label),
+        ("geography", "geography", _storage_geography_label),
+    ):
+        if column not in df.columns:
+            continue
+        values = [str(value) for value in df[column].dropna().astype(str).tolist()]
+        unique_values: list[str] = []
+        for value in values:
+            if value not in unique_values:
+                unique_values.append(value)
+        if len(unique_values) <= 1:
+            return []
+        return [
+            ComparisonObject(
+                id=value,
+                label=formatter(value),
+                kind=kind,
+            )
+            for value in unique_values
+        ]
+    return []
+
+
+def _storage_comparison_context(
+    *,
+    route: Any,
+    chart_df: pd.DataFrame,
+    chart_spec: ChartSpec | None,
+) -> ComparisonContext | None:
+    analysis_type = _route_analysis_type(route)
+    visualization = _comparison_visualization_from_chart_spec(chart_spec)
+    if visualization is None:
+        return None
+    if analysis_type not in {"time_series", "regional_compare", "ranking"}:
+        return None
+    objects = _comparison_objects_from_df(chart_df)
+    if not objects:
+        return None
+    return ComparisonContext(
+        visualization=visualization,
+        objects=objects,
+    )
 
 
 def _is_storage_insight_metric(metric: str) -> bool:
@@ -2697,6 +2761,7 @@ def _storage_payload(
         report_context_used=False,
         report_context_reason="storage_route",
         report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+        comparison_context=None,
         data_preview=_maybe_data_preview(chart_df),
         chart_data_preview=_make_chart_preview(chart_df),
         chart_spec=chart_spec,
@@ -3282,6 +3347,11 @@ def _build_underground_storage_all_operators_payload(
         )
 
     chart_spec = _underground_storage_chart_spec_from_route(route, chart_df)
+    comparison_context = _storage_comparison_context(
+        route=route,
+        chart_df=chart_df,
+        chart_spec=chart_spec,
+    )
     return AnswerPayload(
         query=query,
         mode=mode,
@@ -3290,6 +3360,7 @@ def _build_underground_storage_all_operators_payload(
         report_context_used=False,
         report_context_reason="underground_storage_all_operators_route",
         report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+        comparison_context=comparison_context,
         data_preview=_maybe_data_preview(chart_df),
         chart_data_preview=_make_chart_preview(chart_df),
         chart_spec=chart_spec,
@@ -3326,6 +3397,11 @@ def _build_underground_storage_by_type_payload(
         answer_text = _underground_storage_by_type_latest_answer(df, route)
 
     chart_spec = _underground_storage_by_type_chart_spec_from_route(route, chart_df)
+    comparison_context = _storage_comparison_context(
+        route=route,
+        chart_df=chart_df,
+        chart_spec=chart_spec,
+    )
     return AnswerPayload(
         query=query,
         mode=mode,
@@ -3334,6 +3410,7 @@ def _build_underground_storage_by_type_payload(
         report_context_used=False,
         report_context_reason="underground_storage_by_type_route",
         report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+        comparison_context=comparison_context,
         data_preview=_maybe_data_preview(chart_df),
         chart_data_preview=_make_chart_preview(chart_df),
         chart_spec=chart_spec,
@@ -3367,6 +3444,11 @@ def _build_storage_answer_payload(
         if metric_name != "storage_historical_max_compare":
             chart_df = _underground_storage_latest_by_state_df(df)
         chart_spec = _storage_insight_chart_spec_from_route(route, chart_df, metric_name)
+        comparison_context = _storage_comparison_context(
+            route=route,
+            chart_df=chart_df,
+            chart_spec=chart_spec,
+        )
         return AnswerPayload(
             query=query,
             mode=mode,
@@ -3375,6 +3457,7 @@ def _build_storage_answer_payload(
             report_context_used=False,
             report_context_reason="storage_insight_route",
             report_context_sources=[AnswerSourceSummary(title=result.source.label, date=source_date)],
+            comparison_context=comparison_context,
             data_preview=_maybe_data_preview(chart_df),
             chart_data_preview=_make_chart_preview(chart_df),
             chart_spec=chart_spec,
@@ -3463,6 +3546,11 @@ def _build_storage_answer_payload(
         )
 
     chart_spec = _storage_chart_spec_from_route(route, chart_df)
+    comparison_context = _storage_comparison_context(
+        route=route,
+        chart_df=chart_df,
+        chart_spec=chart_spec,
+    )
     return _storage_payload(
         query=query,
         result=result,
@@ -3471,7 +3559,7 @@ def _build_storage_answer_payload(
         chart_df=chart_df,
         chart_spec=chart_spec,
         source_date=source_date,
-    )
+    ).model_copy(update={"comparison_context": comparison_context})
 
 
 def _storage_level_and_change_structured_answer(

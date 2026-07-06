@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tools.eia_adapter import EIAAdapter
@@ -288,6 +289,58 @@ class TestEIAUndergroundStorageAdapter(unittest.TestCase):
         )
         self.assertEqual(result.df["geography"].tolist(), ["united_states_total"])
         self.assertEqual(result.meta["metric_type"], "lng_storage_additions")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_lng_storage_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:
+        client = Mock()
+        client.natural_gas.lng_storage.return_value = [
+            {"period": "2024-01", "value": "88.1"},
+        ]
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.lng_storage(
+            start="2024-01-15",
+            end="2024-12-20",
+            geography="tx",
+            frequency="annual",
+        )
+
+        client.natural_gas.lng_storage.assert_called_once_with(
+            start="2024",
+            end="2024",
+            geography="tx",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["tx"])
+        self.assertEqual(result.meta["metric_type"], "lng_storage")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_lng_storage_falls_back_to_additions_when_direct_method_missing(self, mock_client_cls: Mock) -> None:
+        natural_gas = SimpleNamespace(
+            lng_storage_additions=Mock(return_value=[{"period": "2024-01", "value": "88.1"}])
+        )
+        client = SimpleNamespace(natural_gas=natural_gas)
+        mock_client_cls.return_value = client
+
+        adapter = EIAAdapter()
+        result = adapter.lng_storage(
+            start="2024-01-15",
+            end="2024-12-20",
+            geography="tx",
+            frequency="annual",
+        )
+
+        natural_gas.lng_storage_additions.assert_called_once_with(
+            start="2024",
+            end="2024",
+            geography="tx",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["geography"].tolist(), ["tx"])
+        self.assertEqual(result.meta["metric_type"], "lng_storage")
+        self.assertEqual(result.meta["resolved_metric_type"], "lng_storage_additions")
+        self.assertIn("fallback_for_lng_storage", result.source.reference)
 
     @patch("tools.eia_adapter.EIAClient")
     def test_lng_storage_withdrawals_uses_eia_ng_method(self, mock_client_cls: Mock) -> None:

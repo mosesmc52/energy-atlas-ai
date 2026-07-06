@@ -865,6 +865,74 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return "us_total"
         return geography
 
+    def lng_storage(
+        self,
+        *,
+        start: str,
+        end: str,
+        geography: str,
+        frequency: str = "annual",
+    ) -> EIAResult:
+        if geography not in self.LNG_STORAGE_STATES:
+            raise ValueError(
+                f"Invalid LNG storage geography '{geography}'. Expected one of: {sorted(self.LNG_STORAGE_STATES)}"
+            )
+        if frequency != "annual":
+            raise ValueError("Invalid LNG storage frequency. Expected annual.")
+
+        geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
+        request_start = pd.Timestamp(start).strftime("%Y")
+        request_end = pd.Timestamp(end).strftime("%Y")
+        natural_gas = self.client.natural_gas
+        fetch_method = getattr(natural_gas, "lng_storage", None)
+        resolved_metric_type = "lng_storage"
+        reference = "eia-ng-client:natural_gas.lng_storage"
+        if fetch_method is None:
+            fetch_method = getattr(natural_gas, "lng_storage_additions")
+            resolved_metric_type = "lng_storage_additions"
+            reference = "eia-ng-client:natural_gas.lng_storage_additions[fallback_for_lng_storage]"
+        rows = fetch_method(
+            start=request_start,
+            end=request_end,
+            geography=geography_for_api,
+            frequency=frequency,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "geography"])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(),
+                date_col="date",
+                value_col="value",
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["geography"] = geography
+            out = out[["date", "value", "geography"]].reset_index(drop=True)
+
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=f"EIA LNG Storage ({geography.replace('_', ' ').title()}, {frequency.title()})",
+                reference=reference,
+                parameters={
+                    "geography": geography,
+                    "geography_for_api": geography_for_api,
+                    "frequency": frequency,
+                    "start": request_start,
+                    "end": request_end,
+                },
+            ),
+            meta={
+                "units": "MMcf",
+                "frequency": frequency,
+                "metric_type": "lng_storage",
+                "resolved_metric_type": resolved_metric_type,
+                "geography": geography,
+            },
+        )
+
     def lng_storage_additions(
         self,
         *,

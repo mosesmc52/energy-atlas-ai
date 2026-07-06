@@ -20,6 +20,7 @@ def _route(**overrides) -> EnergyRouteResult:
         "storage_frequency": "weekly",
         "storage_metric_type": "working_gas",
         "storage_type": None,
+        "storage_types": [],
         "storage_types_all": False,
         "storage_insight_type": None,
         "regions": ["lower48"],

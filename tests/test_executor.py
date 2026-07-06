@@ -19,6 +19,7 @@ def _storage_route(**overrides) -> EnergyRouteResult:
         "storage_frequency": "weekly",
         "storage_metric_type": "working_gas",
         "storage_type": None,
+        "storage_types": [],
         "storage_types_all": False,
         "storage_insight_type": None,
         "regions": ["lower48"],
@@ -345,7 +346,8 @@ class TestMetricExecutor(unittest.TestCase):
 
         self.assertIn("prior_weekly_change", result.df.columns)
         self.assertIn("five_year_avg_storage", result.df.columns)
-        self.assertEqual(float(result.df.iloc[0]["current_storage"]), 2500.0)
+        self.assertGreater(len(result.df), 1)
+        self.assertEqual(float(result.df.iloc[-1]["current_storage"]), 2500.0)
 
     def test_storage_level_single_region_keeps_region_column(self) -> None:
         eia = Mock()
@@ -519,6 +521,53 @@ class TestMetricExecutor(unittest.TestCase):
             metric_type="working_gas",
             frequency="monthly",
         )
+
+    def test_execute_storage_route_expands_default_time_series_window_for_all_operators(self) -> None:
+        eia = Mock()
+        eia.underground_storage_all_operators.side_effect = lambda state, **kwargs: _state_storage_result(state)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="time_series",
+            primary_metric="underground_storage_working_gas_monthly",
+            metrics=["underground_storage_working_gas_monthly"],
+            storage_dataset="underground_storage_all_operators",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            regions=[],
+            states=["tx", "la"],
+            states_all=False,
+            start_date=None,
+            end_date="2026-07-03",
+            chart_type="line",
+            output_mode="chart_and_answer",
+            normalized_query="compare texas and louisiana working gas.",
+            filters={
+                "states": ["tx", "la"],
+                "states_all": False,
+                "storage_dataset": "underground_storage_all_operators",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_all_operators.call_count, 2)
+        eia.underground_storage_all_operators.assert_any_call(
+            start="2020-07-03",
+            end="2026-07-03",
+            state="tx",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+        eia.underground_storage_all_operators.assert_any_call(
+            start="2020-07-03",
+            end="2026-07-03",
+            state="la",
+            metric_type="working_gas",
+            frequency="monthly",
+        )
+        self.assertEqual(set(result.df["state"]), {"tx", "la"})
 
     def test_execute_storage_route_expands_default_lng_time_series_window(self) -> None:
         eia = Mock()
@@ -847,6 +896,37 @@ class TestMetricExecutor(unittest.TestCase):
 
         self.assertEqual(eia.underground_storage_by_type.call_count, 3)
         self.assertEqual(set(result.df["storage_type"]), {"salt_cavern", "depleted_field", "aquifer"})
+
+    def test_storage_by_type_subset_expands_requested_types_only(self) -> None:
+        eia = Mock()
+        eia.underground_storage_by_type.side_effect = lambda storage_type, **kwargs: _storage_type_result(storage_type)
+        executor = MetricExecutor(eia=eia)
+        route = _storage_route(
+            analysis_type="regional_compare",
+            primary_metric="underground_storage_by_type_working_gas_monthly",
+            metrics=["underground_storage_by_type_working_gas_monthly"],
+            storage_dataset="underground_storage_by_type",
+            storage_frequency="monthly",
+            storage_metric_type="working_gas",
+            storage_type=None,
+            storage_types=["salt_cavern", "aquifer"],
+            storage_types_all=False,
+            regions=[],
+            states=[],
+            filters={
+                "storage_dataset": "underground_storage_by_type",
+                "storage_frequency": "monthly",
+                "storage_metric_type": "working_gas",
+                "storage_type": None,
+                "storage_types": ["salt_cavern", "aquifer"],
+                "storage_types_all": False,
+            },
+        )
+
+        result = executor.execute_storage_route(route)
+
+        self.assertEqual(eia.underground_storage_by_type.call_count, 2)
+        self.assertEqual(set(result.df["storage_type"]), {"salt_cavern", "aquifer"})
 
     def test_storage_by_type_time_series_without_explicit_start_gets_history_window(self) -> None:
         eia = Mock()
@@ -1187,6 +1267,64 @@ class TestMetricExecutor(unittest.TestCase):
             frequency="annual",
         )
         self.assertEqual(result.df["state"].tolist(), ["united_states_total"])
+
+    def test_lng_storage_routes_to_generic_lng_adapter(self) -> None:
+        eia = Mock()
+        eia.lng_storage.return_value = _geography_storage_result("united_states_total", value=175.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="lng_storage_annual",
+                start="2020-01-01",
+                end="2020-12-31",
+                filters={
+                    "states": ["united_states_total"],
+                    "storage_frequency": "annual",
+                    "storage_metric_type": "lng_storage",
+                },
+            )
+        )
+
+        eia.lng_storage.assert_called_once_with(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="united_states_total",
+            frequency="annual",
+        )
+        self.assertEqual(result.df["state"].tolist(), ["united_states_total"])
+
+    def test_lng_storage_additions_vs_withdrawals_fetches_both_series(self) -> None:
+        eia = Mock()
+        eia.lng_storage_additions.return_value = _geography_storage_result("united_states_total", value=250.0)
+        eia.lng_storage_withdrawals.return_value = _geography_storage_result("united_states_total", value=125.0)
+        executor = MetricExecutor(eia=eia)
+
+        result = executor.execute(
+            ExecuteRequest(
+                metric="lng_storage_additions_vs_withdrawals_annual",
+                start="2020-01-01",
+                end="2020-12-31",
+                filters={
+                    "storage_frequency": "annual",
+                    "storage_metric_type": "lng_storage_additions_vs_withdrawals",
+                },
+            )
+        )
+
+        eia.lng_storage_additions.assert_called_once_with(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="united_states_total",
+            frequency="annual",
+        )
+        eia.lng_storage_withdrawals.assert_called_once_with(
+            start="2020-01-01",
+            end="2020-12-31",
+            geography="united_states_total",
+            frequency="annual",
+        )
+        self.assertEqual(set(result.df["geography"]), {"additions", "withdrawals"})
 
     def test_lng_storage_withdrawals_multiple_states_concatenate(self) -> None:
         eia = Mock()
