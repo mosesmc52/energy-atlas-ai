@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 import re
-from io import StringIO
-from html.parser import HTMLParser
+import inspect
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from html.parser import HTMLParser
+from io import StringIO
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
@@ -363,7 +364,17 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "wi",
         "wy",
         "united_states_total",
+        "us_total",
     }
+    CONSUMPTION_SECTORS = {"residential", "commercial", "industrial"}
+    CONSUMPTION_CATEGORIES = {"total", "sales", "transported"}
+    CONSUMPTION_END_USE_TYPES = {
+        "residential",
+        "commercial",
+        "industrial",
+        "electric_power",
+    }
+    CONSUMPTION_DELIVERY_MEASURES = {"delivered", "percent"}
     PRODUCTION_STATES = {
         "al",
         "ak",
@@ -539,16 +550,16 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 # relative paths against the repository root as a fallback.
                 repo_relative_path = repo_root / configured_path
                 resolved_weather_path = (
-                    configured_path
-                    if configured_path.exists()
-                    else repo_relative_path
+                    configured_path if configured_path.exists() else repo_relative_path
                 )
         else:
             relative_candidates = [
                 Path("data/raw/noaa/regional/daily_region_weather.csv"),
                 Path("data/raw/noaa/regional/lower_48_region_daily.csv"),
             ]
-            candidates = relative_candidates + [repo_root / c for c in relative_candidates]
+            candidates = relative_candidates + [
+                repo_root / c for c in relative_candidates
+            ]
             for candidate in candidates:
                 if candidate.exists():
                     resolved_weather_path = candidate
@@ -580,6 +591,54 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             lookback_observations=lookback_observations,
             include_overlay=include_overlay,
             source_reference=result.source.reference,
+        )
+
+    def _eia_namespace(self, name: str):
+        """Return an updated eia-ng namespace, or the legacy source object.
+
+        eia-ng-client moved storage and consumption methods under namespaces. The
+        legacy releases expose ``storage`` and ``consumption`` as methods, so a
+        callable attribute is intentionally treated as the legacy shape.
+        """
+        source = self.client.natural_gas
+        namespace = getattr(source, name, None)
+        return source if callable(namespace) else namespace
+
+    @staticmethod
+    def _call_eia_method(method, **kwargs):
+        """Call an eia-ng method with only parameters supported by its signature."""
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return method(**kwargs)
+
+        if any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        ):
+            return method(**kwargs)
+
+        supported = {
+            name: value for name, value in kwargs.items() if name in signature.parameters
+        }
+        return method(**supported)
+
+    def _weekly_storage_rows(self, *, start: str, end: str, region: str):
+        source = self.client.natural_gas
+        storage_attr = getattr(source, "storage", None)
+        if callable(storage_attr):
+            method = storage_attr
+        else:
+            storage = storage_attr
+            method = getattr(storage, "weekly_working", None)
+            if method is None:
+                method = getattr(storage, "weekly_working_storage", None)
+            if method is None:
+                raise AttributeError(
+                    "eia-ng-client storage namespace has no weekly working-gas method"
+                )
+        return self._call_eia_method(
+            method, start=start, end=end, region=region, frequency="weekly"
         )
 
     def storage_working_gas(
@@ -676,9 +735,15 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             )
 
         geography = "us_total" if state == "united_states_total" else state
-        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        rows = self.client.natural_gas.underground_storage_all_operators(
+        request_start = pd.Timestamp(start).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        request_end = pd.Timestamp(end).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.underground_storage_all_operators,
             start=request_start,
             end=request_end,
             geography=geography,
@@ -731,7 +796,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         capacity_type: str,
         frequency: str,
     ) -> EIAResult:
-        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+        valid_geographies = (
+            self.UNDERGROUND_STORAGE_STATES
+            | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+        )
         if geography not in valid_geographies:
             raise ValueError(
                 f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
@@ -745,10 +813,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 f"Invalid underground storage capacity frequency '{frequency}'. Expected monthly or annual."
             )
 
-        geography_for_api = self._canonical_underground_storage_geography_for_api(geography)
-        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        rows = self.client.natural_gas.underground_storage_capacity(
+        geography_for_api = self._canonical_underground_storage_geography_for_api(
+            geography
+        )
+        request_start = pd.Timestamp(start).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        request_end = pd.Timestamp(end).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.underground_storage_capacity,
             start=request_start,
             end=request_end,
             geography=geography_for_api,
@@ -803,7 +879,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         geography: str,
         frequency: str,
     ) -> EIAResult:
-        valid_geographies = self.UNDERGROUND_STORAGE_STATES | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+        valid_geographies = (
+            self.UNDERGROUND_STORAGE_STATES
+            | self.UNDERGROUND_STORAGE_CAPACITY_COUNT_REGIONS
+        )
         if geography not in valid_geographies:
             raise ValueError(
                 f"Invalid underground storage geography '{geography}'. Expected one of: {sorted(valid_geographies)}"
@@ -813,10 +892,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 f"Invalid underground storage count frequency '{frequency}'. Expected monthly or annual."
             )
 
-        geography_for_api = self._canonical_underground_storage_geography_for_api(geography)
-        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        rows = self.client.natural_gas.underground_storage_count(
+        geography_for_api = self._canonical_underground_storage_geography_for_api(
+            geography
+        )
+        request_start = pd.Timestamp(start).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        request_end = pd.Timestamp(end).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.underground_storage_count,
             start=request_start,
             end=request_end,
             geography=geography_for_api,
@@ -883,7 +970,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
         request_start = pd.Timestamp(start).strftime("%Y")
         request_end = pd.Timestamp(end).strftime("%Y")
-        natural_gas = self.client.natural_gas
+        natural_gas = self._eia_namespace("storage")
         fetch_method = getattr(natural_gas, "lng_storage", None)
         resolved_metric_type = "lng_storage"
         reference = "eia-ng-client:natural_gas.lng_storage"
@@ -891,7 +978,8 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             fetch_method = getattr(natural_gas, "lng_storage_additions")
             resolved_metric_type = "lng_storage_additions"
             reference = "eia-ng-client:natural_gas.lng_storage_additions[fallback_for_lng_storage]"
-        rows = fetch_method(
+        rows = self._call_eia_method(
+            fetch_method,
             start=request_start,
             end=request_end,
             geography=geography_for_api,
@@ -951,7 +1039,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
         request_start = pd.Timestamp(start).strftime("%Y")
         request_end = pd.Timestamp(end).strftime("%Y")
-        rows = self.client.natural_gas.lng_storage_additions(
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.lng_storage_additions,
             start=request_start,
             end=request_end,
             geography=geography_for_api,
@@ -1010,7 +1100,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
         request_start = pd.Timestamp(start).strftime("%Y")
         request_end = pd.Timestamp(end).strftime("%Y")
-        rows = self.client.natural_gas.lng_storage_withdrawls(
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.lng_storage_withdrawls,
             start=request_start,
             end=request_end,
             geography=geography_for_api,
@@ -1069,7 +1161,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         geography_for_api = self._canonical_lng_storage_geography_for_api(geography)
         request_start = pd.Timestamp(start).strftime("%Y")
         request_end = pd.Timestamp(end).strftime("%Y")
-        rows = self.client.natural_gas.lng_storage_net_withdrawls(
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.lng_storage_net_withdrawls,
             start=request_start,
             end=request_end,
             geography=geography_for_api,
@@ -1132,18 +1226,25 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             "net_withdrawals",
         }:
             raise ValueError(
-                "Invalid underground storage by type metric type "
-                f"'{metric_type}'."
+                "Invalid underground storage by type metric type " f"'{metric_type}'."
             )
         if frequency not in {"monthly", "annual"}:
             raise ValueError(
                 f"Invalid underground storage by type frequency '{frequency}'. Expected monthly or annual."
             )
 
-        request_start = pd.Timestamp(start).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        request_end = pd.Timestamp(end).strftime("%Y-%m" if frequency == "monthly" else "%Y")
-        eia_storage_type = self.UNDERGROUND_STORAGE_TYPE_SERIES[(storage_type, metric_type)]
-        rows = self.client.natural_gas.underground_storage_type(
+        request_start = pd.Timestamp(start).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        request_end = pd.Timestamp(end).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        eia_storage_type = self.UNDERGROUND_STORAGE_TYPE_SERIES[
+            (storage_type, metric_type)
+        ]
+        storage = self._eia_namespace("storage")
+        rows = self._call_eia_method(
+            storage.underground_storage_type,
             start=request_start,
             end=request_end,
             storage_type=eia_storage_type,
@@ -1153,7 +1254,8 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         if not rows and frequency == "annual":
             monthly_start = pd.Timestamp(start).strftime("%Y-01")
             monthly_end = pd.Timestamp(end).strftime("%Y-12")
-            monthly_rows = self.client.natural_gas.underground_storage_type(
+            monthly_rows = self._call_eia_method(
+                storage.underground_storage_type,
                 start=monthly_start,
                 end=monthly_end,
                 storage_type=eia_storage_type,
@@ -1180,7 +1282,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                     out = (
                         out.groupby("year", as_index=False)["value"]
                         .sum()
-                        .assign(date=lambda frame: pd.to_datetime(frame["year"].astype(str) + "-01-01"))
+                        .assign(
+                            date=lambda frame: pd.to_datetime(
+                                frame["year"].astype(str) + "-01-01"
+                            )
+                        )
                     )
                 else:
                     out = (
@@ -1328,12 +1434,12 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 forecast_df["region_id"] == canonical_region
             ].copy()
         else:
-            forecast_df = forecast_df.loc[
-                forecast_df["region_id"] == "lower_48"
-            ].copy()
+            forecast_df = forecast_df.loc[forecast_df["region_id"] == "lower_48"].copy()
 
         if forecast_df.empty:
-            raise RuntimeError("No weather forecast data was returned for requested region.")
+            raise RuntimeError(
+                "No weather forecast data was returned for requested region."
+            )
 
         history = self._load_weather_csv().copy()
         history["region_id"] = history["region_id"].astype(str)
@@ -1360,24 +1466,34 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
             historical_bucket_values: list[tuple[float, float]] = []
             for years_back in range(1, normal_years + 1):
-                shifted_dates = [self._shift_date_back_n_years(d, years_back) for d in bucket_dates]
+                shifted_dates = [
+                    self._shift_date_back_n_years(d, years_back) for d in bucket_dates
+                ]
                 hist_bucket = history.loc[history["date"].isin(shifted_dates)].copy()
                 if hist_bucket.empty:
                     continue
-                hdd_hist = float(pd.to_numeric(hist_bucket["hdd_mean"], errors="coerce").sum())
+                hdd_hist = float(
+                    pd.to_numeric(hist_bucket["hdd_mean"], errors="coerce").sum()
+                )
                 cdd_col = "cdd_mean" if "cdd_mean" in hist_bucket.columns else None
                 if cdd_col is None:
                     tavg_f = pd.to_numeric(hist_bucket["tavg_f_mean"], errors="coerce")
                     cdd_hist = float((tavg_f - 65.0).clip(lower=0.0).sum())
                 else:
-                    cdd_hist = float(pd.to_numeric(hist_bucket[cdd_col], errors="coerce").sum())
+                    cdd_hist = float(
+                        pd.to_numeric(hist_bucket[cdd_col], errors="coerce").sum()
+                    )
                 historical_bucket_values.append((hdd_hist, cdd_hist))
 
             if not historical_bucket_values:
                 continue
 
-            hdd_normal = sum(v[0] for v in historical_bucket_values) / len(historical_bucket_values)
-            cdd_normal = sum(v[1] for v in historical_bucket_values) / len(historical_bucket_values)
+            hdd_normal = sum(v[0] for v in historical_bucket_values) / len(
+                historical_bucket_values
+            )
+            cdd_normal = sum(v[1] for v in historical_bucket_values) / len(
+                historical_bucket_values
+            )
             delta_hdd = hdd_forecast - hdd_normal
             delta_cdd = cdd_forecast - cdd_normal
 
@@ -1629,6 +1745,216 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         )
         meta = {"cache": cache_info.__dict__}
         return EIAResult(df=df, source=src, meta=meta)
+
+    def _consumption_query(
+        self,
+        *,
+        method_name: str,
+        start: str,
+        end: str,
+        frequency: str = "annual",
+        state: str,
+        **parameters: str,
+    ) -> EIAResult:
+        """Call an eia-ng consumption namespace method and normalize its rows."""
+        if state not in self.CONSUMPTION_STATES:
+            raise ValueError(
+                f"Invalid consumption state '{state}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_STATES)}"
+            )
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError("Invalid consumption frequency. Expected monthly or annual.")
+
+        request_start = pd.Timestamp(start).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        request_end = pd.Timestamp(end).strftime(
+            "%Y-%m" if frequency == "monthly" else "%Y"
+        )
+        consumption = self._eia_namespace("consumption")
+        method = getattr(consumption, method_name, None)
+        if method is None:
+            raise AttributeError(
+                f"eia-ng-client consumption namespace has no '{method_name}' method"
+            )
+
+        rows = self._call_eia_method(
+            method,
+            start=request_start,
+            end=request_end,
+            state=state,
+            frequency=frequency,
+            **parameters,
+        )
+        if not rows:
+            out = pd.DataFrame(columns=["date", "value", "state", *parameters])
+        else:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(), date_col="date", value_col="value"
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"])
+            out["state"] = state
+            for name, value in parameters.items():
+                out[name] = value
+            out = out.reset_index(drop=True)
+
+        source_parameters = {
+            "start": request_start,
+            "end": request_end,
+            "state": state,
+            "frequency": frequency,
+            **parameters,
+        }
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label=f"EIA Natural Gas Consumption: {method_name.replace('_', ' ').title()}",
+                reference=f"eia-ng-client:natural_gas.consumption.{method_name}",
+                parameters=source_parameters,
+            ),
+            meta={
+                "frequency": frequency,
+                "state": state,
+                "method": method_name,
+                **parameters,
+            },
+        )
+
+    def consumption_end_use(
+        self,
+        *,
+        start: str,
+        end: str,
+        state: str,
+        type: str,
+        frequency: str = "annual",
+    ) -> EIAResult:
+        if type not in self.CONSUMPTION_END_USE_TYPES:
+            raise ValueError(
+                f"Invalid consumption end-use type '{type}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_END_USE_TYPES)}"
+            )
+        return self._consumption_query(
+            method_name="end_use",
+            start=start,
+            end=end,
+            state=state,
+            frequency=frequency,
+            type=type,
+        )
+
+    def consumption_heat_content(
+        self,
+        *,
+        start: str,
+        end: str,
+        state: str,
+        frequency: str = "annual",
+    ) -> EIAResult:
+        return self._consumption_query(
+            method_name="heat_content",
+            start=start,
+            end=end,
+            state=state,
+            frequency=frequency,
+        )
+
+    def consumption_share_delivered_to_consumers(
+        self,
+        *,
+        start: str,
+        end: str,
+        state: str,
+        type: str,
+        frequency: str = "annual",
+    ) -> EIAResult:
+        if type not in self.CONSUMPTION_END_USE_TYPES:
+            raise ValueError(
+                f"Invalid consumption delivery type '{type}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_END_USE_TYPES)}"
+            )
+        return self._consumption_query(
+            method_name="share_delivered_to_consumers",
+            start=start,
+            end=end,
+            state=state,
+            frequency=frequency,
+            type=type,
+        )
+
+    def consumption_number_of_consumers(
+        self,
+        *,
+        start: str,
+        end: str,
+        state: str,
+        sector: str,
+        category: str,
+        frequency: str = "annual",
+    ) -> EIAResult:
+        if sector not in self.CONSUMPTION_SECTORS:
+            raise ValueError(
+                f"Invalid consumption sector '{sector}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_SECTORS)}"
+            )
+        if category not in self.CONSUMPTION_CATEGORIES:
+            raise ValueError(
+                f"Invalid consumption category '{category}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_CATEGORIES)}"
+            )
+        return self._consumption_query(
+            method_name="number_of_consumers",
+            start=start,
+            end=end,
+            state=state,
+            frequency=frequency,
+            sector=sector,
+            category=category,
+        )
+
+    def consumption_delivered_for_the_account_of_others(
+        self,
+        *,
+        start: str,
+        end: str,
+        state: str,
+        type: str,
+        measure: str,
+        frequency: str = "annual",
+    ) -> EIAResult:
+        if type not in self.CONSUMPTION_END_USE_TYPES:
+            raise ValueError(
+                f"Invalid account-of-others type '{type}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_END_USE_TYPES)}"
+            )
+        if measure not in self.CONSUMPTION_DELIVERY_MEASURES:
+            raise ValueError(
+                f"Invalid account-of-others measure '{measure}'. Expected one of: "
+                f"{sorted(self.CONSUMPTION_DELIVERY_MEASURES)}"
+            )
+        return self._consumption_query(
+            method_name="delivered_for_the_account_of_others",
+            start=start,
+            end=end,
+            state=state,
+            frequency=frequency,
+            type=type,
+            measure=measure,
+        )
+
+    # Keep the adapter's existing ``ng_*`` naming convention available to
+    # callers while exposing methods that mirror the eia-ng README names.
+    ng_consumption_end_use = consumption_end_use
+    ng_consumption_heat_content = consumption_heat_content
+    ng_consumption_share_delivered_to_consumers = (
+        consumption_share_delivered_to_consumers
+    )
+    ng_consumption_number_of_consumers = consumption_number_of_consumers
+    ng_consumption_delivered_for_the_account_of_others = (
+        consumption_delivered_for_the_account_of_others
+    )
 
     def ng_production_lower48(
         self, start: str, end: str, state: str = "united_states_total"
@@ -1900,7 +2226,10 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             by_region[region_id] = df
 
         if not by_region:
-            return pd.DataFrame(columns=["date", "region_id", "hdd_mean", "cdd_mean"]), as_of
+            return (
+                pd.DataFrame(columns=["date", "region_id", "hdd_mean", "cdd_mean"]),
+                as_of,
+            )
 
         regional_frames = [v.copy() for v in by_region.values()]
         regional_df = pd.concat(regional_frames, ignore_index=True)
@@ -1935,7 +2264,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         national_df = pd.DataFrame(national_rows)
         merged = pd.concat([regional_df, national_df], ignore_index=True)
         merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
-        merged = merged.dropna(subset=["date"]).sort_values(["region_id", "date"]).reset_index(drop=True)
+        merged = (
+            merged.dropna(subset=["date"])
+            .sort_values(["region_id", "date"])
+            .reset_index(drop=True)
+        )
         return merged, as_of
 
     def _fetch_region_degree_day_forecast_open_meteo(
@@ -1996,7 +2329,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         ordered["date"] = pd.to_datetime(ordered["date"], errors="coerce")
         ordered["hdd_mean"] = pd.to_numeric(ordered["hdd_mean"], errors="coerce")
         ordered["cdd_mean"] = pd.to_numeric(ordered["cdd_mean"], errors="coerce")
-        ordered = ordered.dropna(subset=["date", "hdd_mean", "cdd_mean"]).sort_values("date")
+        ordered = ordered.dropna(subset=["date", "hdd_mean", "cdd_mean"]).sort_values(
+            "date"
+        )
         if ordered.empty:
             return None
         sliced = ordered.iloc[start_day - 1 : end_day].copy()
@@ -2112,7 +2447,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             candidate = candidate.copy()
             candidate.columns = [str(col).strip() for col in candidate.columns]
             found_year_col = next(
-                (col for col in candidate.columns if str(col).strip().lower() == "year"),
+                (
+                    col
+                    for col in candidate.columns
+                    if str(col).strip().lower() == "year"
+                ),
                 None,
             )
             month_cols = {m for m in month_map if m in candidate.columns}
@@ -2325,16 +2664,21 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         date_series = pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns]")
         if "Year In Service Date" in out.columns:
-            year_values = out["Year In Service Date"].astype(str).str.extract(
-                r"(?P<year>\d{4})"
-            )["year"]
+            year_values = (
+                out["Year In Service Date"]
+                .astype(str)
+                .str.extract(r"(?P<year>\d{4})")["year"]
+            )
             year_dates = pd.to_datetime(year_values + "-01-01", errors="coerce")
             date_series = date_series.fillna(year_dates)
         if "Completed Date" in out.columns:
             date_series = date_series.fillna(
                 pd.to_datetime(out["Completed Date"], errors="coerce")
             )
-        if dataset == "natural_gas_pipeline_projects" and "Last Updated Date" in out.columns:
+        if (
+            dataset == "natural_gas_pipeline_projects"
+            and "Last Updated Date" in out.columns
+        ):
             date_series = date_series.fillna(
                 pd.to_datetime(out["Last Updated Date"], errors="coerce")
             )
@@ -2360,7 +2704,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         metric_type: str,
         frequency: str,
     ) -> str:
-        series_prefix, value_suffix = self.UNDERGROUND_STORAGE_HISTORY_PREFIX[metric_type]
+        series_prefix, value_suffix = self.UNDERGROUND_STORAGE_HISTORY_PREFIX[
+            metric_type
+        ]
         area_token = "us" if state == "united_states_total" else state
         frequency_suffix = "m" if frequency == "monthly" else "a"
         return (
@@ -2442,7 +2788,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                 "dec": 12,
             }
             value_cols = [
-                col for col in df.columns[1:] if str(col).strip().lower()[:3] in month_map
+                col
+                for col in df.columns[1:]
+                if str(col).strip().lower()[:3] in month_map
             ]
             rows: list[dict[str, Any]] = []
             for _, row in df.iterrows():
@@ -2461,9 +2809,15 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                             "value": float(value),
                         }
                     )
-            return pd.DataFrame(rows, columns=["date", "value"]).sort_values("date").reset_index(drop=True)
+            return (
+                pd.DataFrame(rows, columns=["date", "value"])
+                .sort_values("date")
+                .reset_index(drop=True)
+            )
 
-        value_cols = [col for col in df.columns[1:] if "year" not in str(col).strip().lower()]
+        value_cols = [
+            col for col in df.columns[1:] if "year" not in str(col).strip().lower()
+        ]
         value_col = value_cols[0] if value_cols else None
         if value_col is None:
             return pd.DataFrame(columns=["date", "value"])
@@ -2481,7 +2835,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
                     "value": float(value),
                 }
             )
-        return pd.DataFrame(rows, columns=["date", "value"]).sort_values("date").reset_index(drop=True)
+        return (
+            pd.DataFrame(rows, columns=["date", "value"])
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
 
     # ---- subclass hooks ----
 
@@ -2489,7 +2847,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         which = kwargs.get("_fetch")
 
         if which == "henry_hub_spot":
-            rows = self.client.natural_gas.spot_prices(start=start, end=end)
+            rows = self._call_eia_method(
+                self.client.natural_gas.spot_prices, start=start, end=end
+            )
             if DEBUG_ENABLED:
                 print(
                     f"[DEBUG] eia-ng henry_hub_spot {start}..{end} -> "
@@ -2501,7 +2861,12 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "lng_exports":
             region = kwargs.get("region", "united_states_lng_total")
-            rows = self.client.natural_gas.exports(start=start, end=end, country=region)
+            rows = self._call_eia_method(
+                self.client.natural_gas.exports,
+                start=start,
+                end=end,
+                country=region,
+            )
             if DEBUG_ENABLED:
                 print(
                     f"[DEBUG] eia-ng lng_exports {region} {start}..{end} -> "
@@ -2513,8 +2878,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "ng_production":
             state = kwargs.get("state", "united_states_total")
-            rows = self.client.natural_gas.production(
-                start=start, end=end, state=state
+            rows = self._call_eia_method(
+                self.client.natural_gas.production,
+                start=start,
+                end=end,
+                state=state,
             )
             if DEBUG_ENABLED:
                 print(
@@ -2527,8 +2895,18 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "ng_consumption":
             state = kwargs.get("state", "united_states_total")
-            rows = self.client.natural_gas.consumption(
-                start=start, end=end, state=state
+            source = self.client.natural_gas
+            consumption_attr = getattr(source, "consumption", None)
+            if callable(consumption_attr):
+                method = consumption_attr
+            else:
+                method = getattr(consumption_attr, "end_use", None)
+                if method is None:
+                    raise AttributeError(
+                        "eia-ng-client consumption namespace has no end-use method"
+                    )
+            rows = self._call_eia_method(
+                method, start=start, end=end, state=state, frequency="monthly"
             )
             if DEBUG_ENABLED:
                 print(
@@ -2555,7 +2933,12 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "lng_imports":
             region = kwargs.get("region", "united_states_pipeline_total")
-            rows = self.client.natural_gas.imports(start=start, end=end, country=region)
+            rows = self._call_eia_method(
+                self.client.natural_gas.imports,
+                start=start,
+                end=end,
+                country=region,
+            )
             if DEBUG_ENABLED:
                 print(
                     f"[DEBUG] eia-ng lng_imports {region} {start}..{end} -> "
@@ -2566,7 +2949,11 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             return pd.DataFrame(rows)
 
         if which == "ng_electricity":
-            rows = self.client.electricity.generation_natural_gas(start=start, end=end)
+            rows = self._call_eia_method(
+                self.client.electricity.generation_natural_gas,
+                start=start,
+                end=end,
+            )
             if DEBUG_ENABLED:
                 print(
                     f"[DEBUG] eia-ng electricity {start}..{end} -> "
@@ -2578,10 +2965,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
 
         if which == "ng_exploration_reserves":
             state = kwargs.get("state", "all")
-            resource_category = kwargs.get(
-                "resource_category", "proved_associated_gas"
-            )
-            rows = self.client.natural_gas.exploration_and_reserves(
+            resource_category = kwargs.get("resource_category", "proved_associated_gas")
+            rows = self._call_eia_method(
+                self.client.natural_gas.exploration_and_reserves,
                 start=start,
                 end=end,
                 state=state,
@@ -2594,7 +2980,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         # keep your other ones (storage, etc.)
         if which == "storage_working_gas":
             region = kwargs.get("region", "lower48")
-            rows = self.client.natural_gas.storage(start=start, end=end, region=region)
+            rows = self._weekly_storage_rows(start=start, end=end, region=region)
             if DEBUG_ENABLED:
                 print(
                     f"[DEBUG] eia-ng storage_working_gas {region} {start}..{end} -> "

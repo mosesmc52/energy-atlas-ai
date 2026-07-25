@@ -6,6 +6,11 @@ from typing import Any, Optional
 
 from agents.llm_query_parser import llm_parse_query
 from agents.llm_router import (
+    CONSUMPTION_ANALYSIS_TYPES,
+    CONSUMPTION_DATASETS,
+    CONSUMPTION_FREQUENCIES,
+    CONSUMPTION_METRIC_BY_SECTOR_AND_FREQUENCY,
+    CONSUMPTION_SECTORS,
     LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY,
     STORAGE_DATASETS,
     STORAGE_FREQUENCIES,
@@ -392,6 +397,11 @@ class EnergyRouteResult:
     ambiguous: bool = False
     reason: Optional[str] = None
     normalized_query: Optional[str] = None
+    consumption_dataset: str | None = None
+    consumption_frequency: str | None = None
+    consumption_sector: str | None = None
+    consumption_sectors: list[str] = field(default_factory=list)
+    consumption_sectors_all: bool = False
 
 
 @dataclass(frozen=True)
@@ -414,6 +424,11 @@ class RouteContext:
     ranking_basis: str | None = None
     chart_type: str | None = None
     output_mode: str | None = None
+    consumption_dataset: str | None = None
+    consumption_frequency: str | None = None
+    consumption_sector: str | None = None
+    consumption_sectors: list[str] = field(default_factory=list)
+    consumption_sectors_all: bool = False
 
 
 def context_from_route(route: EnergyRouteResult) -> RouteContext:
@@ -436,6 +451,11 @@ def context_from_route(route: EnergyRouteResult) -> RouteContext:
         ranking_basis=route.ranking_basis,
         chart_type=route.chart_type,
         output_mode=route.output_mode,
+        consumption_dataset=route.consumption_dataset,
+        consumption_frequency=route.consumption_frequency,
+        consumption_sector=route.consumption_sector,
+        consumption_sectors=list(route.consumption_sectors or []),
+        consumption_sectors_all=route.consumption_sectors_all,
     )
 
 
@@ -1135,6 +1155,200 @@ def _storage_metrics_for_route(
     return metric, [metric] if metric else []
 
 
+def _consumption_metrics_for_route(
+    *,
+    consumption_frequency: str,
+    consumption_sector: str | None,
+    consumption_sectors: list[str],
+    consumption_sectors_all: bool,
+) -> tuple[Optional[str], list[str]]:
+    frequency = consumption_frequency if consumption_frequency in CONSUMPTION_FREQUENCIES else "monthly"
+    if consumption_sectors_all:
+        sectors = ["residential", "commercial", "vehicle", "electric_power", "total"]
+    elif consumption_sectors:
+        sectors = [sector for sector in consumption_sectors if sector in CONSUMPTION_SECTORS]
+    elif consumption_sector in CONSUMPTION_SECTORS:
+        sectors = [consumption_sector]
+    else:
+        sectors = ["total"]
+    metrics = [
+        CONSUMPTION_METRIC_BY_SECTOR_AND_FREQUENCY[(sector, frequency)]
+        for sector in sectors
+    ]
+    return (metrics[0] if metrics else None), metrics
+
+
+def _consumption_filters_for_route(
+    *,
+    consumption_dataset: str,
+    consumption_frequency: str,
+    consumption_sector: str | None,
+    consumption_sectors: list[str],
+    consumption_sectors_all: bool,
+    states: list[str],
+    states_all: bool,
+) -> dict[str, Any]:
+    return {
+        "consumption_dataset": consumption_dataset,
+        "consumption_frequency": consumption_frequency,
+        "consumption_sector": consumption_sector,
+        "consumption_sectors": consumption_sectors,
+        "consumption_sectors_all": consumption_sectors_all,
+        "states": states,
+        "states_all": states_all,
+    }
+
+
+def _consumption_route(
+    *,
+    normalized: str,
+    parsed,
+    context: RouteContext | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> EnergyRouteResult:
+    explicit_states = _parse_states_from_text(normalized)
+    explicit_states_all = any(
+        term in normalized
+        for term in ("by state", "all states", "across states", "compare states", "which state", "rank states")
+    )
+    states = list(explicit_states)
+    states_all = explicit_states_all
+    if not states and not states_all and context and context.domain == "consumption":
+        states = list(context.states or [])
+        states_all = context.states_all
+    if not states and not states_all:
+        states = ["united_states_total"]
+    if states_all:
+        states = []
+
+    frequency = getattr(parsed, "consumption_frequency", None) or (
+        context.consumption_frequency if context else None
+    ) or "monthly"
+    if "annual" in normalized or "annually" in normalized or "yearly" in normalized or "by year" in normalized:
+        frequency = "annual"
+    elif "monthly" in normalized or "by month" in normalized or "each month" in normalized:
+        frequency = "monthly"
+    if frequency not in CONSUMPTION_FREQUENCIES:
+        frequency = "monthly"
+
+    parsed_sector = getattr(parsed, "consumption_sector", None)
+    parsed_sectors = [value for value in getattr(parsed, "consumption_sectors", []) or [] if value in CONSUMPTION_SECTORS]
+    sectors_all = bool(getattr(parsed, "consumption_sectors_all", False))
+    sector_terms = (
+        "residential", "household", "commercial", "business", "vehicle", "transportation fuel",
+        "electric power", "power sector", "electricity generation", "total consumption", "total natural gas use",
+    )
+    has_explicit_sector = any(term in normalized for term in sector_terms)
+    if not has_explicit_sector and context and context.domain == "consumption":
+        parsed_sector = context.consumption_sector
+        parsed_sectors = list(context.consumption_sectors or [])
+        sectors_all = context.consumption_sectors_all
+    if parsed_sector not in CONSUMPTION_SECTORS:
+        parsed_sector = None
+
+    analysis_type = getattr(parsed, "analysis_type", "latest")
+    has_ranking_override = any(
+        term in normalized
+        for term in ("rank", "ranking", "which state", "which sector", "highest", "lowest", "most", "least", "largest", "smallest")
+    )
+    has_time_override = _has_explicit_time_series_request(normalized)
+    has_seasonal_override = any(
+        term in normalized
+        for term in ("seasonal average", "same month last year", "five-year average", "5-year average", "normal for this month")
+    )
+    inherit_analysis = bool(
+        context
+        and context.domain == "consumption"
+        and not getattr(parsed, "date_expression", None)
+        and not has_ranking_override
+        and not has_time_override
+        and not has_seasonal_override
+    )
+    if inherit_analysis:
+        analysis_type = context.analysis_type or analysis_type
+    elif has_ranking_override:
+        analysis_type = "ranking"
+    elif has_time_override:
+        analysis_type = "time_series"
+    elif states_all or len(states) > 1:
+        analysis_type = "geography_compare"
+    elif sectors_all or len(parsed_sectors) > 1:
+        analysis_type = "sector_compare"
+    if analysis_type not in CONSUMPTION_ANALYSIS_TYPES:
+        analysis_type = "unsupported"
+
+    chart_type = {
+        "latest": "none",
+        "time_series": "line",
+        "geography_compare": "bar",
+        "sector_compare": "bar",
+        "ranking": "bar",
+        "seasonal_compare": "seasonal_line",
+    }.get(analysis_type, "none")
+    if analysis_type == "latest" and any(term in normalized for term in ("plot", "chart", "graph", "visualize")):
+        chart_type = "bar"
+    output_mode = "answer" if analysis_type == "latest" and chart_type == "none" else "chart_and_answer"
+    dataset = getattr(parsed, "consumption_dataset", None) or "natural_gas_consumption_by_end_use"
+    if dataset not in CONSUMPTION_DATASETS:
+        dataset = CONSUMPTION_DATASETS[0]
+    primary_metric, metrics = _consumption_metrics_for_route(
+        consumption_frequency=frequency,
+        consumption_sector=parsed_sector,
+        consumption_sectors=parsed_sectors,
+        consumption_sectors_all=sectors_all,
+    )
+    if analysis_type == "unsupported":
+        primary_metric, metrics = None, []
+    if context and context.domain == "consumption" and not getattr(parsed, "date_expression", None):
+        start_date = context.start_date
+        end_date = context.end_date
+
+    filters = _consumption_filters_for_route(
+        consumption_dataset=dataset,
+        consumption_frequency=frequency,
+        consumption_sector=parsed_sector,
+        consumption_sectors=parsed_sectors,
+        consumption_sectors_all=sectors_all,
+        states=states,
+        states_all=states_all,
+    )
+    return EnergyRouteResult(
+        domain="consumption",
+        analysis_type=analysis_type,
+        primary_metric=primary_metric,
+        metrics=metrics,
+        storage_dataset="weekly_working_gas",
+        storage_frequency="weekly",
+        storage_metric_type="working_gas",
+        storage_type=None,
+        storage_types=[],
+        storage_types_all=False,
+        storage_insight_type=None,
+        regions=[],
+        states=states,
+        states_all=states_all,
+        start_date=start_date,
+        end_date=end_date,
+        date_expression=getattr(parsed, "date_expression", None),
+        value_type="level",
+        comparisons=["none"],
+        ranking_basis="consumption",
+        chart_type=chart_type,
+        output_mode=output_mode,
+        filters=filters,
+        confidence=getattr(parsed, "confidence", 0.0),
+        ambiguous=getattr(parsed, "ambiguous", False),
+        reason=getattr(parsed, "reason", None),
+        normalized_query=normalized,
+        consumption_dataset=dataset,
+        consumption_frequency=frequency,
+        consumption_sector=parsed_sector,
+        consumption_sectors=parsed_sectors,
+        consumption_sectors_all=sectors_all,
+    )
+
+
 def _filters_for_route(
     domain: str,
     *,
@@ -1216,6 +1430,27 @@ def route_query(
     start_date, end_date = resolve_date_range(user_query)
     parsed = llm_parse_query(user_query=user_query, normalized_query=normalized)
     parsed_domain = parsed.domain if not (use_followup_context and parsed.domain == "unsupported") else "storage"
+
+    consumption_followup = bool(
+        context
+        and context.domain == "consumption"
+        and (
+            parsed_domain == "consumption"
+            or _is_followup_query(normalized)
+            or any(
+                term in normalized
+                for term in ("residential", "commercial", "vehicle", "electric power", "power sector")
+            )
+        )
+    )
+    if parsed_domain == "consumption" or consumption_followup:
+        return _consumption_route(
+            normalized=normalized,
+            parsed=parsed,
+            context=context if consumption_followup else None,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     regions = list(parsed.regions or [])
     states = [state for state in list(getattr(parsed, "states", []) or []) if state in UNDERGROUND_STORAGE_STATES]

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from typing import Final
 
-ACTIVE_DOMAINS: Final[tuple[str, ...]] = ("storage", "unsupported")
+ACTIVE_DOMAINS: Final[tuple[str, ...]] = ("storage", "consumption", "unsupported")
 FUTURE_DOMAINS: Final[tuple[str, ...]] = (
     "price",
     "production",
     "lng",
     "imports_exports",
-    "consumption",
     "weather",
     "power",
 )
@@ -22,6 +21,27 @@ STORAGE_ANALYSIS_TYPES: Final[tuple[str, ...]] = (
     "deviation_from_normal",
     "ranking",
     "explain",
+    "unsupported",
+)
+
+CONSUMPTION_DATASETS: Final[tuple[str, ...]] = (
+    "natural_gas_consumption_by_end_use",
+)
+CONSUMPTION_FREQUENCIES: Final[tuple[str, ...]] = ("monthly", "annual")
+CONSUMPTION_SECTORS: Final[tuple[str, ...]] = (
+    "residential",
+    "commercial",
+    "vehicle",
+    "electric_power",
+    "total",
+)
+CONSUMPTION_ANALYSIS_TYPES: Final[tuple[str, ...]] = (
+    "latest",
+    "time_series",
+    "geography_compare",
+    "sector_compare",
+    "ranking",
+    "seasonal_compare",
     "unsupported",
 )
 
@@ -215,12 +235,19 @@ LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
     ("lng_storage_additions_vs_withdrawals", "annual"): "lng_storage_additions_vs_withdrawals_annual",
 }
 
+CONSUMPTION_METRIC_BY_SECTOR_AND_FREQUENCY: Final[dict[tuple[str, str], str]] = {
+    (sector, frequency): f"natural_gas_{sector}_consumption_{frequency}"
+    for sector in CONSUMPTION_SECTORS
+    for frequency in CONSUMPTION_FREQUENCIES
+}
+
 SUPPORTED_METRICS: Final[tuple[str, ...]] = tuple(
     list(STORAGE_METRIC_BY_VALUE_TYPE.values())
     + list(UNDERGROUND_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(UNDERGROUND_STORAGE_BY_TYPE_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(UNDERGROUND_STORAGE_CAPACITY_METRIC_BY_TYPE_AND_FREQUENCY.values())
     + list(LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY.values())
+    + list(CONSUMPTION_METRIC_BY_SECTOR_AND_FREQUENCY.values())
     + [
         "storage_utilization",
         "storage_remaining_capacity",

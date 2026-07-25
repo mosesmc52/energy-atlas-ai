@@ -7,6 +7,10 @@ from typing import Optional
 from agents.llm_router import (
     CHART_TYPES,
     COMPARISONS,
+    CONSUMPTION_ANALYSIS_TYPES,
+    CONSUMPTION_DATASETS,
+    CONSUMPTION_FREQUENCIES,
+    CONSUMPTION_SECTORS,
     LNG_STORAGE_METRIC_BY_TYPE_AND_FREQUENCY,
     OUTPUT_MODES,
     STORAGE_ANALYSIS_TYPES,
@@ -33,6 +37,11 @@ class EnergyQueryParse:
     storage_types: list[str] = field(default_factory=list)
     storage_types_all: bool = False
     storage_insight_type: str | None = None
+    consumption_dataset: str = "natural_gas_consumption_by_end_use"
+    consumption_frequency: str = "monthly"
+    consumption_sector: str | None = "total"
+    consumption_sectors: list[str] = field(default_factory=list)
+    consumption_sectors_all: bool = False
     regions: list[str] = field(default_factory=list)
     states: list[str] = field(default_factory=list)
     states_all: bool = False
@@ -90,6 +99,26 @@ NON_STORAGE_NATGAS_TERMS = (
     "hdd",
     "cdd",
     "power",
+)
+
+CONSUMPTION_TERMS = (
+    "consumption",
+    "consume",
+    "consumed",
+    "end use",
+    "end-use",
+    "natural gas use",
+    "gas use",
+    "demand by sector",
+    "residential consumption",
+    "commercial consumption",
+    "vehicle consumption",
+    "vehicle fuel",
+    "natural gas vehicles",
+    "electric power consumption",
+    "electric consumption",
+    "power sector consumption",
+    "total consumption",
 )
 
 WEEKLY_CHANGE_TERMS = (
@@ -312,9 +341,28 @@ def _contains_any(q: str, terms: tuple[str, ...]) -> bool:
 
 def _classify_domain(q: str) -> tuple[str, str, float]:
     if _contains_any(q, STORAGE_TERMS):
+        if (
+            "demand" in q
+            and any(term in q for term in ("residential", "commercial", "vehicle", "electric power", "power sector"))
+            or _contains_any(q, CONSUMPTION_TERMS)
+        ) and any(
+            term in q for term in ("affect", "because", "driv", "impact")
+        ):
+            return "unsupported", "Cross-domain storage and consumption language detected.", 0.85
         return "storage", "Storage language detected.", 0.9
     if _contains_any(q, WEEKLY_CHANGE_TERMS):
         return "storage", "Storage weekly-change language detected.", 0.78
+    if _contains_any(q, CONSUMPTION_TERMS) or any(
+        term in q
+        for term in (
+            "residential",
+            "commercial",
+            "vehicle",
+            "electric power",
+            "power sector",
+        )
+    ):
+        return "consumption", "Natural gas consumption language detected.", 0.9
     if "gas" in q and ("region" in q or _contains_any(q, tuple(alias for aliases in REGION_ALIASES.values() for alias in aliases))):
         return "storage", "Storage region language detected.", 0.74
     if "region" in q and any(term in q for term in ("normal", "above", "below")):
@@ -380,6 +428,77 @@ def _parse_storage_frequency(q: str) -> str:
     if _contains_any(q, MONTHLY_FREQUENCY_TERMS):
         return "monthly"
     return "weekly"
+
+
+def _parse_consumption_frequency(q: str) -> str:
+    if any(term in q for term in ("annual", "annually", "yearly", "by year")):
+        return "annual"
+    if any(term in q for term in ("monthly", "by month", "each month")):
+        return "monthly"
+    return "monthly"
+
+
+def _parse_consumption_sectors(
+    q: str,
+) -> tuple[str | None, list[str], bool]:
+    all_sector_terms = (
+        "by end use",
+        "by end-use",
+        "end use sectors",
+        "end-use sectors",
+        "by sector",
+        "across sectors",
+        "compare sectors",
+        "all sectors",
+        "rank sectors",
+        "which sector",
+    )
+    if any(term in q for term in all_sector_terms):
+        return None, [], True
+
+    checks = (
+        ("residential", ("residential", "household", "households", "homes", "home heating")),
+        ("commercial", ("commercial", "businesses", "business use", "commercial buildings")),
+        ("vehicle", ("natural gas vehicles", "natural gas vehicle", "transportation fuel", "vehicle fuel", "vehicle", "vehicles")),
+        ("electric_power", ("electric power", "power sector", "electricity generation", "power generation", "electric utilities", "power burn")),
+        ("total", ("total consumption", "all consumption", "overall consumption", "total natural gas use")),
+    )
+    matches: list[tuple[int, str]] = []
+    for sector, aliases in checks:
+        positions = [q.find(alias) for alias in aliases if q.find(alias) >= 0]
+        if positions:
+            matches.append((min(positions), sector))
+    sectors = [sector for _, sector in sorted(matches)]
+    # Electric-power language must win over the generic word "power" and
+    # vehicle language must remain distinct from electric-power language.
+    if len(sectors) > 1:
+        explicit = [sector for sector in sectors if sector != "total"]
+        if len(explicit) > 1:
+            return None, explicit, False
+    return (sectors[0] if sectors else "total"), [], False
+
+
+def _parse_consumption_analysis_type(
+    q: str,
+    *,
+    states: list[str],
+    states_all: bool,
+    consumption_sector: str | None,
+    consumption_sectors: list[str],
+    consumption_sectors_all: bool,
+) -> str:
+    ranking_terms = ("rank", "ranking", "which state", "which sector", "highest", "lowest", "most", "least", "largest", "smallest")
+    if any(term in q for term in ranking_terms):
+        return "ranking"
+    if _has_explicit_time_series_request(q):
+        return "time_series"
+    if any(term in q for term in ("seasonal average", "same month last year", "five-year average", "5-year average", "normal for this month")):
+        return "seasonal_compare"
+    if states_all or len(states) > 1:
+        return "geography_compare"
+    if consumption_sectors_all or len(consumption_sectors) > 1:
+        return "sector_compare"
+    return "latest"
 
 
 def _parse_storage_type(q: str) -> tuple[str | None, bool]:
@@ -769,9 +888,87 @@ def _sanitize(value: str, allowed: tuple[str, ...], default: str) -> str:
     return value if value in allowed else default
 
 
+def _parse_consumption_query(
+    user_query: str,
+    normalized_query: str,
+    *,
+    reason: str,
+    confidence: float,
+) -> EnergyQueryParse:
+    q = normalized_query or user_query.lower().strip()
+    frequency = _parse_consumption_frequency(q)
+    sector, sectors, sectors_all = _parse_consumption_sectors(q)
+    states = _parse_states(q)
+    states_all = _asks_all_states(q)
+    if states_all:
+        states = []
+    elif not states:
+        states = ["united_states_total"]
+    analysis_type = _parse_consumption_analysis_type(
+        q,
+        states=states,
+        states_all=states_all,
+        consumption_sector=sector,
+        consumption_sectors=sectors,
+        consumption_sectors_all=sectors_all,
+    )
+    chart_type = {
+        "latest": "none",
+        "time_series": "line",
+        "geography_compare": "bar",
+        "sector_compare": "bar",
+        "ranking": "bar",
+        "seasonal_compare": "seasonal_line",
+    }.get(analysis_type, "none")
+    if analysis_type == "latest" and any(
+        term in q for term in ("plot", "chart", "graph", "visualize")
+    ):
+        chart_type = "bar"
+    output_mode = "answer" if analysis_type == "latest" and chart_type == "none" else "chart_and_answer"
+    dataset = _sanitize(
+        "natural_gas_consumption_by_end_use",
+        CONSUMPTION_DATASETS,
+        "natural_gas_consumption_by_end_use",
+    )
+    return EnergyQueryParse(
+        domain="consumption",
+        analysis_type=_sanitize(analysis_type, CONSUMPTION_ANALYSIS_TYPES, "unsupported"),
+        consumption_dataset=dataset,
+        consumption_frequency=_sanitize(frequency, CONSUMPTION_FREQUENCIES, "monthly"),
+        consumption_sector=sector if sector in CONSUMPTION_SECTORS else None,
+        consumption_sectors=[value for value in sectors if value in CONSUMPTION_SECTORS],
+        consumption_sectors_all=sectors_all,
+        regions=[],
+        states=states,
+        states_all=states_all,
+        comparisons=["none"],
+        chart_type=_sanitize(chart_type, CHART_TYPES, "none"),
+        output_mode=_sanitize(output_mode, OUTPUT_MODES, "answer"),
+        date_expression=_parse_date_expression(q),
+        filters={
+            "consumption_dataset": dataset,
+            "consumption_frequency": frequency,
+            "consumption_sector": sector,
+            "consumption_sectors": sectors,
+            "consumption_sectors_all": sectors_all,
+            "states": states,
+            "states_all": states_all,
+        },
+        confidence=confidence,
+        reason=reason,
+    )
+
+
 def parse_energy_query(user_query: str, normalized_query: str) -> EnergyQueryParse:
     q = normalized_query or user_query.lower().strip()
     domain, reason, confidence = _classify_domain(q)
+    if domain == "consumption":
+        return _parse_consumption_query(
+            user_query,
+            q,
+            reason=reason,
+            confidence=confidence,
+        )
     if domain != "storage":
         return EnergyQueryParse(
             domain="unsupported",
