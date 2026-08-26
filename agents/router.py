@@ -1255,7 +1255,15 @@ def _consumption_route(
     has_time_override = _has_explicit_time_series_request(normalized)
     has_seasonal_override = any(
         term in normalized
-        for term in ("seasonal average", "same month last year", "five-year average", "5-year average", "normal for this month")
+        for term in (
+            "seasonal average",
+            "same month last year",
+            "five-year average",
+            "5-year average",
+            "normal for this month",
+            "unusually high",
+            "unusually low",
+        )
     )
     inherit_analysis = bool(
         context
@@ -1271,6 +1279,8 @@ def _consumption_route(
         analysis_type = "ranking"
     elif has_time_override:
         analysis_type = "time_series"
+    elif has_seasonal_override:
+        analysis_type = "seasonal_compare"
     elif states_all or len(states) > 1:
         analysis_type = "geography_compare"
     elif sectors_all or len(parsed_sectors) > 1:

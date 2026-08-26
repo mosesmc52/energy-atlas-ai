@@ -69,6 +69,65 @@ class TestNaturalGasConsumptionRouting(unittest.TestCase):
         self.assertEqual(route.start_date, first.start_date)
         self.assertEqual(route.end_date, first.end_date)
 
+    def test_total_consumption_state_history_uses_consumption_metric(self) -> None:
+        route = route_query(
+            "How has total natural gas consumption in Ohio changed over time?"
+        )
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.analysis_type, "time_series")
+        self.assertEqual(route.consumption_sector, "total")
+        self.assertEqual(route.states, ["oh"])
+        self.assertEqual(
+            route.primary_metric, "natural_gas_total_consumption_monthly"
+        )
+        self.assertEqual(route.regions, [])
+
+    def test_end_use_ranking_marks_all_sectors(self) -> None:
+        route = route_query("Which end-use sector consumes the most gas in Texas?")
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertIsNone(route.consumption_sector)
+        self.assertTrue(route.consumption_sectors_all)
+        self.assertEqual(route.states, ["tx"])
+
+    def test_national_sector_ranking_marks_all_sectors(self) -> None:
+        route = route_query("Which sector uses the least natural gas nationally?")
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertTrue(route.consumption_sectors_all)
+        self.assertEqual(route.states, ["united_states_total"])
+
+    def test_home_use_maps_to_residential_consumption(self) -> None:
+        route = route_query("How has gas use in homes changed since 2015?")
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.consumption_sector, "residential")
+        self.assertEqual(route.primary_metric, "natural_gas_residential_consumption_monthly")
+
+    def test_commercial_buildings_map_to_commercial_consumption(self) -> None:
+        route = route_query("Show commercial-building gas use in Illinois.")
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.consumption_sector, "commercial")
+        self.assertEqual(route.primary_metric, "natural_gas_commercial_consumption_monthly")
+
+    def test_electric_utility_consumption_maps_to_power_sector(self) -> None:
+        route = route_query("Rank states by electric utility natural gas consumption")
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.analysis_type, "ranking")
+        self.assertEqual(route.consumption_sector, "electric_power")
+        self.assertEqual(route.states, [])
+        self.assertTrue(route.states_all)
+        self.assertEqual(
+            route.primary_metric,
+            "natural_gas_electric_power_consumption_monthly",
+        )
+
+    def test_unusually_high_this_month_is_seasonal_compare(self) -> None:
+        route = route_query("Is U.S. total consumption unusually high for this month?")
+        self.assertEqual(route.domain, "consumption")
+        self.assertEqual(route.analysis_type, "seasonal_compare")
+        self.assertEqual(route.consumption_sector, "total")
+        self.assertEqual(route.chart_type, "seasonal_line")
+
 
 if __name__ == "__main__":
     unittest.main()

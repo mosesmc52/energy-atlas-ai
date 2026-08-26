@@ -119,6 +119,9 @@ CONSUMPTION_TERMS = (
     "electric consumption",
     "power sector consumption",
     "total consumption",
+    "which sector",
+    "uses the most",
+    "uses the least",
 )
 
 WEEKLY_CHANGE_TERMS = (
@@ -350,8 +353,6 @@ def _classify_domain(q: str) -> tuple[str, str, float]:
         ):
             return "unsupported", "Cross-domain storage and consumption language detected.", 0.85
         return "storage", "Storage language detected.", 0.9
-    if _contains_any(q, WEEKLY_CHANGE_TERMS):
-        return "storage", "Storage weekly-change language detected.", 0.78
     if _contains_any(q, CONSUMPTION_TERMS) or any(
         term in q
         for term in (
@@ -363,6 +364,8 @@ def _classify_domain(q: str) -> tuple[str, str, float]:
         )
     ):
         return "consumption", "Natural gas consumption language detected.", 0.9
+    if _contains_any(q, WEEKLY_CHANGE_TERMS):
+        return "storage", "Storage weekly-change language detected.", 0.78
     if "gas" in q and ("region" in q or _contains_any(q, tuple(alias for aliases in REGION_ALIASES.values() for alias in aliases))):
         return "storage", "Storage region language detected.", 0.74
     if "region" in q and any(term in q for term in ("normal", "above", "below")):
@@ -446,6 +449,8 @@ def _parse_consumption_sectors(
         "by end-use",
         "end use sectors",
         "end-use sectors",
+        "end use sector",
+        "end-use sector",
         "by sector",
         "across sectors",
         "compare sectors",
@@ -460,7 +465,7 @@ def _parse_consumption_sectors(
         ("residential", ("residential", "household", "households", "homes", "home heating")),
         ("commercial", ("commercial", "businesses", "business use", "commercial buildings")),
         ("vehicle", ("natural gas vehicles", "natural gas vehicle", "transportation fuel", "vehicle fuel", "vehicle", "vehicles")),
-        ("electric_power", ("electric power", "power sector", "electricity generation", "power generation", "electric utilities", "power burn")),
+        ("electric_power", ("electric power", "power sector", "electricity generation", "power generation", "electric utility", "electric utilities", "power burn")),
         ("total", ("total consumption", "all consumption", "overall consumption", "total natural gas use")),
     )
     matches: list[tuple[int, str]] = []
@@ -492,7 +497,7 @@ def _parse_consumption_analysis_type(
         return "ranking"
     if _has_explicit_time_series_request(q):
         return "time_series"
-    if any(term in q for term in ("seasonal average", "same month last year", "five-year average", "5-year average", "normal for this month")):
+    if any(term in q for term in ("seasonal average", "same month last year", "five-year average", "5-year average", "normal for this month", "unusually high", "unusually low")):
         return "seasonal_compare"
     if states_all or len(states) > 1:
         return "geography_compare"
