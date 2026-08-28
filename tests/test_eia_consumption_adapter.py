@@ -52,7 +52,7 @@ class TestEIAConsumptionAdapter(unittest.TestCase):
         result = EIAAdapter().consumption_number_of_consumers(
             start="2020",
             end="2024",
-            state="united_states_total",
+            state="us_total",
             sector="commercial",
             category="sales",
         )
@@ -60,13 +60,38 @@ class TestEIAConsumptionAdapter(unittest.TestCase):
         consumption.number_of_consumers.assert_called_once_with(
             start="2020",
             end="2024",
-            state="united_states_total",
+            state="us_total",
             frequency="annual",
             sector="commercial",
             category="sales",
         )
         self.assertEqual(result.df["value"].tolist(), [42.0])
         self.assertEqual(result.meta["sector"], "commercial")
+
+    @patch("tools.eia_adapter.EIAClient")
+    def test_end_use_maps_electric_power_for_client(self, mock_client_cls: Mock) -> None:
+        consumption = SimpleNamespace(
+            end_use=Mock(return_value=[{"period": "2024-01", "value": "12.5"}])
+        )
+        mock_client_cls.return_value = SimpleNamespace(
+            natural_gas=SimpleNamespace(consumption=consumption)
+        )
+
+        EIAAdapter().consumption_end_use(
+            start="2024-01-01",
+            end="2024-12-31",
+            state="fl",
+            type="electric_power",
+            frequency="monthly",
+        )
+
+        consumption.end_use.assert_called_once_with(
+            start="2024-01",
+            end="2024-12",
+            state="fl",
+            frequency="monthly",
+            type="electric",
+        )
 
     def test_consumption_parameter_validation(self) -> None:
         adapter = EIAAdapter.__new__(EIAAdapter)

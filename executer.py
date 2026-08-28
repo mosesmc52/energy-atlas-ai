@@ -1759,18 +1759,16 @@ class MetricExecutor:
         if states_all:
             states = sorted(EIAAdapter.CONSUMPTION_STATES - {"united_states_total", "us_total"})
         if not states:
-            states = ["united_states_total"]
+            states = ["us_total"]
+        states = ["us_total" if state == "united_states_total" else state for state in states]
 
-        # eia-ng-client names this API category "electric"; Energy Atlas keeps
-        # the clearer public route name "electric_power".
-        api_type = "electric" if sector == "electric_power" else sector
         results: list[EIAResult] = []
         for state in states:
             result = self.eia.consumption_end_use(
                 start=start,
                 end=end,
                 state=state,
-                type=api_type,
+                type=sector,
                 frequency=frequency,
             )
             results.append(result)

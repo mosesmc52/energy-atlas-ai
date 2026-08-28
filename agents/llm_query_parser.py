@@ -904,11 +904,12 @@ def _parse_consumption_query(
     frequency = _parse_consumption_frequency(q)
     sector, sectors, sectors_all = _parse_consumption_sectors(q)
     states = _parse_states(q)
+    states = ["us_total" if state == "united_states_total" else state for state in states]
     states_all = _asks_all_states(q)
     if states_all:
         states = []
     elif not states:
-        states = ["united_states_total"]
+        states = ["us_total"]
     analysis_type = _parse_consumption_analysis_type(
         q,
         states=states,

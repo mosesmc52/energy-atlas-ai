@@ -1833,18 +1833,25 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         type: str,
         frequency: str = "annual",
     ) -> EIAResult:
+        # The eia-ng-client consumption namespace calls the national series
+        # us_total; accept the older Energy Atlas alias at this boundary.
+        if state == "united_states_total":
+            state = "us_total"
         if type not in self.CONSUMPTION_END_USE_TYPES:
             raise ValueError(
                 f"Invalid consumption end-use type '{type}'. Expected one of: "
                 f"{sorted(self.CONSUMPTION_END_USE_TYPES)}"
             )
+        # Energy Atlas exposes the descriptive electric_power enum while the
+        # current eia-ng-client namespace calls the same series "electric".
+        client_type = "electric" if type == "electric_power" else type
         return self._consumption_query(
             method_name="end_use",
             start=start,
             end=end,
             state=state,
             frequency=frequency,
-            type=type,
+            type=client_type,
         )
 
     def consumption_heat_content(

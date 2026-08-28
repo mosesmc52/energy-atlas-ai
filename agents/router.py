@@ -1208,6 +1208,12 @@ def _consumption_route(
     end_date: str | None,
 ) -> EnergyRouteResult:
     explicit_states = _parse_states_from_text(normalized)
+    # eia-ng-client's consumption namespace uses us_total for the national
+    # series (storage continues to use the legacy internal alias).
+    explicit_states = [
+        "us_total" if state == "united_states_total" else state
+        for state in explicit_states
+    ]
     explicit_states_all = any(
         term in normalized
         for term in ("by state", "all states", "across states", "compare states", "which state", "rank states")
@@ -1218,7 +1224,7 @@ def _consumption_route(
         states = list(context.states or [])
         states_all = context.states_all
     if not states and not states_all:
-        states = ["united_states_total"]
+        states = ["us_total"]
     if states_all:
         states = []
 

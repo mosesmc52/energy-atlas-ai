@@ -95,7 +95,7 @@ class TestNaturalGasConsumptionRouting(unittest.TestCase):
         self.assertEqual(route.domain, "consumption")
         self.assertEqual(route.analysis_type, "ranking")
         self.assertTrue(route.consumption_sectors_all)
-        self.assertEqual(route.states, ["united_states_total"])
+        self.assertEqual(route.states, ["us_total"])
 
     def test_home_use_maps_to_residential_consumption(self) -> None:
         route = route_query("How has gas use in homes changed since 2015?")
