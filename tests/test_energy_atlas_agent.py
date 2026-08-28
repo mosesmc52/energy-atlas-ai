@@ -130,6 +130,48 @@ class TestEnergyAtlasAgent(unittest.TestCase):
             model="gpt-5.2",
         )
 
+    def test_runs_consumption_route_execute_and_answer_builder(self) -> None:
+        executor = Mock()
+        metric_result = Mock(
+            df=Mock(),
+            source=Mock(reference="ref:eia-consumption"),
+            meta={},
+        )
+        executor.execute_consumption_route.return_value = metric_result
+        route_fn = Mock(
+            return_value=_route(
+                domain="consumption",
+                analysis_type="latest",
+                primary_metric="natural_gas_commercial_consumption_monthly",
+                metrics=["natural_gas_commercial_consumption_monthly"],
+                regions=[],
+                states=["ca"],
+                filters={
+                    "consumption_dataset": "natural_gas_consumption_by_end_use",
+                    "consumption_frequency": "monthly",
+                    "consumption_sector": "commercial",
+                    "states": ["ca"],
+                },
+                consumption_dataset="natural_gas_consumption_by_end_use",
+                consumption_frequency="monthly",
+                consumption_sector="commercial",
+            )
+        )
+        payload = Mock()
+        answer_builder_fn = Mock(return_value=payload)
+        agent = EnergyAtlasAgent(
+            executor=executor,
+            route_fn=route_fn,
+            answer_builder_fn=answer_builder_fn,
+        )
+
+        outcome = agent.run(user_query="How much commercial gas is consumed in California?")
+
+        self.assertIs(outcome.result, metric_result)
+        self.assertIs(outcome.payload, payload)
+        executor.execute_consumption_route.assert_called_once()
+        executor.execute_storage_route.assert_not_called()
+
     def test_storage_route_preserves_regions_list_into_executor(self) -> None:
         executor = Mock()
         metric_result = Mock(df=Mock(), source=Mock(reference="ref:test"), meta={})

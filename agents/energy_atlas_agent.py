@@ -89,6 +89,22 @@ class EnergyAtlasAgent:
             )
         return self.executor.execute_storage_route(prepared_route)
 
+    def _execute_consumption_route(self, route: EnergyRouteResult) -> MetricResult:
+        filters = dict(route.filters or {})
+        filters.update(
+            {
+                "states": list(route.states or filters.get("states") or []),
+                "states_all": bool(route.states_all or filters.get("states_all")),
+                "consumption_dataset": route.consumption_dataset,
+                "consumption_frequency": route.consumption_frequency,
+                "consumption_sector": route.consumption_sector,
+                "consumption_sectors": list(route.consumption_sectors or []),
+                "consumption_sectors_all": route.consumption_sectors_all,
+            }
+        )
+        prepared_route = replace(route, filters=filters)
+        return self.executor.execute_consumption_route(prepared_route)
+
     def _unsupported_outcome(self, *, route: EnergyRouteResult, route_ms: float) -> AgentOutcome:
         return AgentOutcome(
             route=route,
@@ -128,11 +144,14 @@ class EnergyAtlasAgent:
 
         if route.domain == "unsupported" or route.analysis_type == "unsupported":
             return self._unsupported_outcome(route=route, route_ms=route_ms)
-        if route.domain != "storage" or route.primary_metric is None:
+        if route.domain not in {"storage", "consumption"} or route.primary_metric is None:
             return self._unsupported_outcome(route=route, route_ms=route_ms)
 
         execute_started = perf_counter()
-        result = self._execute_storage_route(route)
+        if route.domain == "consumption":
+            result = self._execute_consumption_route(route)
+        else:
+            result = self._execute_storage_route(route)
         execute_ms = (perf_counter() - execute_started) * 1000
         if DEBUG_ENABLED:
             df_obj = getattr(result, "df", None)
@@ -179,7 +198,7 @@ class EnergyAtlasAgent:
                 payload.structured_response is not None,
                 len(str(payload.answer_text or "")),
             )
-        if route.domain == "storage" and route.analysis_type != "unsupported" and route.primary_metric is not None:
+        if route.domain in {"storage", "consumption"} and route.analysis_type != "unsupported" and route.primary_metric is not None:
             self._last_route_context = context_from_route(route)
 
         return AgentOutcome(

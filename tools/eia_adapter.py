@@ -372,7 +372,9 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         "residential",
         "commercial",
         "industrial",
+        "vehicle",
         "electric_power",
+        "total",
     }
     CONSUMPTION_DELIVERY_MEASURES = {"delivered", "percent"}
     PRODUCTION_STATES = {
