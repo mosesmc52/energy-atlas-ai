@@ -127,6 +127,28 @@ SECTOR_LABELS = {
     "electric_power": "power",
 }
 
+CONSUMPTION_STATE_NAMES = {
+    "al": "Alabama", "ak": "Alaska", "az": "Arizona", "ar": "Arkansas",
+    "ca": "California", "co": "Colorado", "ct": "Connecticut", "de": "Delaware",
+    "fl": "Florida", "ga": "Georgia", "hi": "Hawaii", "id": "Idaho",
+    "il": "Illinois", "in": "Indiana", "ia": "Iowa", "ks": "Kansas",
+    "ky": "Kentucky", "la": "Louisiana", "me": "Maine", "md": "Maryland",
+    "ma": "Massachusetts", "mi": "Michigan", "mn": "Minnesota", "ms": "Mississippi",
+    "mo": "Missouri", "mt": "Montana", "ne": "Nebraska", "nv": "Nevada",
+    "nh": "New Hampshire", "nj": "New Jersey", "nm": "New Mexico", "ny": "New York",
+    "nc": "North Carolina", "nd": "North Dakota", "oh": "Ohio", "ok": "Oklahoma",
+    "or": "Oregon", "pa": "Pennsylvania", "ri": "Rhode Island", "sc": "South Carolina",
+    "sd": "South Dakota", "tn": "Tennessee", "tx": "Texas", "ut": "Utah",
+    "vt": "Vermont", "va": "Virginia", "wa": "Washington", "wv": "West Virginia",
+    "wi": "Wisconsin", "wy": "Wyoming", "dc": "District of Columbia",
+    "us_total": "U.S.", "united_states_total": "U.S.",
+}
+
+
+def _consumption_state_name(value: str) -> str:
+    code = str(value).lower()
+    return CONSUMPTION_STATE_NAMES.get(code, str(value).upper())
+
 
 def _report_chunks_candidates() -> list[Path]:
     env_path = os.getenv("REPORT_CHUNKS_PATH", "").strip()
@@ -3879,14 +3901,14 @@ def _build_consumption_answer_payload(
     frame = frame.sort_values(["date", "state", "sector"]).reset_index(drop=True)
     frame["series"] = frame.apply(
         lambda row: (
-            ("U.S." if row["state"] in {"us_total", "united_states_total"} else row["state"].upper())
+            _consumption_state_name(row["state"])
             + " " + row["sector"].replace("_", " ").title()
         ),
         axis=1,
     )
 
     def label(row: pd.Series) -> str:
-        state = "U.S." if row["state"] in {"us_total", "united_states_total"} else row["state"].upper()
+        state = _consumption_state_name(row["state"])
         sector = str(row["sector"]).replace("_", " ").title()
         if analysis_type == "ranking" and bool(getattr(route, "states_all", False)):
             return state
@@ -4048,6 +4070,27 @@ def _build_consumption_answer_payload(
                             )
                         ]
                         answer += f"\n\n**{last_heading}**\n\n" + "\n".join(last_bullets)
+                elif chart_df["state"].nunique() == 1 and chart_df["sector"].nunique() > 1:
+                    state_code = str(chart_df.iloc[0]["state"])
+                    location = _consumption_state_name(state_code)
+                    if location == "U.S.":
+                        location = "the U.S."
+                    leading = chart_df.iloc[0]
+                    sector_name = str(leading["sector"]).replace("_", " ").capitalize()
+                    extreme = "least" if least_first else "most"
+                    answer = (
+                        f"In {location}, {sector_name} consumed the {extreme} natural gas "
+                        f"among the {len(chart_df)} reported end-use sectors in "
+                        f"{latest_date.strftime('%B %Y')}: "
+                        f"{_format_number(float(leading['value']))} MMcf."
+                    )
+                    if len(chart_df) > 1:
+                        next_row = chart_df.iloc[1]
+                        next_sector = str(next_row["sector"]).replace("_", " ").capitalize()
+                        answer += (
+                            f" {next_sector} followed at "
+                            f"{_format_number(float(next_row['value']))} MMcf."
+                        )
                 else:
                     leader = "Least" if least_first else "Most"
                     answer = (
@@ -4061,7 +4104,27 @@ def _build_consumption_answer_payload(
                         "with observations for this month."
                     )
             else:
-                answer = f"Consumption on {latest_date.date().isoformat()}: " + "; ".join(entries) + "."
+                if (
+                    analysis_type == "geography_compare"
+                    and bool(getattr(route, "states_all", False))
+                    and len(chart_df) > 10
+                    and chart_df["sector"].nunique() == 1
+                ):
+                    sector_name = str(chart_df.iloc[0]["sector"]).replace("_", " ").title()
+                    median_value = float(chart_df["value"].median())
+                    top_five = list(reversed(entries[-5:]))
+                    bottom_five = entries[:5]
+                    answer = (
+                        f"{sector_name} natural gas consumption across {len(chart_df)} "
+                        f"reporting states on {latest_date.date().isoformat()}. "
+                        f"The median state used {_format_number(median_value)} MMcf."
+                        "\n\n**Top 5**\n\n"
+                        + "\n".join(f"- {entry}" for entry in top_five)
+                        + "\n\n**Bottom 5**\n\n"
+                        + "\n".join(f"- {entry}" for entry in bottom_five)
+                    )
+                else:
+                    answer = f"Consumption on {latest_date.date().isoformat()}: " + "; ".join(entries) + "."
                 if len(chart_df) == 2:
                     left, right = chart_df.iloc[0], chart_df.iloc[1]
                     difference = float(left["value"] - right["value"])
@@ -4081,17 +4144,41 @@ def _build_consumption_answer_payload(
                 y_label="MMcf",
             )
     elif frequency == "annual" and not getattr(route, "date_expression", None):
-        entries = [
-            f"{row['date'].year}: {_format_number(float(row['value']))} MMcf"
-            for _, row in frame.iterrows()
-        ]
-        answer = "Annual consumption: " + "; ".join(entries) + "."
+        first, latest = frame.iloc[0], frame.iloc[-1]
+        latest_value = float(latest["value"])
+        answer = (
+            f"{label(latest)} natural gas consumption was "
+            f"{_format_number(latest_value)} MMcf in {latest['date'].year}."
+        )
+        if len(frame) > 1:
+            previous = frame.iloc[-2]
+            change = latest_value - float(previous["value"])
+            direction = "up" if change > 0 else "down" if change < 0 else "unchanged"
+            pct = abs(change / float(previous["value"]) * 100) if previous["value"] else None
+            pct_text = f" ({pct:.1f}%)" if pct is not None else ""
+            if change:
+                answer += (
+                    f" That was {direction} {_format_number(abs(change))} MMcf{pct_text} "
+                    f"from {previous['date'].year}."
+                )
+            else:
+                answer += f" That was unchanged from {previous['date'].year}."
+        if len(frame) > 2:
+            first_value = float(first["value"])
+            period_change = latest_value - first_value
+            period_direction = "higher" if period_change > 0 else "lower" if period_change < 0 else "equal"
+            period_pct = abs(period_change / first_value * 100) if first_value else None
+            period_pct_text = f" ({period_pct:.1f}%)" if period_pct is not None else ""
+            answer += (
+                f" Compared with {first['date'].year}, the latest year was "
+                f"{_format_number(abs(period_change))} MMcf{period_pct_text} {period_direction}."
+            )
         points = [
             AnswerDataPoint(metric=str(row["date"].year), value=float(row["value"]), unit="MMcf")
             for _, row in frame.iterrows()
         ]
         chart_spec = ChartSpec(
-            chart_type="line", title="Annual Natural Gas Consumption",
+            chart_type="line", title=f"{label(latest)} Annual Natural Gas Consumption",
             x="date", y=["value"], x_label="Year", y_label="MMcf",
         )
     elif analysis_type == "time_series":

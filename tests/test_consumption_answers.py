@@ -51,7 +51,7 @@ class TestConsumptionAnswers(unittest.TestCase):
         payload = build_answer_with_openai(query=question, result=result, route=route)
         self.assertEqual(payload.chart_spec.chart_type, "line")
         self.assertEqual(len(payload.chart_data_preview.rows), 2)
-        self.assertIn("CA Electric Power consumption changed", payload.answer_text)
+        self.assertIn("California Electric Power consumption changed", payload.answer_text)
 
     def test_state_ranking_fetches_five_year_baseline_history(self) -> None:
         route = route_query("Rank states by electric power gas consumption.")
@@ -110,8 +110,41 @@ class TestConsumptionAnswers(unittest.TestCase):
             query=rank_question, result=result, route=route_query(rank_question)
         )
         self.assertEqual(len(ranking.chart_data_preview.rows), 4)
-        self.assertIn("Least consumption", ranking.answer_text)
-        self.assertIn("Commercial 50.0 MMcf; Residential 100 MMcf", ranking.answer_text)
+        self.assertIn("In the U.S., Commercial consumed the least natural gas", ranking.answer_text)
+        self.assertIn("50.0 MMcf. Residential followed at 100 MMcf", ranking.answer_text)
+
+    def test_texas_end_use_sector_ranking_names_the_state_and_leader(self) -> None:
+        question = "Which end-use sector consumes the most gas in Texas?"
+        values = {
+            "electric_power": 204182,
+            "industrial": 169384,
+            "commercial": 12162,
+            "residential": 7251,
+        }
+        route = route_query(question)
+        self.assertEqual(route.states, ["tx"])
+        eia = Mock()
+
+        def fetch(*, state: str, type: str, **kwargs):
+            return _result([
+                {"date": "2026-06-01", "value": values[type], "state": state}
+            ])
+
+        eia.consumption_end_use.side_effect = fetch
+        result = MetricExecutor(eia=eia).execute_consumption_route(route)
+        self.assertEqual(eia.consumption_end_use.call_count, 4)
+        self.assertTrue(all(
+            call.kwargs["state"] == "tx"
+            for call in eia.consumption_end_use.call_args_list
+        ))
+        payload = build_answer_with_openai(query=question, result=result, route=route)
+        self.assertIn(
+            "In Texas, Electric power consumed the most natural gas among the 4 "
+            "reported end-use sectors in June 2026: 204,182 MMcf.",
+            payload.structured_response.summary,
+        )
+        self.assertIn("Industrial followed at 169,384 MMcf", payload.answer_text)
+        self.assertEqual(len(payload.chart_data_preview.rows), 4)
 
     def test_rank_states_uses_same_month_and_values_for_each_state(self) -> None:
         route = route_query("Rank states by commercial natural gas consumption.")
@@ -125,9 +158,9 @@ class TestConsumptionAnswers(unittest.TestCase):
             result=result,
             route=route,
         )
-        self.assertIn("- 1. NY 150 MMcf", payload.answer_text)
-        self.assertIn("- 2. CA 100 MMcf", payload.answer_text)
-        self.assertNotIn("TX 200", payload.answer_text)
+        self.assertIn("- 1. New York 150 MMcf", payload.answer_text)
+        self.assertIn("- 2. California 100 MMcf", payload.answer_text)
+        self.assertNotIn("Texas 200", payload.answer_text)
         self.assertEqual(len(payload.structured_response.data_points), 2)
 
     def test_state_ranking_summary_shows_only_top_and_bottom_five(self) -> None:
@@ -155,12 +188,12 @@ class TestConsumptionAnswers(unittest.TestCase):
             query=question, result=result, route=route_query(question)
         )
         summary = payload.structured_response.summary
-        self.assertIn("**Top 5**\n\n- 1. TX 1,200 MMcf", summary)
+        self.assertIn("**Top 5**\n\n- 1. Texas 1,200 MMcf", summary)
         self.assertNotIn("**Middle**", summary)
-        self.assertNotIn("NY 700 MMcf", summary)
-        self.assertNotIn("NC 600 MMcf", summary)
-        self.assertIn("**Bottom 5**\n\n- 8. AL 500 MMcf", summary)
-        self.assertIn("- 12. GA 100 MMcf", summary)
+        self.assertNotIn("New York 700 MMcf", summary)
+        self.assertNotIn("North Carolina 600 MMcf", summary)
+        self.assertIn("**Bottom 5**\n\n- 8. Alabama 500 MMcf", summary)
+        self.assertIn("- 12. Georgia 100 MMcf", summary)
         self.assertEqual(summary.count("\n- "), 10)
         self.assertEqual(len(payload.chart_data_preview.rows), len(states))
         self.assertEqual(len(payload.structured_response.data_points), len(states))
@@ -239,8 +272,48 @@ class TestConsumptionAnswers(unittest.TestCase):
             query="Compare business natural gas consumption in New York and California.",
             result=result, route=route,
         )
-        self.assertIn("NY 80.0 MMcf", payload.answer_text)
-        self.assertIn("CA 120 MMcf", payload.answer_text)
+        self.assertIn("New York 80.0 MMcf", payload.answer_text)
+        self.assertIn("California 120 MMcf", payload.answer_text)
+
+    def test_total_consumption_comparison_uses_full_state_names_in_chart(self) -> None:
+        question = "Compare total gas consumption in Texas and California."
+        route = route_query(question)
+        self.assertEqual(route.states, ["tx", "ca"])
+        result = _result([
+            {"date": "2026-06-01", "value": 109034, "state": "ca", "sector": "total"},
+            {"date": "2026-06-01", "value": 393165, "state": "tx", "sector": "total"},
+        ])
+        payload = build_answer_with_openai(query=question, result=result, route=route)
+        self.assertIn("California 109,034 MMcf", payload.answer_text)
+        self.assertIn("Texas 393,165 MMcf", payload.answer_text)
+        self.assertIn("Difference: 284,131 MMcf", payload.answer_text)
+        chart_df = pd.DataFrame(
+            payload.chart_data_preview.rows, columns=payload.chart_data_preview.columns
+        )
+        figure = render_plotly(payload.chart_spec, chart_df)
+        self.assertEqual(list(figure.data[0].x), ["California", "Texas"])
+
+    def test_all_state_comparison_summarizes_extremes_and_median(self) -> None:
+        question = "Compare residential consumption by state."
+        states = ["hi", "vt", "nh", "de", "wv", "sd", "nd", "wy", "ms", "ri", "mt", "ar"]
+        result = _result([
+            {"date": "2026-06-01", "value": (index + 1) * 100,
+             "state": state, "sector": "residential"}
+            for index, state in enumerate(states)
+        ])
+        route = route_query(question)
+        self.assertEqual(route.analysis_type, "geography_compare")
+        self.assertTrue(route.states_all)
+        payload = build_answer_with_openai(query=question, result=result, route=route)
+        summary = payload.answer_text
+        self.assertIn("Residential natural gas consumption across 12 reporting states", summary)
+        self.assertIn("median state used 650 MMcf", summary)
+        self.assertIn("**Top 5**\n\n- Arkansas 1,200 MMcf", summary)
+        self.assertIn("**Bottom 5**\n\n- Hawaii 100 MMcf", summary)
+        self.assertNotIn("Consumption on 2026-06-01:", summary)
+        self.assertNotIn("ND 700 MMcf", summary)
+        self.assertEqual(summary.count("\n- "), 10)
+        self.assertEqual(len(payload.chart_data_preview.rows), 12)
 
     def test_electric_power_state_ranking(self) -> None:
         for question in (
@@ -254,8 +327,8 @@ class TestConsumptionAnswers(unittest.TestCase):
                     {"date": "2026-06-01", "value": 70, "state": "ca", "sector": "electric_power"},
                 ])
                 payload = build_answer_with_openai(query=question, result=result, route=route)
-                self.assertIn("- 1. TX 90.0 MMcf", payload.answer_text)
-                self.assertIn("- 2. CA 70.0 MMcf", payload.answer_text)
+                self.assertIn("- 1. Texas 90.0 MMcf", payload.answer_text)
+                self.assertIn("- 2. California 70.0 MMcf", payload.answer_text)
 
     def test_annual_undated_query_fetches_completed_years(self) -> None:
         route = route_query("Show annual total U.S. gas consumption.")
@@ -270,8 +343,26 @@ class TestConsumptionAnswers(unittest.TestCase):
         payload = build_answer_with_openai(
             query="Show annual total U.S. gas consumption.", result=result, route=route
         )
-        self.assertIn("2024: 100 MMcf", payload.answer_text)
-        self.assertIn("2025: 110 MMcf", payload.answer_text)
+        self.assertIn("U.S. Total natural gas consumption was 110 MMcf in 2025.", payload.answer_text)
+        self.assertIn("up 10.0 MMcf (10.0%) from 2024", payload.answer_text)
+        self.assertNotIn("Annual consumption:", payload.answer_text)
+        self.assertEqual(len(payload.chart_data_preview.rows), 2)
+
+    def test_annual_commercial_summary_explains_change_without_listing_years(self) -> None:
+        question = "What was annual commercial natural gas consumption in Texas?"
+        route = route_query(question)
+        result = _result([
+            {"date": "2016-01-01", "value": 164306, "state": "tx", "sector": "commercial"},
+            {"date": "2024-01-01", "value": 193514, "state": "tx", "sector": "commercial"},
+            {"date": "2025-01-01", "value": 203750, "state": "tx", "sector": "commercial"},
+        ])
+        payload = build_answer_with_openai(query=question, result=result, route=route)
+        self.assertIn("Texas Commercial natural gas consumption was 203,750 MMcf in 2025", payload.answer_text)
+        self.assertIn("up 10,236 MMcf (5.3%) from 2024", payload.answer_text)
+        self.assertIn("Compared with 2016", payload.answer_text)
+        self.assertIn("39,444 MMcf (24.0%) higher", payload.answer_text)
+        self.assertNotIn("2016: 164,306", payload.answer_text)
+        self.assertEqual(len(payload.chart_data_preview.rows), 3)
 
     def test_historical_change_uses_same_calendar_month(self) -> None:
         route = route_query("How has gas use in homes changed since 2015?")
