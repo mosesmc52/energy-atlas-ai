@@ -887,6 +887,15 @@ def render_plotly(
                         )
                     )
                     storage_fig.update_layout(showlegend=True)
+        if (
+            spec.chart_type == "line"
+            and {"date", "value"}.issubset(d.columns)
+            and not any(column in d.columns for column in ("region", "state", "storage_type"))
+            and not storage_fig.layout.annotations
+        ):
+            _add_latest_annotation_only(
+                storage_fig, d, x_field="date", y_field="value", y_units=None
+            )
         return storage_fig
 
     if (

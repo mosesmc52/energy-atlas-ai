@@ -4252,10 +4252,25 @@ def build_answer_with_openai(
     if region_label == "Lower48":
         region_label = "Lower 48"
     source_date = src.retrieved_at.date().isoformat() if src.retrieved_at else None
+    llm_available = callable(getattr(getattr(client, "responses", None), "create", None))
 
     storage_report_query = _is_storage_report_query(query, route)
+    storage_narrative_query = bool(
+        route is not None
+        and _route_domain(route) == "storage"
+        and should_use_report_rag(query)
+        and (
+            os.getenv("ATLAS_USE_LLM_NARRATION", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+            or os.getenv("ATLAS_RESPONSE_MODE", "fast").strip().lower()
+            in {"analysis", "detailed"}
+        )
+        and llm_available
+    )
 
-    if route is not None and _route_domain(route) == "storage" and not storage_report_query:
+    if route is not None and _route_domain(route) == "storage" and not (
+        llm_available and (storage_report_query or storage_narrative_query)
+    ):
         return _build_storage_answer_payload(
             query=query,
             result=result,
@@ -4285,6 +4300,7 @@ def build_answer_with_openai(
     )
     prefer_report_narration = (
         use_llm_narration
+        and llm_available
         and _is_report_narrative_query(query)
         and metric
         in {
@@ -4606,7 +4622,7 @@ def build_answer_with_openai(
             normal_years=normal_years,
         )
 
-    if use_llm_narration and client is not None:
+    if use_llm_narration and llm_available:
         (
             report_context_text,
             report_context_sources,

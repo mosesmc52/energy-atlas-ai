@@ -29,6 +29,8 @@ _RAG_KEYWORDS = {
     "tightening",
     "loosening",
     "said",
+    "commentary",
+    "summarize",
 }
 
 

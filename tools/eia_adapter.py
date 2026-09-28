@@ -604,7 +604,7 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
         """
         source = self.client.natural_gas
         namespace = getattr(source, name, None)
-        return source if callable(namespace) else namespace
+        return source if namespace is None or callable(namespace) else namespace
 
     @staticmethod
     def _call_eia_method(method, **kwargs):
