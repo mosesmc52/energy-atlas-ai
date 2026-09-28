@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 from tempfile import NamedTemporaryFile
 from unittest.mock import patch
@@ -558,7 +558,8 @@ class TestAnswerBuilder(unittest.TestCase):
 
         with NamedTemporaryFile("w", suffix=".jsonl", encoding="utf-8") as handle:
             handle.write(
-                '{"title":"Today in Energy","report_type":"analysis","text":"Recent reports said LNG exports stayed strong because winter demand improved.","published_date":"2026-01-18","topics":["lng"]}\n'
+                '{"title":"Today in Energy","report_type":"analysis","text":"Recent reports said LNG exports stayed strong because winter demand improved.",'
+                f'"published_date":"{date.today().isoformat()}","domain_tags":["natural_gas"],"topics":["lng"]}}\n'
             )
             handle.flush()
 
@@ -786,9 +787,10 @@ class TestAnswerBuilder(unittest.TestCase):
                     "report_type": "natural_gas_weekly_update",
                     "report_family": "natural_gas_weekly",
                     "text": "Storage commentary described the latest weekly move.",
-                    "published_date": "2026-06-12",
+                    "published_date": date.today().isoformat(),
                     "domain_tags": ["storage"],
                     "metric_tags": ["working_gas"],
+                    "geography_tags": ["lower48"],
                     "topics": ["storage"],
                 },
             ),
@@ -851,9 +853,10 @@ class TestAnswerBuilder(unittest.TestCase):
                     "report_type": "natural_gas_weekly_update",
                     "report_family": "natural_gas_weekly",
                     "text": "Storage tightened this week as balances turned firmer.",
-                    "published_date": "2026-06-12",
+                    "published_date": date.today().isoformat(),
                     "domain_tags": ["storage"],
                     "metric_tags": ["working_gas"],
+                    "geography_tags": ["lower48"],
                     "topics": ["storage"],
                 },
             ),

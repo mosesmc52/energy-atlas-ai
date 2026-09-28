@@ -100,6 +100,7 @@ class AnswerPayload(BaseModel):
     data_preview: Optional[DataPreview] = None
     chart_data_preview: Optional[DataPreview] = None
     chart_spec: Optional[ChartSpec] = None  # <-- no quotes
+    ranking_table: Optional[str] = None
 
     sources: List[SourceRef]
     warnings: Optional[List[str]] = None

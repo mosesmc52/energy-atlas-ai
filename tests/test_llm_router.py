@@ -396,8 +396,11 @@ class TestStorageRouting(unittest.TestCase):
         self.assertEqual(route.storage_dataset, "weekly_working_gas")
         self.assertEqual(route.regions, ["east"])
         self.assertEqual(route.analysis_type, "time_series")
-        self.assertEqual(route.start_date, "2023-07-05")
-        self.assertEqual(route.end_date, "2026-07-05")
+        self.assertEqual(
+            route.start_date,
+            (pd.Timestamp(date.today()) - pd.DateOffset(years=3)).date().isoformat(),
+        )
+        self.assertEqual(route.end_date, date.today().isoformat())
 
     def test_followup_rank_regions_instead_switches_to_weekly_ranking(self) -> None:
         previous = route_query("Show Lower 48 storage over the last five years.")

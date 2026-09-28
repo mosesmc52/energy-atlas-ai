@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import logging
+import re
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -106,6 +107,28 @@ def _expand_storage_fetch_window_for_latest_all_operators(
         fetch_start = resolved_end - pd.DateOffset(years=10)
     else:
         fetch_start = resolved_end - pd.DateOffset(years=2)
+    return fetch_start.date().isoformat(), resolved_end.date().isoformat()
+
+
+def _consumption_should_expand_for_latest(route: EnergyRouteResult) -> bool:
+    """Fetch enough history for latest queries to tolerate EIA publication lag."""
+    query = str(route.normalized_query or "").lower()
+    has_calendar_range = bool(
+        re.search(r"\b20\d{2}(?:-\d{2})?\b", query)
+        or re.search(r"\b(?:since|from|last|past|ytd|year to date|this year)\b", query)
+    )
+    return (
+        route.domain == "consumption"
+        and route.analysis_type == "latest"
+        and not has_calendar_range
+    )
+
+
+def _expand_consumption_fetch_window_for_latest(
+    *, end_date: str | None, frequency: str
+) -> tuple[str, str]:
+    resolved_end = pd.Timestamp(end_date or date.today().isoformat())
+    fetch_start = resolved_end - pd.DateOffset(years=3 if frequency == "annual" else 2)
     return fetch_start.date().isoformat(), resolved_end.date().isoformat()
 
 
@@ -553,6 +576,18 @@ class MetricExecutor:
             "ng_electricity": self._eia_ng_electricity,
             "ng_consumption_lower48": self._eia_ng_consumption_lower48,
             "ng_consumption_by_sector": self._eia_ng_consumption_by_sector,
+            "natural_gas_residential_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_commercial_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_industrial_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_vehicle_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_electric_power_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_total_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_residential_consumption_annual": self._eia_natural_gas_consumption,
+            "natural_gas_commercial_consumption_annual": self._eia_natural_gas_consumption,
+            "natural_gas_industrial_consumption_annual": self._eia_natural_gas_consumption,
+            "natural_gas_vehicle_consumption_annual": self._eia_natural_gas_consumption,
+            "natural_gas_electric_power_consumption_annual": self._eia_natural_gas_consumption,
+            "natural_gas_total_consumption_annual": self._eia_natural_gas_consumption,
             "ng_production_lower48": self._eia_ng_production_lower48,
             "ng_supply_balance_regime": self._eia_ng_supply_balance_regime,
             "ng_exploration_reserves_lower48": self._eia_ng_exploration_reserves_lower48,
@@ -570,6 +605,7 @@ class MetricExecutor:
 
         # ---- execute adapter handler ----
         runtime_filters = dict(req.filters or {})
+        runtime_filters.setdefault("metric", req.metric)
         res = handler(start=req.start, end=req.end, filters=runtime_filters)
 
         # Normalize to MetricResult
@@ -776,6 +812,91 @@ class MetricExecutor:
                 sorted(result.df["storage_type"].dropna().astype(str).unique().tolist()),
                 len(result.df),
             )
+        return result
+
+    def execute_consumption_route(self, route: EnergyRouteResult) -> MetricResult:
+        if route.domain != "consumption":
+            raise ValueError(
+                f"Unsupported route domain for consumption execution: {route.domain}"
+            )
+        if not route.primary_metric:
+            raise ValueError("Consumption route is missing a primary metric.")
+
+        filters = dict(route.filters or {})
+        filters.update(
+            {
+                "states": list(route.states or filters.get("states") or []),
+                "states_all": bool(route.states_all or filters.get("states_all")),
+                "consumption_dataset": route.consumption_dataset,
+                "consumption_frequency": route.consumption_frequency,
+                "consumption_sector": route.consumption_sector,
+                "consumption_sectors": list(route.consumption_sectors or []),
+                "consumption_sectors_all": route.consumption_sectors_all,
+            }
+        )
+        fetch_start = route.start_date or ""
+        fetch_end = route.end_date or date.today().isoformat()
+        explicit_date = has_explicit_date_reference(str(route.normalized_query or ""))
+        if route.analysis_type == "seasonal_compare":
+            baseline_start = (pd.Timestamp(fetch_end) - pd.DateOffset(years=6)).date().isoformat()
+            fetch_start = min(fetch_start, baseline_start) if fetch_start else baseline_start
+        elif route.analysis_type == "ranking" and route.states_all:
+            baseline_years = 5 if explicit_date else 8
+            anchor = route.start_date if explicit_date else fetch_end
+            fetch_start = (
+                pd.Timestamp(anchor) - pd.DateOffset(years=baseline_years)
+            ).date().isoformat()
+        elif route.consumption_frequency == "annual" and not explicit_date:
+            fetch_start = (pd.Timestamp(fetch_end) - pd.DateOffset(years=10)).date().isoformat()
+        elif route.analysis_type in {"ranking", "geography_compare", "sector_compare"} and not explicit_date:
+            fetch_start = (pd.Timestamp(fetch_end) - pd.DateOffset(years=2)).date().isoformat()
+        elif _consumption_should_expand_for_latest(route):
+            fetch_start, fetch_end = _expand_consumption_fetch_window_for_latest(
+                end_date=fetch_end,
+                frequency=route.consumption_frequency or "monthly",
+            )
+        metrics = list(dict.fromkeys(route.metrics or [route.primary_metric]))
+        results: list[MetricResult] = []
+        for metric in metrics:
+            metric_filters = dict(filters)
+            metric_filters["consumption_sector"] = metric.removeprefix("natural_gas_").split("_consumption_", 1)[0]
+            item = self.execute(
+                ExecuteRequest(metric=metric, start=fetch_start, end=fetch_end, filters=metric_filters)
+            )
+            if item.df is not None:
+                item.df = item.df.copy()
+                item.df["sector"] = metric_filters["consumption_sector"]
+            results.append(item)
+        result = results[0]
+        if len(results) > 1:
+            frames = [item.df for item in results if item.df is not None and not item.df.empty]
+            result.df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["date", "value", "state", "type", "sector"])
+            result.meta = {**(result.meta or {}), "metrics": metrics, "component_sources": [item.source.reference for item in results]}
+            result.source = result.source.model_copy(
+                update={
+                    "label": "EIA Natural Gas Consumption: End Use Comparison",
+                    "parameters": {**(result.source.parameters or {}), "metrics": metrics},
+                }
+            )
+        if result.meta is None:
+            result.meta = {}
+        result.meta.update(
+            {
+                "domain": "consumption",
+                "analysis_type": route.analysis_type,
+                "consumption_dataset": route.consumption_dataset,
+                "consumption_frequency": route.consumption_frequency,
+                "consumption_sector": route.consumption_sector,
+                "consumption_sectors": list(route.consumption_sectors or []),
+                "consumption_sectors_all": route.consumption_sectors_all,
+                "states": list(route.states or []),
+                "states_all": route.states_all,
+                "start_date": route.start_date,
+                "end_date": route.end_date,
+                "chart_type": route.chart_type,
+                "output_mode": route.output_mode,
+            }
+        )
         return result
 
     def execute_storage_insight_route(self, route: EnergyRouteResult) -> MetricResult:
@@ -1642,6 +1763,80 @@ class MetricExecutor:
         self, *, start: str, end: str, filters: Dict[str, Any]
     ) -> EIAResult:
         return self.eia.ng_consumption_by_sector(start=start, end=end)
+
+    def _eia_natural_gas_consumption(
+        self, *, start: str, end: str, filters: Dict[str, Any]
+    ) -> EIAResult:
+        """Execute the end-use consumption metrics exposed by eia-ng-client."""
+        metric = str(filters.get("metric") or "")
+        frequency = str(filters.get("consumption_frequency") or "").lower()
+        if frequency not in {"monthly", "annual"}:
+            frequency = "annual" if metric.endswith("_annual") else "monthly"
+
+        sector = str(filters.get("consumption_sector") or "").lower()
+        if sector not in {"residential", "commercial", "industrial", "vehicle", "electric_power", "total"}:
+            marker = "_consumption_"
+            if marker in metric:
+                sector = metric.split(marker, 1)[0].removeprefix("natural_gas_")
+            if sector not in {"residential", "commercial", "industrial", "vehicle", "electric_power", "total"}:
+                sector = "total"
+
+        raw_states = filters.get("states")
+        states_all = bool(filters.get("states_all"))
+        if isinstance(raw_states, str):
+            states = [raw_states]
+        else:
+            states = list(raw_states or [])
+        if states_all:
+            states = sorted(EIAAdapter.CONSUMPTION_STATES - {"united_states_total", "us_total"})
+        if not states:
+            states = ["us_total"]
+        states = ["us_total" if state == "united_states_total" else state for state in states]
+
+        results: list[EIAResult] = []
+        for state in states:
+            if state == "us_total" and sector == "total":
+                result = self.eia.consumption_total_us(
+                    start=start, end=end, frequency=frequency
+                )
+            else:
+                result = self.eia.consumption_end_use(
+                    start=start,
+                    end=end,
+                    state=state,
+                    type=sector,
+                    frequency=frequency,
+                )
+            results.append(result)
+
+        if len(results) == 1:
+            return results[0]
+
+        frames = [result.df for result in results if result.df is not None and not result.df.empty]
+        frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["date", "value", "state", "type"])
+        first = results[0]
+        return EIAResult(
+            df=frame,
+            source=first.source.model_copy(
+                update={
+                    "label": "EIA Natural Gas Consumption: End Use by State",
+                    "parameters": {
+                        **(first.source.parameters or {}),
+                        "states": states,
+                        "type": sector,
+                        "frequency": frequency,
+                    },
+                }
+            ),
+            meta={
+                **(first.meta or {}),
+                "states": states,
+                "queried_states": states,
+                "states_all": states_all,
+                "sector": sector,
+                "frequency": frequency,
+            },
+        )
 
     def _eia_ng_production_lower48(
         self, *, start: str, end: str, filters: Dict[str, Any]

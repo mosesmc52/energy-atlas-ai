@@ -652,6 +652,9 @@ def _render_storage_region_bar(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | 
     group_field = "region" if "region" in d.columns else "state" if "state" in d.columns else None
     if spec.chart_type != "bar" or group_field is None or "value" not in d.columns:
         return None
+    x_field, _, _ = _axis_field(spec.x, "State or region")
+    if x_field != group_field:
+        return None
     scoped = _storage_latest_by_region(d, "value").sort_values("value", ascending=False)
     if scoped.empty:
         return None
@@ -814,6 +817,8 @@ def _render_storage_seasonal_line(spec: ChartSpec, d: pd.DataFrame) -> go.Figure
 
 
 def _render_storage_chart(spec: ChartSpec, d: pd.DataFrame) -> go.Figure | None:
+    if "sector" in d.columns:
+        return None
     for renderer in (
         _render_storage_seasonal_line,
         _render_storage_deviation_bar,
@@ -882,6 +887,15 @@ def render_plotly(
                         )
                     )
                     storage_fig.update_layout(showlegend=True)
+        if (
+            spec.chart_type == "line"
+            and {"date", "value"}.issubset(d.columns)
+            and not any(column in d.columns for column in ("region", "state", "storage_type"))
+            and not storage_fig.layout.annotations
+        ):
+            _add_latest_annotation_only(
+                storage_fig, d, x_field="date", y_field="value", y_units=None
+            )
         return storage_fig
 
     if (

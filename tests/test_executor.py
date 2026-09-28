@@ -96,6 +96,63 @@ def _geography_storage_result(geography: str, value: float = 10.0, units: str = 
 
 
 class TestMetricExecutor(unittest.TestCase):
+    def test_latest_consumption_fetches_history_for_publication_lag(self) -> None:
+        eia = Mock()
+        eia.consumption_end_use.return_value = EIAResult(
+            df=pd.DataFrame([{"date": "2025-12-01", "value": 42.0}]),
+            source=SourceRef(
+                source_type="eia_api",
+                label="Consumption",
+                reference="eia-ng-client:natural_gas.consumption.end_use",
+                parameters={},
+            ),
+            meta={},
+        )
+        executor = MetricExecutor(eia=eia)
+        route = EnergyRouteResult(
+            domain="consumption",
+            analysis_type="latest",
+            primary_metric="natural_gas_residential_consumption_monthly",
+            metrics=["natural_gas_residential_consumption_monthly"],
+            storage_dataset="weekly_working_gas",
+            storage_frequency="weekly",
+            storage_metric_type="working_gas",
+            storage_type=None,
+            storage_types=[],
+            storage_types_all=False,
+            storage_insight_type=None,
+            consumption_dataset="natural_gas_consumption_by_end_use",
+            consumption_frequency="monthly",
+            consumption_sector="residential",
+            consumption_sectors=[],
+            consumption_sectors_all=False,
+            regions=[],
+            states=["tx"],
+            states_all=False,
+            start_date="2026-07-28",
+            end_date="2026-08-27",
+            date_expression="current",
+            value_type="level",
+            comparisons=["none"],
+            ranking_basis="consumption",
+            chart_type="none",
+            output_mode="answer",
+            filters={},
+            confidence=0.9,
+            ambiguous=False,
+            reason=None,
+            normalized_query="what is current residential natural gas consumption in texas?",
+        )
+
+        result = executor.execute_consumption_route(route)
+
+        self.assertFalse(result.df.empty)
+        kwargs = eia.consumption_end_use.call_args.kwargs
+        self.assertLess(kwargs["start"], route.start_date)
+        self.assertEqual(kwargs["end"], route.end_date)
+        self.assertEqual(kwargs["state"], "tx")
+        self.assertEqual(kwargs["type"], "residential")
+
     def test_consumption_passes_state_filter_to_eia_adapter(self) -> None:
         eia = Mock()
         eia.ng_consumption_lower48.return_value = Mock(
