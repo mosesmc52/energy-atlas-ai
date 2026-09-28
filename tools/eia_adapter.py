@@ -1854,6 +1854,64 @@ class EIAAdapter(CacheBackedTimeseriesAdapterBase):
             type=client_type,
         )
 
+    def consumption_total_us(
+        self, *, start: str, end: str, frequency: str = "monthly"
+    ) -> EIAResult:
+        """Return actual U.S. total consumption (N9140US2).
+
+        eia-ng-client's end_use(type="total") selects N3060US2, which is
+        delivered to consumers and excludes other consumption components.
+        """
+        if frequency not in {"monthly", "annual"}:
+            raise ValueError("Invalid consumption frequency. Expected monthly or annual.")
+        date_format = "%Y-%m" if frequency == "monthly" else "%Y"
+        request_start = pd.Timestamp(start).strftime(date_format)
+        request_end = pd.Timestamp(end).strftime(date_format)
+        response = requests.get(
+            "https://api.eia.gov/v2/natural-gas/cons/sum/data/",
+            params={
+                "api_key": self.client.api_key,
+                "frequency": frequency,
+                "start": request_start,
+                "end": request_end,
+                "data[0]": "value",
+                "facets[series][]": "N9140US2",
+                "sort[0][column]": "period",
+                "sort[0][direction]": "asc",
+                "offset": 0,
+                "length": 5000,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("error"):
+            raise ValueError(f"EIA total consumption request failed: {payload['error']}")
+        rows = (payload.get("response") or {}).get("data") or []
+        if rows:
+            out = self._normalize_timeseries_df(
+                pd.DataFrame(rows).copy(), date_col="date", value_col="value"
+            )
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out["value"] = pd.to_numeric(out["value"], errors="coerce")
+            out = out.dropna(subset=["date", "value"]).reset_index(drop=True)
+            out["state"] = "us_total"
+            out["type"] = "total"
+        else:
+            out = pd.DataFrame(columns=["date", "value", "state", "type"])
+        return EIAResult(
+            df=out,
+            source=self._make_source(
+                label="EIA U.S. Natural Gas Total Consumption",
+                reference="eia-api:natural-gas/cons/sum:N9140US2",
+                parameters={
+                    "start": request_start, "end": request_end,
+                    "frequency": frequency, "series": "N9140US2",
+                },
+            ),
+            meta={"frequency": frequency, "state": "us_total", "type": "total"},
+        )
+
     def consumption_heat_content(
         self,
         *,

@@ -578,11 +578,13 @@ class MetricExecutor:
             "ng_consumption_by_sector": self._eia_ng_consumption_by_sector,
             "natural_gas_residential_consumption_monthly": self._eia_natural_gas_consumption,
             "natural_gas_commercial_consumption_monthly": self._eia_natural_gas_consumption,
+            "natural_gas_industrial_consumption_monthly": self._eia_natural_gas_consumption,
             "natural_gas_vehicle_consumption_monthly": self._eia_natural_gas_consumption,
             "natural_gas_electric_power_consumption_monthly": self._eia_natural_gas_consumption,
             "natural_gas_total_consumption_monthly": self._eia_natural_gas_consumption,
             "natural_gas_residential_consumption_annual": self._eia_natural_gas_consumption,
             "natural_gas_commercial_consumption_annual": self._eia_natural_gas_consumption,
+            "natural_gas_industrial_consumption_annual": self._eia_natural_gas_consumption,
             "natural_gas_vehicle_consumption_annual": self._eia_natural_gas_consumption,
             "natural_gas_electric_power_consumption_annual": self._eia_natural_gas_consumption,
             "natural_gas_total_consumption_annual": self._eia_natural_gas_consumption,
@@ -834,19 +836,48 @@ class MetricExecutor:
         )
         fetch_start = route.start_date or ""
         fetch_end = route.end_date or date.today().isoformat()
-        if _consumption_should_expand_for_latest(route):
+        explicit_date = has_explicit_date_reference(str(route.normalized_query or ""))
+        if route.analysis_type == "seasonal_compare":
+            baseline_start = (pd.Timestamp(fetch_end) - pd.DateOffset(years=6)).date().isoformat()
+            fetch_start = min(fetch_start, baseline_start) if fetch_start else baseline_start
+        elif route.analysis_type == "ranking" and route.states_all:
+            baseline_years = 5 if explicit_date else 8
+            anchor = route.start_date if explicit_date else fetch_end
+            fetch_start = (
+                pd.Timestamp(anchor) - pd.DateOffset(years=baseline_years)
+            ).date().isoformat()
+        elif route.consumption_frequency == "annual" and not explicit_date:
+            fetch_start = (pd.Timestamp(fetch_end) - pd.DateOffset(years=10)).date().isoformat()
+        elif route.analysis_type in {"ranking", "geography_compare", "sector_compare"} and not explicit_date:
+            fetch_start = (pd.Timestamp(fetch_end) - pd.DateOffset(years=2)).date().isoformat()
+        elif _consumption_should_expand_for_latest(route):
             fetch_start, fetch_end = _expand_consumption_fetch_window_for_latest(
                 end_date=fetch_end,
                 frequency=route.consumption_frequency or "monthly",
             )
-        result = self.execute(
-            ExecuteRequest(
-                metric=route.primary_metric,
-                start=fetch_start,
-                end=fetch_end,
-                filters=filters,
+        metrics = list(dict.fromkeys(route.metrics or [route.primary_metric]))
+        results: list[MetricResult] = []
+        for metric in metrics:
+            metric_filters = dict(filters)
+            metric_filters["consumption_sector"] = metric.removeprefix("natural_gas_").split("_consumption_", 1)[0]
+            item = self.execute(
+                ExecuteRequest(metric=metric, start=fetch_start, end=fetch_end, filters=metric_filters)
             )
-        )
+            if item.df is not None:
+                item.df = item.df.copy()
+                item.df["sector"] = metric_filters["consumption_sector"]
+            results.append(item)
+        result = results[0]
+        if len(results) > 1:
+            frames = [item.df for item in results if item.df is not None and not item.df.empty]
+            result.df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["date", "value", "state", "type", "sector"])
+            result.meta = {**(result.meta or {}), "metrics": metrics, "component_sources": [item.source.reference for item in results]}
+            result.source = result.source.model_copy(
+                update={
+                    "label": "EIA Natural Gas Consumption: End Use Comparison",
+                    "parameters": {**(result.source.parameters or {}), "metrics": metrics},
+                }
+            )
         if result.meta is None:
             result.meta = {}
         result.meta.update(
@@ -1743,11 +1774,11 @@ class MetricExecutor:
             frequency = "annual" if metric.endswith("_annual") else "monthly"
 
         sector = str(filters.get("consumption_sector") or "").lower()
-        if sector not in {"residential", "commercial", "vehicle", "electric_power", "total"}:
+        if sector not in {"residential", "commercial", "industrial", "vehicle", "electric_power", "total"}:
             marker = "_consumption_"
             if marker in metric:
                 sector = metric.split(marker, 1)[0].removeprefix("natural_gas_")
-            if sector not in {"residential", "commercial", "vehicle", "electric_power", "total"}:
+            if sector not in {"residential", "commercial", "industrial", "vehicle", "electric_power", "total"}:
                 sector = "total"
 
         raw_states = filters.get("states")
@@ -1764,13 +1795,18 @@ class MetricExecutor:
 
         results: list[EIAResult] = []
         for state in states:
-            result = self.eia.consumption_end_use(
-                start=start,
-                end=end,
-                state=state,
-                type=sector,
-                frequency=frequency,
-            )
+            if state == "us_total" and sector == "total":
+                result = self.eia.consumption_total_us(
+                    start=start, end=end, frequency=frequency
+                )
+            else:
+                result = self.eia.consumption_end_use(
+                    start=start,
+                    end=end,
+                    state=state,
+                    type=sector,
+                    frequency=frequency,
+                )
             results.append(result)
 
         if len(results) == 1:
@@ -1781,10 +1817,21 @@ class MetricExecutor:
         first = results[0]
         return EIAResult(
             df=frame,
-            source=first.source,
+            source=first.source.model_copy(
+                update={
+                    "label": "EIA Natural Gas Consumption: End Use by State",
+                    "parameters": {
+                        **(first.source.parameters or {}),
+                        "states": states,
+                        "type": sector,
+                        "frequency": frequency,
+                    },
+                }
+            ),
             meta={
                 **(first.meta or {}),
                 "states": states,
+                "queried_states": states,
                 "states_all": states_all,
                 "sector": sector,
                 "frequency": frequency,

@@ -821,6 +821,21 @@ def _is_followup_query(normalized_query: str) -> bool:
     return False
 
 
+def _is_consumption_followup_query(normalized_query: str) -> bool:
+    """Only incomplete references should inherit a prior consumption scope."""
+    query = str(normalized_query or "").strip().lower()
+    followup_starts = (
+        "what about", "how about", "and ", "also ", "same for",
+        "do the same for", "show that", "show it", "plot that", "plot it",
+        "compare that", "instead", "versus ",
+    )
+    if query.startswith(followup_starts):
+        return True
+    return len(query.split()) <= 3 and not any(
+        term in query for term in ("consumption", "gas use", "natural gas")
+    )
+
+
 def _is_contextual_followup_query(
     normalized_query: str,
     context: RouteContext | None,
@@ -1164,7 +1179,7 @@ def _consumption_metrics_for_route(
 ) -> tuple[Optional[str], list[str]]:
     frequency = consumption_frequency if consumption_frequency in CONSUMPTION_FREQUENCIES else "monthly"
     if consumption_sectors_all:
-        sectors = ["residential", "commercial", "vehicle", "electric_power", "total"]
+        sectors = ["residential", "commercial", "industrial", "electric_power"]
     elif consumption_sectors:
         sectors = [sector for sector in consumption_sectors if sector in CONSUMPTION_SECTORS]
     elif consumption_sector in CONSUMPTION_SECTORS:
@@ -1242,8 +1257,10 @@ def _consumption_route(
     parsed_sectors = [value for value in getattr(parsed, "consumption_sectors", []) or [] if value in CONSUMPTION_SECTORS]
     sectors_all = bool(getattr(parsed, "consumption_sectors_all", False))
     sector_terms = (
-        "residential", "household", "commercial", "business", "vehicle", "transportation fuel",
-        "electric power", "power sector", "electricity generation", "total consumption", "total natural gas use",
+        "residential", "household", "commercial", "business", "industrial", "industry",
+        "manufacturing", "vehicle", "transportation fuel",
+        "electric power", "power sector", "electricity generation", "power burn",
+        "total consumption", "total natural gas use",
     )
     has_explicit_sector = any(term in normalized for term in sector_terms)
     if not has_explicit_sector and context and context.domain == "consumption":
@@ -1450,14 +1467,7 @@ def route_query(
     consumption_followup = bool(
         context
         and context.domain == "consumption"
-        and (
-            parsed_domain == "consumption"
-            or _is_followup_query(normalized)
-            or any(
-                term in normalized
-                for term in ("residential", "commercial", "vehicle", "electric power", "power sector")
-            )
-        )
+        and _is_consumption_followup_query(normalized)
     )
     if parsed_domain == "consumption" or consumption_followup:
         return _consumption_route(

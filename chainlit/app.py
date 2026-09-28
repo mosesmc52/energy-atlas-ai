@@ -1135,6 +1135,8 @@ async def on_message(message: cl.Message):
             await cl.Plotly(name=payload.chart_spec.title, figure=fig).send(
                 for_id=msg.id
             )
+            if payload.ranking_table:
+                await cl.Message(content=payload.ranking_table).send()
             if DEBUG_ENABLED:
                 chart_elapsed_ms = (perf_counter() - chart_started) * 1000
 

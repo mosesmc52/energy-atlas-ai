@@ -31,6 +31,7 @@ CONSUMPTION_FREQUENCIES: Final[tuple[str, ...]] = ("monthly", "annual")
 CONSUMPTION_SECTORS: Final[tuple[str, ...]] = (
     "residential",
     "commercial",
+    "industrial",
     "vehicle",
     "electric_power",
     "total",

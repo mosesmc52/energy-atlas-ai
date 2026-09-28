@@ -118,6 +118,7 @@ CONSUMPTION_TERMS = (
     "electric power consumption",
     "electric consumption",
     "power sector consumption",
+    "power burn",
     "total consumption",
     "which sector",
     "uses the most",
@@ -463,7 +464,8 @@ def _parse_consumption_sectors(
 
     checks = (
         ("residential", ("residential", "household", "households", "homes", "home heating")),
-        ("commercial", ("commercial", "businesses", "business use", "commercial buildings")),
+        ("commercial", ("commercial", "businesses", "business", "business use", "commercial buildings")),
+        ("industrial", ("industrial", "industry", "manufacturing")),
         ("vehicle", ("natural gas vehicles", "natural gas vehicle", "transportation fuel", "vehicle fuel", "vehicle", "vehicles")),
         ("electric_power", ("electric power", "power sector", "electricity generation", "power generation", "electric utility", "electric utilities", "power burn")),
         ("total", ("total consumption", "all consumption", "overall consumption", "total natural gas use")),

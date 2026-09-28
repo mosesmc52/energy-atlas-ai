@@ -103,11 +103,13 @@ METRIC_UNITS = {
     "ng_consumption_by_sector": "MMcf",
     "natural_gas_residential_consumption_monthly": "MMcf",
     "natural_gas_commercial_consumption_monthly": "MMcf",
+    "natural_gas_industrial_consumption_monthly": "MMcf",
     "natural_gas_vehicle_consumption_monthly": "MMcf",
     "natural_gas_electric_power_consumption_monthly": "MMcf",
     "natural_gas_total_consumption_monthly": "MMcf",
     "natural_gas_residential_consumption_annual": "MMcf",
     "natural_gas_commercial_consumption_annual": "MMcf",
+    "natural_gas_industrial_consumption_annual": "MMcf",
     "natural_gas_vehicle_consumption_annual": "MMcf",
     "natural_gas_electric_power_consumption_annual": "MMcf",
     "natural_gas_total_consumption_annual": "MMcf",
@@ -3854,6 +3856,295 @@ def _ng_electricity_seasonal_norm_summary(
     }
 
 
+def _build_consumption_answer_payload(
+    *, query: str, result: EIAResult, route: Any, mode: str
+) -> AnswerPayload:
+    """Answer consumption questions from their complete state/sector history."""
+    source = result.source
+    source_date = source.retrieved_at.date().isoformat() if source.retrieved_at else None
+    frequency = str(getattr(route, "consumption_frequency", "monthly") or "monthly")
+    analysis_type = str(getattr(route, "analysis_type", "latest") or "latest")
+    frame = result.df.copy() if result.df is not None else pd.DataFrame()
+    if not {"date", "value"}.issubset(frame.columns):
+        frame = pd.DataFrame(columns=["date", "value", "state", "sector"])
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame = frame.dropna(subset=["date", "value"]).copy()
+    if "state" not in frame:
+        frame["state"] = "us_total"
+    if "sector" not in frame:
+        frame["sector"] = str(getattr(route, "consumption_sector", None) or "total")
+    frame["state"] = frame["state"].astype(str)
+    frame["sector"] = frame["sector"].astype(str).replace({"electric": "electric_power"})
+    frame = frame.sort_values(["date", "state", "sector"]).reset_index(drop=True)
+    frame["series"] = frame.apply(
+        lambda row: (
+            ("U.S." if row["state"] in {"us_total", "united_states_total"} else row["state"].upper())
+            + " " + row["sector"].replace("_", " ").title()
+        ),
+        axis=1,
+    )
+
+    def label(row: pd.Series) -> str:
+        state = "U.S." if row["state"] in {"us_total", "united_states_total"} else row["state"].upper()
+        sector = str(row["sector"]).replace("_", " ").title()
+        if analysis_type == "ranking" and bool(getattr(route, "states_all", False)):
+            return state
+        if analysis_type == "geography_compare":
+            return state
+        if analysis_type == "sector_compare" or frame["sector"].nunique() > 1:
+            return sector if frame["state"].nunique() == 1 else f"{state} {sector}"
+        return f"{state} {sector}"
+
+    answer = ""
+    chart_df = frame
+    chart_spec = None
+    ranking_table = None
+    points: list[AnswerDataPoint] = []
+    if frame.empty:
+        answer = "No consumption observations were returned for the requested period."
+    elif analysis_type == "seasonal_compare":
+        latest = frame.iloc[-1]
+        historical = frame.loc[
+            (frame["state"] == latest["state"])
+            & (frame["sector"] == latest["sector"])
+            & (frame["date"].dt.month == latest["date"].month)
+            & (frame["date"].dt.year < latest["date"].year)
+        ].sort_values("date").tail(5)
+        if len(historical) < 3:
+            answer = (
+                f"Insufficient same-month history to judge whether {label(latest)} consumption "
+                f"in {latest['date'].strftime('%B %Y')} was unusually high."
+            )
+        else:
+            baseline = float(historical["value"].mean())
+            current = float(latest["value"])
+            difference = current - baseline
+            percent = difference / baseline * 100 if baseline else None
+            direction = "above" if difference > 0 else "below" if difference < 0 else "equal to"
+            pct_text = f" ({abs(percent):.1f}%)" if percent is not None else ""
+            high_assessment = (
+                f"Yes, it was higher than every one of those {len(historical)} same-month observations."
+                if current > float(historical["value"].max())
+                else (
+                    "No, it was below the historical same-month range."
+                    if current < float(historical["value"].min())
+                    else "No, it was within the historical same-month range."
+                )
+            )
+            answer = (
+                f"{label(latest)} consumption in {latest['date'].strftime('%B %Y')} was "
+                f"{_format_number(current)} MMcf, {direction} the same-month "
+                f"{len(historical)}-year average of {_format_number(baseline)} MMcf "
+                f"by {_format_number(abs(difference))} MMcf{pct_text} {high_assessment}"
+            )
+            points = [
+                AnswerDataPoint(metric="Current consumption", value=current, unit="MMcf"),
+                AnswerDataPoint(metric="Same-month average", value=baseline, unit="MMcf"),
+            ]
+            chart_df = pd.DataFrame(
+                {"date": [latest["date"]], "value": [current], "baseline": [baseline]}
+            )
+            chart_spec = ChartSpec(
+                chart_type="bar", title="Consumption vs Same-Month Average",
+                x="date", y=["value", "baseline"], x_label="Month", y_label="MMcf",
+            )
+    elif analysis_type in {"ranking", "geography_compare", "sector_compare"}:
+        dimensions = ["state", "sector"]
+        expected = len(getattr(route, "states", []) or []) * max(1, len(getattr(route, "metrics", []) or []))
+        if getattr(route, "states_all", False):
+            expected = 2
+        if expected < 2:
+            expected = 2
+        counts = frame.drop_duplicates(subset=["date", *dimensions]).groupby("date").size()
+        if (
+            analysis_type == "ranking"
+            and bool(getattr(route, "states_all", False))
+            and re.search(r"\b20\d{2}\b", query)
+        ):
+            requested_start = pd.Timestamp(getattr(route, "start_date"))
+            requested_end = pd.Timestamp(getattr(route, "end_date"))
+            counts = counts.loc[
+                (counts.index >= requested_start) & (counts.index <= requested_end)
+            ]
+        if analysis_type == "ranking" and bool(getattr(route, "states_all", False)):
+            expected = max(2, int(np.ceil(float(counts.max()) * 0.9))) if not counts.empty else 2
+        valid_dates = counts[counts >= expected].index
+        if len(valid_dates) == 0:
+            answer = "No common reporting month with enough state and sector observations was returned for this comparison."
+        else:
+            latest_date = max(valid_dates)
+            chart_df = frame.loc[frame["date"] == latest_date].copy()
+            chart_df = chart_df.drop_duplicates(subset=dimensions, keep="last")
+            chart_df["label"] = chart_df.apply(label, axis=1)
+            ranking = analysis_type == "ranking"
+            least_first = ranking and any(
+                term in query.lower() for term in ("least", "lowest", "smallest", "fewest")
+            )
+            chart_df = chart_df.sort_values(
+                "value", ascending=least_first if ranking else True
+            ).reset_index(drop=True)
+            if ranking and bool(getattr(route, "states_all", False)):
+                previous_years = frame.loc[
+                    (frame["date"].dt.month == latest_date.month)
+                    & (frame["date"].dt.year >= latest_date.year - 5)
+                    & (frame["date"].dt.year < latest_date.year)
+                ].drop_duplicates(subset=["date", *dimensions])
+                ranked_keys = chart_df[dimensions].drop_duplicates()
+                previous_years = previous_years.merge(ranked_keys, on=dimensions, how="inner")
+                baseline_counts = previous_years.groupby(dimensions)["value"].count()
+                complete_history = (
+                    len(baseline_counts) == len(ranked_keys)
+                    and bool((baseline_counts == 5).all())
+                )
+                yearly_totals = previous_years.groupby(previous_years["date"].dt.year)["value"].sum()
+                average_text = (
+                    _format_number(float(yearly_totals.mean()))
+                    if complete_history and len(yearly_totals) == 5
+                    else "N/A"
+                )
+                latest_values = chart_df["value"].astype(float)
+                ranking_table = "\n".join(
+                    [
+                        f"**State ranking summary — {latest_date.date().isoformat()}**",
+                        "",
+                        "| Latest total (MMcf) | Top (MMcf) | Bottom (MMcf) | Middle / median (MMcf) | 5-year average (MMcf) |",
+                        "| ---: | ---: | ---: | ---: | ---: |",
+                        f"| {_format_number(float(latest_values.sum()))} | "
+                        f"{_format_number(float(latest_values.max()))} | "
+                        f"{_format_number(float(latest_values.min()))} | "
+                        f"{_format_number(float(latest_values.median()))} | {average_text} |",
+                        "",
+                        "Latest total is the sum of states in the chart. Top and bottom are the "
+                        "highest and lowest state values; middle is the median state value. "
+                        "The 5-year average is the mean of the same-month totals for these "
+                        "states in the five prior years. N/A means complete history is unavailable.",
+                    ]
+                )
+            entries = [
+                f"{row['label']} {_format_number(float(row['value']))} MMcf"
+                for _, row in chart_df.iterrows()
+            ]
+            if ranking:
+                if bool(getattr(route, "states_all", False)):
+                    sector_name = str(chart_df.iloc[0]["sector"]).replace("_", " ").title()
+                    answer = (
+                        f"{sector_name} natural gas consumption by state on "
+                        f"{latest_date.date().isoformat()} (MMcf)."
+                    )
+                    first_heading = "Bottom 5" if least_first else "Top 5"
+                    first_bullets = [
+                        f"- {rank}. {entry}"
+                        for rank, entry in enumerate(entries[:5], start=1)
+                    ]
+                    answer += f"\n\n**{first_heading}**\n\n" + "\n".join(first_bullets)
+                    if len(entries) > 5:
+                        bottom_start = max(5, len(entries) - 5)
+                        last_heading = "Top 5" if least_first else "Bottom 5"
+                        last_bullets = [
+                            f"- {rank}. {entry}"
+                            for rank, entry in enumerate(
+                                entries[bottom_start:], start=bottom_start + 1
+                            )
+                        ]
+                        answer += f"\n\n**{last_heading}**\n\n" + "\n".join(last_bullets)
+                else:
+                    leader = "Least" if least_first else "Most"
+                    answer = (
+                        f"{leader} consumption on {latest_date.date().isoformat()}: "
+                        + "; ".join(entries) + "."
+                    )
+                queried_states = list((result.meta or {}).get("queried_states") or [])
+                if queried_states and len(chart_df) < len(queried_states):
+                    answer += (
+                        f"\n\nRanked {len(chart_df)} of {len(queried_states)} requested states "
+                        "with observations for this month."
+                    )
+            else:
+                answer = f"Consumption on {latest_date.date().isoformat()}: " + "; ".join(entries) + "."
+                if len(chart_df) == 2:
+                    left, right = chart_df.iloc[0], chart_df.iloc[1]
+                    difference = float(left["value"] - right["value"])
+                    answer += f" Difference: {_format_number(abs(difference))} MMcf."
+            points = [
+                AnswerDataPoint(metric=str(row["label"]), value=float(row["value"]), unit="MMcf")
+                for _, row in chart_df.iterrows()
+            ]
+            by_state = bool(getattr(route, "states_all", False)) or (
+                chart_df["state"].nunique() > 1 and chart_df["sector"].nunique() == 1
+            )
+            chart_spec = ChartSpec(
+                chart_type="bar",
+                title="Natural Gas Consumption by State" if by_state else "Natural Gas Consumption by Sector",
+                x="label", y=["value"],
+                x_label="State" if by_state else "Sector",
+                y_label="MMcf",
+            )
+    elif frequency == "annual" and not getattr(route, "date_expression", None):
+        entries = [
+            f"{row['date'].year}: {_format_number(float(row['value']))} MMcf"
+            for _, row in frame.iterrows()
+        ]
+        answer = "Annual consumption: " + "; ".join(entries) + "."
+        points = [
+            AnswerDataPoint(metric=str(row["date"].year), value=float(row["value"]), unit="MMcf")
+            for _, row in frame.iterrows()
+        ]
+        chart_spec = ChartSpec(
+            chart_type="line", title="Annual Natural Gas Consumption",
+            x="date", y=["value"], x_label="Year", y_label="MMcf",
+        )
+    elif analysis_type == "time_series":
+        first, latest = frame.iloc[0], frame.iloc[-1]
+        baseline = frame.loc[
+            (frame["date"].dt.year == first["date"].year)
+            & (frame["date"].dt.month == latest["date"].month)
+            & (frame["state"] == latest["state"])
+            & (frame["sector"] == latest["sector"])
+        ]
+        if not baseline.empty:
+            first = baseline.iloc[0]
+        delta = float(latest["value"] - first["value"])
+        percent = delta / float(first["value"]) * 100 if first["value"] else None
+        pct_text = f" ({percent:+.1f}%)" if percent is not None else ""
+        answer = (
+            f"{label(latest)} consumption changed from {_format_number(float(first['value']))} MMcf "
+            f"in {first['date'].strftime('%B %Y')} to {_format_number(float(latest['value']))} MMcf "
+            f"in {latest['date'].strftime('%B %Y')}: {delta:+,.0f} MMcf{pct_text}."
+        )
+        points = [
+            AnswerDataPoint(metric="Start", value=float(first["value"]), unit="MMcf"),
+            AnswerDataPoint(metric="Latest", value=float(latest["value"]), unit="MMcf"),
+        ]
+        chart_spec = ChartSpec(
+            chart_type="line", title="Natural Gas Consumption",
+            x="date", y=["value"], x_label="Date", y_label="MMcf",
+        )
+    else:
+        latest = frame.iloc[-1]
+        answer = (
+            f"{label(latest)} consumption was {_format_number(float(latest['value']))} MMcf "
+            f"on {latest['date'].date().isoformat()}."
+        )
+        points = [AnswerDataPoint(metric=label(latest), value=float(latest["value"]), unit="MMcf")]
+
+    structured = StructuredAnswer(
+        answer=answer, summary=answer,
+        signal=SignalSummary(status="neutral", confidence=0.8 if points else 0.5),
+        drivers=[], data_points=points,
+        forecast=AnswerForecast(direction="flat", reasoning="No forecast was requested."),
+        suggested_alerts=[], alerts=[],
+        sources=[AnswerSourceSummary(title=source.label, date=source_date)],
+    )
+    return AnswerPayload(
+        query=query, mode=mode, answer_text=answer, structured_response=structured,
+        report_context_used=False, report_context_reason="consumption_structured_answer",
+        data_preview=_maybe_data_preview(chart_df),
+        chart_data_preview=_make_chart_preview(chart_df) if chart_spec else None,
+        chart_spec=chart_spec, ranking_table=ranking_table, sources=[source],
+    )
+
+
 def build_answer_with_openai(
     *,
     query: str,
@@ -3884,6 +4175,11 @@ def build_answer_with_openai(
             route=route,
             mode=mode,
             source_date=source_date,
+        )
+
+    if route is not None and _route_domain(route) == "consumption":
+        return _build_consumption_answer_payload(
+            query=query, result=result, route=route, mode=mode
         )
 
     report_context_text = ""

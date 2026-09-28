@@ -9,6 +9,24 @@ from tools.eia_adapter import EIAAdapter
 
 class TestEIAConsumptionAdapter(unittest.TestCase):
     @patch("tools.eia_adapter.EIAClient")
+    @patch("tools.eia_adapter.requests.get")
+    def test_us_total_consumption_uses_total_series(
+        self, mock_get: Mock, mock_client_cls: Mock
+    ) -> None:
+        mock_client_cls.return_value.api_key = "test-key"
+        mock_get.return_value.json.return_value = {
+            "response": {"data": [{"period": "2025", "value": "321"}]}
+        }
+        result = EIAAdapter().consumption_total_us(
+            start="2024-01-01", end="2026-09-27", frequency="annual"
+        )
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(params["facets[series][]"], "N9140US2")
+        self.assertEqual(params["frequency"], "annual")
+        self.assertEqual(result.df["value"].tolist(), [321])
+        self.assertEqual(result.source.reference, "eia-api:natural-gas/cons/sum:N9140US2")
+
+    @patch("tools.eia_adapter.EIAClient")
     def test_end_use_uses_updated_consumption_namespace(self, mock_client_cls: Mock) -> None:
         consumption = SimpleNamespace(
             end_use=Mock(return_value=[{"period": "2024", "value": "12.5"}])
